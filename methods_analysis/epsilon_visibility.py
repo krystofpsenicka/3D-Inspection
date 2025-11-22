@@ -143,7 +143,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         
         # *** FIXED: Paper Def 3.4 is n_p . xp < 0 for back-face. ***
         # xp = p - x. So (p - x) . n_p > 0 is front-facing.
-        front_facing = dot_products < -1e-6 # Use small epsilon for numerical stability
+        front_facing = dot_products > 1e-6 # Use small epsilon for numerical stability
         
         # *** FIXED: Pass self.epsilon to occlusion check ***
         visible_mask = self._check_occlusion(

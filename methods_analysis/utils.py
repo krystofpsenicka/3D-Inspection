@@ -162,10 +162,16 @@ class VisibilityQuery:
 # 3. MOCK DATA GENERATOR (For easy testing)
 # ===========================================================================
 
-def create_mock_data(num_points=1000, num_candidates=100):
+def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
     """Creates a basic mesh, target points, and candidates for testing."""
-    # Mesh (Simple Sphere)
-    mesh = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=20)
+    # Mesh (Load or create)
+    if mesh_path != None:
+        print(f"Loading mesh from: {mesh_path}")
+        mesh = o3d.io.read_triangle_mesh(mesh_path)
+    else:
+        print("Using default mesh (Sphere)")
+        data = o3d.data.BunnyMesh()
+        mesh = o3d.io.read_triangle_mesh(data.path)
     mesh.compute_vertex_normals()
 
     # Target Points (Sampled from mesh)
@@ -176,7 +182,7 @@ def create_mock_data(num_points=1000, num_candidates=100):
 
     # Frustum Parameters
     frustum_params = FrustumParams(
-        fov_y=np.deg2rad(30), aspect=1.0, near=0.01, far=2.0
+        fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=3
     )
 
     # Candidate Viewpoints (Outer surface)

@@ -22,9 +22,12 @@ class ViewpointSampler:
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
         print("[ViewpointSampler] Created O3D RaycastingScene for internal checks.")
 
-    def sample_outside_mesh(self, num_candidates: int, offset_scale: float = 1) -> List[Tuple[np.ndarray, np.ndarray]]:
+    def sample_outside_mesh(self, num_candidates: int, offset_scale: float = 1, pos_noise_std: float = 0.05, dir_noise_std: float = 0.01) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
         Samples candidates outside the mesh by offsetting target points along the normal.
+        
+        - pos_noise_std: Standard deviation for Gaussian noise applied to the offset distance.
+        - dir_noise_std: Standard deviation for Gaussian noise applied to the viewing direction vector.
         """
         if self.num_points == 0:
             return []
@@ -35,11 +38,35 @@ class ViewpointSampler:
         num_candidates = min(num_candidates, self.num_points)
         indices = np.random.choice(self.num_points, num_candidates, replace=False)
         
-        candidate_pos = self.target_points[indices] + self.normals[indices] * (self.frustum_far * offset_scale)
-        candidate_dir = -self.normals[indices] # Pointing inward
+        selected_points = self.target_points[indices]
+        selected_normals = self.normals[indices]
+        
+        # --- 1. Position/Offset Noise ---
+        # Base offset distance
+        base_offset = self.frustum_far * offset_scale
+        
+        # Add Gaussian noise to the offset distance. Ensure minimum offset is positive.
+        pos_noise = np.random.normal(0.0, pos_noise_std, num_candidates)
+        final_offsets = base_offset + pos_noise
+        final_offsets[final_offsets < (base_offset * 0.1)] = base_offset * 0.1 # Enforce min distance
+        
+        # Calculate candidate positions
+        # np.newaxis is used to allow element-wise multiplication with the normal vectors
+        candidate_pos = selected_points + selected_normals * final_offsets[:, np.newaxis]
+        
+        # --- 2. Direction Noise ---
+        # Base direction (pointing inward)
+        base_dir = -selected_normals
+        
+        # Generate Gaussian noise vectors (3D)
+        dir_noise_vectors = np.random.normal(0.0, dir_noise_std, size=base_dir.shape)
+        
+        # Add noise and normalize to maintain unit length
+        noisy_dir = base_dir + dir_noise_vectors
+        candidate_dir = noisy_dir / np.linalg.norm(noisy_dir, axis=1)[:, np.newaxis]
         
         candidates = list(zip(candidate_pos, candidate_dir))
-        print(f"[ViewpointSampler] Generated {len(candidates)} outside candidates.")
+        print(f"[ViewpointSampler] Generated {len(candidates)} outside candidates with noise.")
 
         # Debug visualization
         vector_endpoints = candidate_pos + (candidate_dir * 0.5)
@@ -60,7 +87,7 @@ class ViewpointSampler:
         mesh_vis.compute_vertex_normals()
         
         geometries = [mesh_vis, lines]
-        o3d.visualization.draw_geometries(geometries, window_name="Target Points and Normals")
+        o3d.visualization.draw_geometries(geometries, window_name="Target Points and Viewpoint Directions")
 
         return candidates
 
