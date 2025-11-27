@@ -1,5 +1,8 @@
 from utils import * # type: ignore # Assuming utils is available
 import matplotlib.pyplot as plt
+import open3d as o3d
+import numpy as np
+import PIL.Image
 
 class Visualizer:
     """
@@ -51,11 +54,6 @@ class Visualizer:
                                      candidate_index: int = 0):
         """
         Visualizes a specific candidate's visibility against the mesh and target points.
-
-        Green Points: Visible points for the selected candidate.
-        Red Sphere: Selected Viewpoint.
-        Blue Spheres: Other Viewpoints.
-        Yellow Line: Selected Viewpoint's direction/frustum axis.
         """
         candidate_list = list(visibility_map.keys())
         if not candidate_list:
@@ -107,7 +105,7 @@ class Visualizer:
         arrow_end = selected_vp_pos + selected_vp_dir * arrow_length
 
         arrow_points = np.array([selected_vp_pos, arrow_end])
-        arrow_lines = np.array([[0, 1]]) # Connect the first point (index 0) to the second (index 1)
+        arrow_lines = np.array([[0, 1]]) 
 
         line_set = o3d.geometry.LineSet()
         line_set.points = o3d.utility.Vector3dVector(arrow_points)
@@ -121,22 +119,8 @@ class Visualizer:
         o3d.visualization.draw_geometries(geometries,
                                           window_name=f"Visibility Visualization (Candidate {index_to_visualize})")
         
-    def visualize_solution_pcd(self, result: OptimizationResult,
-                       title: str = "Viewpoint Solution"):
-        """
-        Visualize the complete solution with viewpoints and their coverage.
-        
-        Shows:
-        - Base mesh in gray
-        - Each viewpoint as a colored sphere
-        - Frustum wireframes for each viewpoint
-        - Points visible from each viewpoint (color-coded)
-        - Coverage statistics
-        """
-        print(f"\nVisualizing solution: {title}")
-        print(f"Total viewpoints: {result.num_viewpoints}")
-        print(f"Coverage: {result.total_coverage*100:.2f}%")
-        
+    def _create_solution_geometries(self, result: OptimizationResult):
+        """Helper to create the list of geometries for solution visualization."""
         geometries = []
         
         # 1. Add base mesh
@@ -158,7 +142,6 @@ class Visualizer:
             uncovered_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(uncovered_indices)])
             uncovered_pcd.paint_uniform_color([1.0, 0.0, 0.0])
             geometries.append(uncovered_pcd)
-            print(f"Uncovered points: {len(uncovered_indices)} ({len(uncovered_indices)/len(self.target_points)*100:.2f}%)")
         
         # 4. Generate colors for each viewpoint
         colors = plt.cm.tab20(np.linspace(0, 1, max(20, result.num_viewpoints)))
@@ -196,8 +179,21 @@ class Visualizer:
             arrow.lines = o3d.utility.Vector2iVector(arrow_lines)
             arrow.paint_uniform_color(color)
             geometries.append(arrow)
+            
+        return geometries
+
+    def visualize_solution_pcd(self, result: OptimizationResult,
+                       title: str = "Viewpoint Solution"):
+        """
+        Visualize the complete solution interactively.
+        """
+        print(f"\nVisualizing solution: {title}")
+        print(f"Total viewpoints: {result.num_viewpoints}")
+        print(f"Coverage: {result.total_coverage*100:.2f}%")
         
-        # 6. Create visualization window
+        geometries = self._create_solution_geometries(result)
+        
+        # Create visualization window
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name=f"{title} - {result.method_name}", width=1920, height=1080)
         
@@ -208,19 +204,70 @@ class Visualizer:
         
         for geom in geometries:
             vis.add_geometry(geom)
-        
-        # Add text info (simulate with console output)
-        print(f"\nVisualization Legend:")
-        print(f"  - Gray mesh: Base geometry")
-        print(f"  - Red points: Uncovered")
-        print(f"  - Colored spheres: Viewpoint positions")
-        print(f"  - Colored points: Points visible from corresponding viewpoint")
-        print(f"  - Wireframe pyramids: Frustum volumes")
-        print(f"  - Lines: View directions")
+            
         print(f"\nPress Q to close visualization")
-        
         vis.run()
         vis.destroy_window()
+
+    def save_solution_animation(self, result: OptimizationResult, filename: str, frames: int = 200):
+        """
+        Saves a GIF animation of the solution by orbiting the camera.
+        
+        Args:
+            result: The optimization result to visualize.
+            filename: Output filename (e.g., 'solution.gif').
+            frames: Number of frames to generate (controls rotation smoothness/speed).
+        """
+        print(f"Generating animation: {filename}")
+        
+        geometries = self._create_solution_geometries(result)
+        
+        vis = o3d.visualization.Visualizer()
+        # Create window but we can keep it hidden if supported, though Open3D usually needs it 'visible' 
+        # to capture framebuffers correctly on some systems.
+        vis.create_window(width=1600, height=1200, visible=True)
+        
+        for geom in geometries:
+            vis.add_geometry(geom)
+            
+        # Render Options
+        render_opt = vis.get_render_option()
+        render_opt.point_size = 4.0
+        render_opt.line_width = 2.0
+        render_opt.mesh_show_back_face = True
+        
+        ctr = vis.get_view_control()
+        
+        image_frames = []
+        
+        # Rotation Loop
+        # We rotate the camera by a small step each frame to simulate an orbit.
+        # rotate(x, y) rotates based on mouse drag pixels. 
+        # 10.0 pixels per frame is a reasonable speed.
+        step_size = 10.0
+
+        # To look at the wanted orientation
+        ctr.rotate(0.0, -500.0)
+        
+        print(f"  - Rendering {frames} frames...")
+        for i in range(frames):
+            ctr.rotate(step_size, 0.0) # Horizontal rotation
+            vis.poll_events()
+            vis.update_renderer()
+            
+            # Capture frame
+            # capture_screen_float_buffer returns float array [0,1]
+            img_array = np.asarray(vis.capture_screen_float_buffer(do_render=True))
+            img_uint8 = (img_array * 255).astype(np.uint8)
+            image_frames.append(PIL.Image.fromarray(img_uint8))
+            
+        vis.destroy_window()
+        
+        # Save GIF using PIL
+        if image_frames:
+            # Duration: 50ms per frame = 20 fps
+            image_frames[0].save(filename, save_all=True, append_images=image_frames[1:], duration=50, loop=0)
+            print(f"  - Saved GIF to {filename}")
 
     def visualize_solution_triangles(self, 
                                      result: OptimizationResult,
@@ -228,24 +275,11 @@ class Visualizer:
                                      title: str = "Triangle Visibility Solution"):
         """
         Visualize the complete solution with triangle-based visibility.
-        
-        Shows:
-        - Mesh triangles colored by visibility (gray = not visible, colored = visible from viewpoint)
-        - Each viewpoint as a colored sphere
-        - Frustum wireframes for each viewpoint
-        - Coverage statistics based on triangles
-        
-        Args:
-            result: OptimizationResult where visible_indices contain triangle indices
-            mesh: The mesh (potentially subdivided) used for visibility computation
-            title: Window title
         """
         print(f"\nVisualizing triangle-based solution: {title}")
         print(f"Total viewpoints: {result.num_viewpoints}")
         
         num_triangles = len(np.asarray(mesh.triangles))
-        print(f"Total triangles in mesh: {num_triangles}")
-        
         geometries = []
         
         # 1. Collect all visible triangles across all viewpoints
@@ -253,16 +287,13 @@ class Visualizer:
         for vp in result.viewpoints:
             all_visible_triangles.update(vp.visible_indices)
         
-        coverage = len(all_visible_triangles) / num_triangles if num_triangles > 0 else 0
-        print(f"Triangle Coverage: {coverage*100:.2f}% ({len(all_visible_triangles)}/{num_triangles} triangles)")
-        
         # 2. Create color array for all triangles (default gray for invisible)
         triangle_colors = np.full((num_triangles, 3), [0.5, 0.5, 0.5], dtype=np.float64)
         
         # 3. Generate colors for each viewpoint
         viewpoint_colors = plt.cm.tab20(np.linspace(0, 1, max(20, result.num_viewpoints)))
         
-        # 4. Color triangles by their first visible viewpoint (for clear visualization)
+        # 4. Color triangles by their first visible viewpoint
         triangle_to_viewpoint = {}
         for i, vp in enumerate(result.viewpoints):
             for tri_idx in vp.visible_indices:
@@ -272,7 +303,7 @@ class Visualizer:
         
         # 5. Create colored mesh
         colored_mesh = o3d.geometry.TriangleMesh(mesh)
-        colored_mesh.vertex_colors = o3d.utility.Vector3dVector([])  # Clear vertex colors
+        colored_mesh.vertex_colors = o3d.utility.Vector3dVector([]) 
         colored_mesh.triangle_colors = o3d.utility.Vector3dVector(triangle_colors)
         colored_mesh.compute_vertex_normals()
         geometries.append(colored_mesh)
@@ -303,8 +334,6 @@ class Visualizer:
             arrow.lines = o3d.utility.Vector2iVector(arrow_lines)
             arrow.paint_uniform_color(color)
             geometries.append(arrow)
-            
-            print(f"  VP {i+1}: {len(vp.visible_indices)} triangles visible")
         
         # 7. Create visualization window
         vis = o3d.visualization.Visualizer()
@@ -317,15 +346,6 @@ class Visualizer:
         for geom in geometries:
             vis.add_geometry(geom)
         
-        # Add text info (simulate with console output)
-        print(f"\nVisualization Legend:")
-        print(f"  - Gray triangles: Not visible from any viewpoint")
-        print(f"  - Colored triangles: Visible from corresponding viewpoint")
-        print(f"  - Colored spheres: Viewpoint positions")
-        print(f"  - Wireframe pyramids: Frustum volumes")
-        print(f"  - Lines: View directions")
-        print(f"\nPress Q to close visualization")
-        
         vis.run()
         vis.destroy_window()
 
@@ -335,17 +355,6 @@ class Visualizer:
                                                candidate_index: int = 0):
         """
         Visualizes a specific candidate's triangle visibility.
-
-        Green Triangles: Visible triangles for the selected candidate.
-        Gray Triangles: Not visible triangles.
-        Red Sphere: Selected Viewpoint.
-        Blue Spheres: Other Viewpoints.
-        Yellow Line: Selected Viewpoint's direction/frustum axis.
-        
-        Args:
-            visibility_map: Map from (position, direction) to visible triangle indices
-            mesh: The mesh used for visibility computation
-            candidate_index: Which candidate to visualize
         """
         candidate_list = list(visibility_map.keys())
         if not candidate_list:

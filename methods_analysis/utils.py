@@ -50,6 +50,8 @@ class OptimizationResult:
     total_time: float
     coverage_per_viewpoint: List[float]
     redundancy: float
+    visibility_computation_time: float
+    optimization_time: float
 
 def get_frustum_basis(direction):
     """Calculate orthonormal basis for frustum."""
@@ -125,7 +127,7 @@ class VisibilityQuery:
         
         return np.array(candidate_indices)[mask]
 
-    def compute_visibility_for_all_candidates(self, candidates: List[Tuple[np.ndarray, np.ndarray]]) -> Dict[Tuple[Tuple[float, ...], Tuple[float, ...]], np.ndarray]:
+    def compute_visibility_for_all_candidates(self, candidates: List[Tuple[np.ndarray, np.ndarray]]) -> Tuple[Dict[Tuple[Tuple[float, ...], Tuple[float, ...]], np.ndarray], float]:
         """Pre-computes and returns visibility for a list of candidates."""
         start_time = get_time()
         visibility_map = {}
@@ -137,10 +139,10 @@ class VisibilityQuery:
             visible_indices, _ = self.compute_visibility(vp, direction)
             # Key is (tuple(pos), tuple(dir))
             visibility_map[(tuple(vp), tuple(direction))] = visible_indices
-            
+
         total_time = get_time() - start_time
         print(f"[VisibilityQuery] Visibility computation finished in {total_time:.2f}s")
-        return visibility_map
+        return visibility_map, total_time
 
     def compute_redundancy(self, viewpoints: List[ViewpointResult]) -> float:
         """Compute average coverage redundancy."""
@@ -170,7 +172,7 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
         mesh = o3d.io.read_triangle_mesh(mesh_path)
     else:
         print("Using default mesh (Sphere)")
-        data = o3d.data.BunnyMesh()
+        data = o3d.data.ArmadilloMesh()
         mesh = o3d.io.read_triangle_mesh(data.path)
     mesh.compute_vertex_normals()
 
@@ -182,7 +184,7 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
 
     # Frustum Parameters
     frustum_params = FrustumParams(
-        fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=3
+        fov_y=np.deg2rad(50), aspect=1.0, near=0.01, far=4
     )
 
     # Candidate Viewpoints (Outer surface)

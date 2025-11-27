@@ -68,26 +68,26 @@ class ViewpointSampler:
         candidates = list(zip(candidate_pos, candidate_dir))
         print(f"[ViewpointSampler] Generated {len(candidates)} outside candidates with noise.")
 
-        # Debug visualization
-        vector_endpoints = candidate_pos + (candidate_dir * 0.5)
-        normal_vertices = np.concatenate((candidate_pos, vector_endpoints), axis=0)
+        # # Debug visualization
+        # vector_endpoints = candidate_pos + (candidate_dir * 0.5)
+        # normal_vertices = np.concatenate((candidate_pos, vector_endpoints), axis=0)
         
-        indices = np.arange(len(candidate_pos))
-        normal_lines_indices = np.vstack((indices, indices + len(candidate_pos))).T
+        # indices = np.arange(len(candidate_pos))
+        # normal_lines_indices = np.vstack((indices, indices + len(candidate_pos))).T
         
-        lines = o3d.geometry.LineSet(
-            points=o3d.utility.Vector3dVector(normal_vertices),
-            lines=o3d.utility.Vector2iVector(normal_lines_indices)
-        )
-        lines.colors = o3d.utility.Vector3dVector([[0, 0, 0] for _ in range(len(normal_lines_indices))])
+        # lines = o3d.geometry.LineSet(
+        #     points=o3d.utility.Vector3dVector(normal_vertices),
+        #     lines=o3d.utility.Vector2iVector(normal_lines_indices)
+        # )
+        # lines.colors = o3d.utility.Vector3dVector([[0, 0, 0] for _ in range(len(normal_lines_indices))])
         
-        # Mesh setup
-        mesh_vis = o3d.geometry.TriangleMesh(self.mesh)
-        mesh_vis.paint_uniform_color([0.8, 0.8, 0.8])
-        mesh_vis.compute_vertex_normals()
+        # # Mesh setup
+        # mesh_vis = o3d.geometry.TriangleMesh(self.mesh)
+        # mesh_vis.paint_uniform_color([0.8, 0.8, 0.8])
+        # mesh_vis.compute_vertex_normals()
         
-        geometries = [mesh_vis, lines]
-        o3d.visualization.draw_geometries(geometries, window_name="Target Points and Viewpoint Directions")
+        # geometries = [mesh_vis, lines]
+        # o3d.visualization.draw_geometries(geometries, window_name="Target Points and Viewpoint Directions")
 
         return candidates
 

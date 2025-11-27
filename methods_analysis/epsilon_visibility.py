@@ -26,7 +26,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         self.normals = np.asarray(pcd.normals)
         self.pcd = pcd # Store the PointCloud
         
-        # self._visualize_normals(normal_scale=0.05)
+        self._visualize_normals(normal_scale=2)
 
         if epsilon_deg is None:
             print("Epsilon not provided, estimating from point set...")
@@ -38,9 +38,8 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         print(f"Using Epsilon (radians): {self.epsilon:.6f} "
               f"({np.rad2deg(self.epsilon):.3f} degrees)")
 
-    def _visualize_normals(self, normal_scale=0.05):
+    def _visualize_normals(self, normal_scale=20.0):
         """Visualizes the mesh, the target points, and their computed normals."""
-        # This function seems correct and is untouched.
         print("\nVisualizing Normals")
         
         mesh_vis = o3d.geometry.TriangleMesh(self.mesh)
