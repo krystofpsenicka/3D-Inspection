@@ -174,6 +174,7 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
         print("Using default mesh (Sphere)")
         data = o3d.data.ArmadilloMesh()
         mesh = o3d.io.read_triangle_mesh(data.path)
+        mesh = o3d.geometry.TriangleMesh.create_sphere()
     mesh.compute_vertex_normals()
 
     # Target Points (Sampled from mesh)
@@ -184,7 +185,7 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
 
     # Frustum Parameters
     frustum_params = FrustumParams(
-        fov_y=np.deg2rad(50), aspect=1.0, near=0.01, far=4
+        fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7
     )
 
     # Candidate Viewpoints (Outer surface)

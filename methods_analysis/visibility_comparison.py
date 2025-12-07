@@ -26,7 +26,7 @@ MESH_NAME = "cat0"
 
 # Experiment Parameters
 NUM_TARGET_POINTS = 200000
-NUM_CANDIDATE_VPs = 1800
+NUM_CANDIDATE_VPs = 2000
 TARGET_COVERAGES = [0.85, 0.90, 0.925, 0.95, 0.97, 0.98]
 MAX_VIEWPOINTS = 1000
 
@@ -209,7 +209,7 @@ def run_comparison_pipeline():
     mesh, target_points, normals, frustum_params, candidates = create_mock_data(
         NUM_TARGET_POINTS,
         NUM_CANDIDATE_VPs,
-        "models/duke_of_lancaster_uk.glb"
+        # "models/duke_of_lancaster_uk.glb"
     )
         
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
@@ -220,8 +220,8 @@ def run_comparison_pipeline():
     candidates = sampler.sample_outside_mesh(
         num_candidates=NUM_CANDIDATE_VPs, 
         offset_scale=0.95, 
-        pos_noise_std=0.1,
-        dir_noise_std=0.02,
+        pos_noise_std=0.05,
+        dir_noise_std=0.05,
     )
     
     # Initialize Raycast Query (Ground Truth)
