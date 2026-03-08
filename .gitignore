@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.pytype/
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+wheels/
+*.egg
+MANIFEST
+pip-wheel-metadata/
+
+# Data / generated output
+*.pkl
+*.gif
+comparison_results/
+solution_snapshots_*/
+eval_results/
+benchmark_results/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs / misc
+*.log
+.env
+.env.*
