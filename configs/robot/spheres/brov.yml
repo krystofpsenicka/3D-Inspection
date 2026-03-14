@@ -1,0 +1,31 @@
+##
+## Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+##
+## NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+## property and proprietary rights in and to this material, related
+## documentation and any modifications thereto. Any use, reproduction,
+## disclosure or distribution of this material and related documentation
+## without an express license agreement from NVIDIA CORPORATION or
+## its affiliates is strictly prohibited.
+##
+# Collision spheres approximating BROV shape with camera pan-tilt mount
+# BROV dimensions approximately: 0.6m (length/x) x 0.4m (width/y) x 0.25m (height/z)
+# Using larger overlapping spheres to fully cover the volume
+collision_spheres:
+    base_link:
+        # Single sphere approximation covering entire BROV body (0.6 x 0.4 x 0.25m)
+        - "center": [0.0, 0.0, 0.0]
+          "radius": 0.35
+
+    # Minimal spheres for camera links (covered by base_link sphere)
+    camera_mount_link:
+        - "center": [0.0, 0.0, 0.0]
+          "radius": 0.0
+
+    camera_yaw_link:
+        - "center": [0.0, 0.0, 0.0]
+          "radius": 0.0
+
+    camera_link:
+        - "center": [0.0, 0.0, 0.0]
+          "radius": 0.0

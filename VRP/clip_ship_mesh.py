@@ -20,10 +20,9 @@ import numpy as np
 import trimesh
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-VRP_ROOT    = os.path.dirname(os.path.abspath(__file__))
-ASSETS_PATH = os.path.join(VRP_ROOT, "..", "brov_auv_curobo", "assets")
-INPUT_GLB   = os.path.join(ASSETS_PATH, "environment", "duke_of_lancaster_uk.glb")
-OUTPUT_GLB  = os.path.join(ASSETS_PATH, "environment", "duke_of_lancaster_uk_clipped.glb")
+from VRP.config import PROJECT_ROOT
+INPUT_GLB  = os.path.join(PROJECT_ROOT, "models", "duke_of_lancaster_uk.glb")
+OUTPUT_GLB = os.path.join(PROJECT_ROOT, "models", "duke_of_lancaster_uk_clipped.glb")
 
 MESH_TARGET_LENGTH = 40.0   # metres — longest axis in scaled space
 

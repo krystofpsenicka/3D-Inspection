@@ -27,6 +27,8 @@ pip-wheel-metadata/
 # Data / generated output
 *.pkl
 *.gif
+*.usd
+*.glb
 comparison_results/
 solution_snapshots_*/
 eval_results/

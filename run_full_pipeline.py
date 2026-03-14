@@ -47,10 +47,10 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-# ── Also make 3D-Inspection/methods_analysis importable ──────────────────────
-METHODS_DIR = os.path.join(REPO_ROOT, "3D-Inspection", "methods_analysis")
-if METHODS_DIR not in sys.path:
-    sys.path.insert(0, METHODS_DIR)
+# ── Also make visibility package importable ──────────────────────────────────
+VISIBILITY_DIR = os.path.join(REPO_ROOT, "visibility")
+if VISIBILITY_DIR not in sys.path:
+    sys.path.insert(0, os.path.dirname(VISIBILITY_DIR))
 
 # ── Override VRP config BEFORE importing VRP modules ─────────────────────────
 # We need the mesh to be 50 m, not 40 m.
@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
                    help="Number of AUV robots for VRP.")
     p.add_argument("--mesh_target_length", type=float, default=50.0,
                    help="Target length (m) of the ship along its longest axis.")
-    p.add_argument("--num_surface_points", type=int, default=200_000,
+    p.add_argument("--num_surface_points", type=int, default=100_000,
                    help="Number of surface points to sample on the mesh.")
     p.add_argument("--num_candidates", type=int, default=1500,
                    help="Number of candidate viewpoints to generate.")
@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
                    help="Frustum near plane (m).")
     p.add_argument("--frustum_far", type=float, default=6.0,
                    help="Frustum far plane (m).")
-    p.add_argument("--frustum_fov_deg", type=float, default=30.0,
+    p.add_argument("--frustum_fov_deg", type=float, default=40.0,
                    help="Frustum vertical FOV (degrees).")
     p.add_argument("--frustum_aspect", type=float, default=1.0,
                    help="Frustum aspect ratio (width/height).")
@@ -231,6 +231,8 @@ def main() -> None:
     pcd.orient_normals_consistent_tangent_plane(k=15)
     target_points = np.asarray(pcd.points)
     normals = np.asarray(pcd.normals)
+    from visibility.core import orient_normals_outward
+    normals = orient_normals_outward(target_points, normals)
     logger.info("  Sampled %d points.  Normal estimation done.", len(target_points))
 
     # ══════════════════════════════════════════════════════════════════════
@@ -238,8 +240,7 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[3/9] Generating %d candidate viewpoints …", args.num_candidates)
 
-    # Import from 3D-Inspection (now on sys.path)
-    from sampling import ViewpointSampler  # type: ignore
+    from visibility.core.sampling import ViewpointSampler
 
     sampler = ViewpointSampler(
         mesh=o3d_mesh,
@@ -260,9 +261,8 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[4/9] Computing raycast visibility for %d candidates …", len(candidates))
 
-    # FrustumParams from the 3D-Inspection utils (uses fov_y in radians, aspect, near, far)
-    from utils import FrustumParams, ViewpointResult, OptimizationResult  # type: ignore
-    from raycast_visibility import RaycastingVisibilityQuery  # type: ignore
+    from visibility.core.types import FrustumParams, ViewpointResult, OptimizationResult
+    from visibility.methods.raycast import RaycastingVisibilityQuery
 
     frustum_params = FrustumParams(
         fov_y=np.deg2rad(args.frustum_fov_deg),
@@ -289,7 +289,7 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[5/9] Running greedy set cover at %.0f%% …", args.target_coverage * 100)
 
-    from greedy_optimizer_with_kernel import GreedyOptimizer  # type: ignore
+    from visibility.optimizers.greedy import GreedyOptimizer
 
     optimizer = GreedyOptimizer(raycast_query)
     opt_result: OptimizationResult = optimizer.optimize(

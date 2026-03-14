@@ -1,0 +1,146 @@
+import numpy as np
+import cupy as cp
+from time import time as get_time
+from typing import List, Tuple
+
+from ..core.types import ViewpointResult, OptimizationResult
+from ..core.base import VisibilityQuery
+
+
+class KernelGreedyOptimizerCuda:
+    """GPU-accelerated greedy set-cover optimizer with random-sphere expansion.
+
+    Pre-computes initial visibility for all candidates, applies _expand_gpu()
+    to each, then runs a GPU greedy loop on the expanded visibility matrix.
+    """
+
+    def __init__(self, visibility_query: VisibilityQuery):
+        self.query = visibility_query
+        self.num_points = visibility_query.num_points
+        print(f"[KernelGreedyOptimizerCuda] Initialized with {type(visibility_query).__name__}.")
+
+    def _expand_gpu(self, vp, vis_indices, n_samples=20, radius=0.5):
+        """GPU-accelerated expansion: sample n_samples positions around vp, pick best."""
+        if len(vis_indices) == 0:
+            return vp, vis_indices
+
+        # Generate random offsets on GPU
+        offsets = cp.random.randn(n_samples, 3).astype(cp.float32)
+        norms = cp.linalg.norm(offsets, axis=1, keepdims=True)
+        offsets /= (norms + 1e-12)
+        scales = cp.random.uniform(0, radius, (n_samples, 1)).astype(cp.float32)
+        offsets *= scales
+        vp_gpu = cp.asarray(vp, dtype=cp.float32)
+        samples_gpu = vp_gpu + offsets          # (n_samples, 3) on GPU
+        samples_cpu = samples_gpu.get()         # bring back to call compute_visibility
+
+        # Compute centroid of currently visible points (for direction)
+        visible_centroid = np.mean(self.query.target_points[vis_indices], axis=0)
+
+        best_vp = vp
+        best_vis = vis_indices
+
+        for sample in samples_cpu:
+            direction = visible_centroid - sample
+            direction /= (np.linalg.norm(direction) + 1e-12)
+            vis, _ = self.query.compute_visibility(sample, direction)
+            if len(vis) > len(best_vis):
+                best_vp = sample
+                best_vis = vis
+
+        return best_vp, best_vis
+
+    def optimize(self, candidates: List[Tuple[np.ndarray, np.ndarray]],
+                 target_coverage: float = 0.95,
+                 max_viewpoints: int = 50) -> OptimizationResult:
+        """GPU greedy set-cover with random-sphere expansion."""
+        print(f"\n[KernelGreedyOptimizerCuda] Starting optimization with {len(candidates)} candidates.")
+        start_time = get_time()
+
+        if self.num_points == 0 or not candidates:
+            return OptimizationResult("KernelGreedyCuda_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0)
+
+        # 1. Pre-compute initial visibility for all candidates
+        vis_map, vis_comp_time = self.query.compute_visibility_for_all_candidates(candidates)
+        candidate_list = list(vis_map.keys())
+
+        # 2. Apply _expand_gpu to each candidate
+        print(f"[KernelGreedyOptimizerCuda] Expanding kernels for {len(candidate_list)} candidates...")
+        expanded_entries = []  # list of (expanded_vp, dir_tuple, expanded_vis_indices)
+        for vp_tuple, dir_tuple in candidate_list:
+            vp = np.array(vp_tuple)
+            initial_vis = vis_map[(vp_tuple, dir_tuple)]
+            exp_vp, exp_vis = self._expand_gpu(vp, initial_vis)
+            expanded_entries.append((exp_vp, dir_tuple, exp_vis))
+
+        # 3. Build dense GPU visibility matrix from expanded sets
+        n = len(expanded_entries)
+        V = cp.zeros((n, self.num_points), dtype=cp.uint8)
+        for i, (_, _, vis_idx) in enumerate(expanded_entries):
+            if len(vis_idx) > 0:
+                V[i, cp.asarray(vis_idx, dtype=cp.int64)] = 1
+
+        print(f"[KernelGreedyOptimizerCuda] Visibility matrix on GPU: "
+              f"{V.shape} ({V.nbytes / 1e6:.1f} MB)")
+
+        # 4. GPU greedy loop
+        uncovered = cp.ones(self.num_points, dtype=cp.uint8)
+        candidate_mask = cp.ones(n, dtype=cp.bool_)
+        total_covered = 0
+        target_covered = int(target_coverage * self.num_points)
+
+        selected_viewpoints: List[ViewpointResult] = []
+        optimization_start_time = get_time()
+
+        while total_covered < target_covered and len(selected_viewpoints) < max_viewpoints:
+            if not cp.any(candidate_mask):
+                print("  [KernelGreedyOptimizerCuda] No more candidates. Breaking.")
+                break
+
+            scores = V.astype(cp.float32) @ uncovered.astype(cp.float32)
+            scores[~candidate_mask] = 0
+
+            best = int(cp.argmax(scores))
+            best_score = int(scores[best])
+
+            if best_score == 0:
+                print("  [KernelGreedyOptimizerCuda] No candidate provides new coverage. Stopping.")
+                break
+
+            newly_covered_mask = V[best] & uncovered
+            uncovered &= ~V[best]
+            candidate_mask[best] = False
+
+            newly_covered_indices = cp.where(newly_covered_mask)[0].get()
+            total_covered = self.num_points - int(cp.sum(uncovered))
+            coverage = total_covered / self.num_points
+
+            exp_vp, best_dir_tuple, _ = expanded_entries[best]
+
+            selected_viewpoints.append(ViewpointResult(
+                position=exp_vp,
+                direction=np.array(best_dir_tuple),
+                visible_indices=newly_covered_indices,
+                coverage_score=best_score / self.num_points,
+                computation_time=0.0,
+            ))
+
+            print(f"  [KernelGreedyOptimizerCuda] Selected VP {len(selected_viewpoints)}: "
+                  f"+{best_score} points, Total coverage={coverage * 100:.1f}%")
+
+        optimization_time = get_time() - optimization_start_time
+        total_time = get_time() - start_time
+        coverage = total_covered / self.num_points
+        redundancy = self.query.compute_redundancy(selected_viewpoints)
+
+        return OptimizationResult(
+            method_name="KernelGreedyCuda",
+            viewpoints=selected_viewpoints,
+            total_coverage=coverage,
+            num_viewpoints=len(selected_viewpoints),
+            total_time=total_time,
+            coverage_per_viewpoint=[vp.coverage_score for vp in selected_viewpoints],
+            redundancy=redundancy,
+            visibility_computation_time=vis_comp_time,
+            optimization_time=optimization_time,
+        )

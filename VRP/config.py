@@ -8,12 +8,11 @@ import os
 # ── Paths ──────────────────────────────────────────────────────────────────────
 VRP_ROOT      = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT  = os.path.dirname(VRP_ROOT)
-BROV_ROOT     = os.path.join(PROJECT_ROOT, "brov_auv_curobo")
-ASSETS_PATH   = os.path.join(BROV_ROOT, "assets")
-CONFIGS_PATH  = os.path.join(BROV_ROOT, "configs")
+ASSETS_PATH   = os.path.join(PROJECT_ROOT, "assets")
+CONFIGS_PATH  = os.path.join(PROJECT_ROOT, "configs")
 ROBOT_CFG_DIR = os.path.join(CONFIGS_PATH, "robot")
 
-MESH_PATH = os.path.join(ASSETS_PATH, "environment", "duke_of_lancaster_uk_clipped.glb")
+MESH_PATH = os.path.join(PROJECT_ROOT, "models", "duke_of_lancaster_uk_clipped.glb")
 # Pose [x, y, z, qw, qx, qy, qz] for the mesh in the Isaac Sim stage
 # 180° rotation about X-axis (qw=0, qx=1) to flip the GLB mesh right-side up.
 MESH_POSE = [0, 0, 1.5, 0.0, 1.0, 0.0, 0.0]
