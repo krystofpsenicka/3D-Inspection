@@ -32,141 +32,18 @@ from .config import (
     VOXEL_RESOLUTION,
 )
 
+# ── Re-export core types from shared ──────────────────────────────────────────
+from shared.occupancy_grid import (
+    OccupancyGrid,
+    inflate_grid,
+    downsample_occupancy_grid,
+)
 
-@dataclass
-class OccupancyGrid:
-    """3D binary occupancy grid in voxel coordinates.
-
-    Attributes
-    ----------
-    grid : np.ndarray, dtype=bool, shape (Nx, Ny, Nz)
-        ``True`` = occupied / collision, ``False`` = free.
-    origin : np.ndarray (3,)
-        World position of voxel (0, 0, 0).
-    resolution : float
-        Metres per voxel edge.
-    raw_grid : np.ndarray | None
-        Pre-inflation obstacle grid (mesh + cuboids, no dilation).
-        Used by the ESDF builder so cuRobo collision spheres are not
-        double-counted with the inflation radius.
-    mesh_scale : float | None
-        Uniform scale factor applied to the mesh so its longest axis
-        equals ``MESH_TARGET_LENGTH``.  Needed by visualisation so the
-        rendered mesh matches the occupancy grid.
-    """
-
-    grid: np.ndarray
-    origin: np.ndarray
-    resolution: float = VOXEL_RESOLUTION
-    raw_grid: Optional[np.ndarray] = None
-    mesh_scale: Optional[float] = None
-
-    # ── Coordinate transforms ─────────────────────────────────────────────────
-
-    def world_to_voxel(self, world_xyz: np.ndarray) -> np.ndarray:
-        """Convert world-frame ``(..., 3)`` coords → integer voxel indices.
-
-        Returned indices are *not* clipped; callers should use
-        ``is_valid_voxel`` before indexing into the grid.
-        """
-        return np.floor(
-            (world_xyz - self.origin) / self.resolution
-        ).astype(int)
-
-    def voxel_to_world(self, voxel_ijk: np.ndarray) -> np.ndarray:
-        """Convert integer voxel indices ``(..., 3)`` → world-frame centre (m)."""
-        return voxel_ijk.astype(float) * self.resolution + self.origin + self.resolution * 0.5
-
-    def is_valid_voxel(self, ijk: np.ndarray) -> bool:
-        """Return True if ``ijk`` is inside the grid bounds."""
-        ijk = np.asarray(ijk)
-        return bool(
-            np.all(ijk >= 0) and np.all(ijk < np.array(self.grid.shape))
-        )
-
-    def is_free_world(self, world_xyz: np.ndarray) -> bool:
-        """Return True if the world-frame point is in a free voxel."""
-        ijk = self.world_to_voxel(world_xyz)
-        if not self.is_valid_voxel(ijk):
-            return False
-        return not bool(self.grid[tuple(ijk)])
-
-    def world_to_flat_index(self, world_xyz: np.ndarray) -> int:
-        """Return the flat (C-order) grid index for a world-frame point."""
-        ijk = self.world_to_voxel(world_xyz)
-        return int(np.ravel_multi_index(tuple(ijk), self.grid.shape))
-
-    def flat_index_to_world(self, flat_idx: int) -> np.ndarray:
-        """Inverse of ``world_to_flat_index``."""
-        ijk = np.array(np.unravel_index(flat_idx, self.grid.shape))
-        return self.voxel_to_world(ijk)
-
-    @property
-    def shape(self) -> Tuple[int, int, int]:
-        return tuple(self.grid.shape)  # type: ignore[return-value]
-
-    @property
-    def num_free(self) -> int:
-        return int(np.sum(~self.grid))
-
-    @property
-    def num_occupied(self) -> int:
-        return int(np.sum(self.grid))
-
-    # ── Sampling ──────────────────────────────────────────────────────────────
-
-    def sample_random_free_points(
-        self, n: int, rng: Optional[np.random.RandomState] = None
-    ) -> np.ndarray:
-        """Return ``(n, 3)`` random world-frame points inside free voxels."""
-        if rng is None:
-            rng = np.random.RandomState()
-        free_ijk = np.argwhere(~self.grid)           # (F, 3)
-        if len(free_ijk) < n:
-            raise ValueError(
-                f"Grid has only {len(free_ijk)} free voxels; requested {n}."
-            )
-        chosen = free_ijk[rng.choice(len(free_ijk), n, replace=False)]
-        # Random sub-voxel offset for variety
-        offsets = rng.uniform(0.0, self.resolution, size=(n, 3))
-        return chosen.astype(float) * self.resolution + self.origin + offsets
-
-    # ── Persistence ───────────────────────────────────────────────────────────
-
-    def save(self, path: str) -> None:
-        """Pickle the grid to disk for caching."""
-        with open(path, "wb") as f:
-            pickle.dump(self, f)
-
-    @classmethod
-    def load(cls, path: str) -> "OccupancyGrid":
-        with open(path, "rb") as f:
-            return pickle.load(f)
+# Keep the old private name as an alias for backward compatibility
+_inflate_grid = inflate_grid
 
 
-# ── Grid builder ─────────────────────────────────────────────────────────────
-
-def _inflate_grid(grid: np.ndarray, inflation_voxels: int) -> np.ndarray:
-    """Morphological dilation of the obstacle grid by *inflation_voxels* voxels.
-
-    Uses scipy's binary_dilation which is equivalent to a 3D sphere structuring
-    element of radius ``inflation_voxels``.  This expands every obstacle by
-    the robot's collision radius so that path planners can treat the robot
-    as a point.
-    """
-    from scipy.ndimage import binary_dilation
-    # Build a spherical structuring element
-    r = inflation_voxels
-    d = 2 * r + 1
-    se = np.zeros((d, d, d), dtype=bool)
-    cx, cy, cz = r, r, r
-    for ix in range(d):
-        for iy in range(d):
-            for iz in range(d):
-                if (ix - cx) ** 2 + (iy - cy) ** 2 + (iz - cz) ** 2 <= r ** 2:
-                    se[ix, iy, iz] = True
-    return binary_dilation(grid, structure=se)
-
+# ── Grid builder helpers ─────────────────────────────────────────────────────
 
 def _add_cuboid_obstacles(
     grid: np.ndarray,
@@ -248,6 +125,7 @@ def build_occupancy_grid(
     extra_free_points: Optional[np.ndarray] = None,
     cache_path: Optional[str] = None,
     force_rebuild: bool = False,
+    fill_interior: bool = True,
 ) -> OccupancyGrid:
     """Build a 3D occupancy grid from the environment mesh + static obstacles.
 
@@ -277,6 +155,11 @@ def build_occupancy_grid(
         If given, load from disk when available; save after building.
     force_rebuild
         Ignore any cached grid and rebuild from scratch.
+    fill_interior : bool
+        If ``True`` (default), fill the interior of the mesh so the hull is
+        a solid obstacle.  Set to ``False`` for a surface-only occupancy grid
+        (used by viewpoint sampling to allow free space on both sides of the
+        mesh shell).
 
     Returns
     -------
@@ -289,8 +172,9 @@ def build_occupancy_grid(
         print(f"[OccupancyGrid] Loading cached grid from {cache_path}")
         return OccupancyGrid.load(cache_path)
 
+    fill_msg = "filled" if fill_interior else "surface-only"
     print(f"[OccupancyGrid] Building grid from {mesh_path} "
-          f"(res={resolution}m, inflation={inflation_voxels}vox) …")
+          f"(res={resolution}m, inflation={inflation_voxels}vox, {fill_msg}) …")
 
     # ── 1. Load mesh ──────────────────────────────────────────────────────────
     mesh_scale_factor: Optional[float] = None
@@ -362,17 +246,25 @@ def build_occupancy_grid(
     raw_grid = np.zeros(grid_shape, dtype=bool)
 
     # ── 3. Voxelise mesh ──────────────────────────────────────────────────────
+    filled_raw_grid = None
     if mesh_available:
         # trimesh voxel grid pitch = resolution
-        vg = mesh.voxelized(pitch=resolution)
-        # Fill the interior so the hull is a solid obstacle, not just a
-        # thin surface shell.  This is critical for both A* pathfinding
-        # and the ESDF (otherwise the SDF is near-zero everywhere and
-        # cuRobo plans trajectories through the hull).
-        vg = vg.fill()
+        vg_surface = mesh.voxelized(pitch=resolution)
+        vg_filled = vg_surface.fill()
+
+        if fill_interior:
+            # Fill the interior so the hull is a solid obstacle, not just a
+            # thin surface shell.  This is critical for both A* pathfinding
+            # and the ESDF (otherwise the SDF is near-zero everywhere and
+            # cuRobo plans trajectories through the hull).
+            vg = vg_filled
+        else:
+            vg = vg_surface
+
         # vg.matrix is a dense bool array; indices are relative to vg.origin
         vox_matrix = vg.matrix
-        print(f"[OccupancyGrid] Filled voxelization: "
+        fill_label = "Filled" if fill_interior else "Surface-only"
+        print(f"[OccupancyGrid] {fill_label} voxelization: "
               f"{int(vox_matrix.sum())} voxels occupied "
               f"(shape {vox_matrix.shape})")
         # trimesh stores the voxel grid origin in the transform matrix
@@ -396,6 +288,33 @@ def build_occupancy_grid(
         ]
         print(f"[OccupancyGrid] Mesh voxels occupied: {int(raw_grid.sum())}")
 
+        # Also store the filled voxelization for two-EDT SDF computation.
+        # When fill_interior=True, this is the same as raw_grid.
+        # When fill_interior=False, this gives us the filled interior needed
+        # for robust SDF sign determination.
+        filled_raw_grid = np.zeros(grid_shape, dtype=bool)
+        vg_f = vg_filled
+        vox_world_origin_f = np.asarray(vg_f.transform[:3, 3])
+        vox_origin_ijk_f = np.floor(
+            (vox_world_origin_f - origin) / resolution
+        ).astype(int)
+        vox_matrix_f = vg_f.matrix
+        dst_min_f = np.maximum(vox_origin_ijk_f, 0)
+        src_min_f = np.maximum(-vox_origin_ijk_f, 0)
+        dst_max_f = np.minimum(vox_origin_ijk_f + np.array(vox_matrix_f.shape), grid_shape)
+        src_max_f = src_min_f + (dst_max_f - dst_min_f)
+        filled_raw_grid[
+            dst_min_f[0]: dst_max_f[0],
+            dst_min_f[1]: dst_max_f[1],
+            dst_min_f[2]: dst_max_f[2],
+        ] = vox_matrix_f[
+            src_min_f[0]: src_max_f[0],
+            src_min_f[1]: src_max_f[1],
+            src_min_f[2]: src_max_f[2],
+        ]
+        print(f"[OccupancyGrid] Filled voxelization stored: "
+              f"{int(filled_raw_grid.sum())} voxels")
+
     # ── 4. Mark static cuboid obstacles ───────────────────────────────────────
     _add_cuboid_obstacles(raw_grid, origin, resolution, STATIC_OBSTACLES)
     print(f"[OccupancyGrid] After cuboids: {int(raw_grid.sum())} occupied voxels")
@@ -405,17 +324,27 @@ def build_occupancy_grid(
 
     # ── 6. Inflate by robot radius ───────────────────────────────────────────
     if inflation_voxels > 0:
-        inflated_grid = _inflate_grid(raw_grid, inflation_voxels)
+        inflated_grid = inflate_grid(raw_grid, inflation_voxels)
     else:
         inflated_grid = raw_grid
     print(f"[OccupancyGrid] After inflation: {int(inflated_grid.sum())} occupied  "
           f"({int((~inflated_grid).sum())} free)")
+
+    # ── 5b. Preserve filled raw grid (for two-EDT SDF) ───────────────────
+    # Add cuboid obstacles to filled_raw_grid too (they are solid obstacles)
+    if filled_raw_grid is not None:
+        _add_cuboid_obstacles(filled_raw_grid, origin, resolution, STATIC_OBSTACLES)
+        filled_raw_copy = filled_raw_grid.copy()
+    else:
+        # No mesh — filled is same as raw
+        filled_raw_copy = raw_grid_copy.copy()
 
     og = OccupancyGrid(
         grid=inflated_grid,
         origin=origin,
         resolution=resolution,
         raw_grid=raw_grid_copy,
+        filled_raw_grid=filled_raw_copy,
         mesh_scale=mesh_scale_factor,
     )
 

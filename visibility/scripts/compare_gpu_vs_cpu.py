@@ -196,13 +196,8 @@ def main():
           f"mesh with {len(np.asarray(mesh.triangles))} triangles")
 
     # Generate candidate viewpoints
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far)
-    candidates = sampler.sample_outside_mesh(
-        num_candidates=NUM_CANDIDATE_VPs,
-        offset_scale=0.95,
-        pos_noise_std=0.05,
-        dir_noise_std=0.05,
-    )
+    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    candidates = sampler.sample_outside_mesh(num_candidates=NUM_CANDIDATE_VPs)
 
     # =====================================================================
     # Initialize queries

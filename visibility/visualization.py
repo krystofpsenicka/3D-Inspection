@@ -119,6 +119,96 @@ class Visualizer:
         o3d.visualization.draw_geometries(geometries,
                                           window_name=f"Visibility Visualization (Candidate {index_to_visualize})")
 
+    def visualize_all_visibility_results(self,
+                                         visibility_map: Dict[Tuple[Tuple[float, ...], Tuple[float, ...]], np.ndarray]):
+        """Visualizes all viewpoints together in a single window with per-viewpoint colors."""
+        if not visibility_map:
+            print("[Visualizer] Error: Visibility map is empty.")
+            return
+
+        geometries = []
+
+        base_mesh = o3d.geometry.TriangleMesh(self.mesh)
+        base_mesh.paint_uniform_color([0.8, 0.8, 0.8])
+        base_mesh.compute_vertex_normals()
+        geometries.append(base_mesh)
+
+        candidate_list = list(visibility_map.keys())
+        num_vps = len(candidate_list)
+
+        # Generate colors, skipping any too close to red (reserved for uncovered)
+        raw_colors = plt.cm.tab20(np.linspace(0, 1, max(20, num_vps)))
+        vp_colors = []
+        for c in raw_colors:
+            r, g, b = c[:3]
+            if r > 0.7 and g < 0.3 and b < 0.3:
+                continue
+            vp_colors.append((r, g, b))
+
+        # Compute uncovered points
+        all_covered = set()
+        for visible_indices in visibility_map.values():
+            all_covered.update(visible_indices.tolist())
+        uncovered_indices = set(range(self.num_points)) - all_covered
+
+        if uncovered_indices:
+            uncovered_pcd = o3d.geometry.PointCloud()
+            uncovered_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(uncovered_indices)])
+            uncovered_pcd.paint_uniform_color([1.0, 0.0, 0.0])
+            geometries.append(uncovered_pcd)
+
+        for i, key in enumerate(candidate_list):
+            pos = np.array(key[0])
+            direction = np.array(key[1])
+            visible_indices = visibility_map[key]
+            color = list(vp_colors[i % len(vp_colors)])
+
+            # Sphere
+            vp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.15)
+            vp_sphere.translate(pos)
+            vp_sphere.paint_uniform_color(color)
+            vp_sphere.compute_vertex_normals()
+            geometries.append(vp_sphere)
+
+            # Frustum
+            frustum = self.create_frustrum_lineset(pos, direction, self.frustum_params)
+            frustum.paint_uniform_color(color)
+            geometries.append(frustum)
+
+            # Direction arrow
+            arrow_length = 0.5
+            arrow_end = pos + direction * arrow_length
+            arrow = o3d.geometry.LineSet()
+            arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
+            arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
+            arrow.paint_uniform_color(color)
+            geometries.append(arrow)
+
+            # Visible points
+            if len(visible_indices) > 0:
+                visible_pcd = o3d.geometry.PointCloud()
+                visible_pcd.points = o3d.utility.Vector3dVector(self.target_points[visible_indices])
+                visible_pcd.paint_uniform_color(color)
+                geometries.append(visible_pcd)
+
+        print(f"\n[Visualizer] Showing all {num_vps} viewpoints together "
+              f"({self.num_points - len(uncovered_indices)}/{self.num_points} covered).")
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name="All Viewpoints Visibility", width=1920, height=1080)
+
+        render_option = vis.get_render_option()
+        render_option.point_size = 4.0
+        render_option.line_width = 2.0
+        render_option.mesh_show_back_face = True
+
+        for geom in geometries:
+            vis.add_geometry(geom)
+
+        print("Press Q to close visualization")
+        vis.run()
+        vis.destroy_window()
+
     def _create_solution_geometries(self, result: OptimizationResult):
         """Helper to create the list of geometries for solution visualization."""
         geometries = []
@@ -364,6 +454,58 @@ class Visualizer:
 
         o3d.visualization.draw_geometries(geometries,
                                           window_name=f"Triangle Visibility (Candidate {index_to_visualize})")
+
+    def visualize_free_space(self,
+                             outside_positions: np.ndarray, outside_weights: np.ndarray,
+                             inside_positions: np.ndarray, inside_weights: np.ndarray,
+                             outside_colormap: str = "Reds",
+                             inside_colormap: str = "Blues",
+                             point_size: float = 3.0):
+        """Visualize feasible sampling regions as colored point clouds over a wireframe mesh."""
+        geometries = []
+
+        # Wireframe mesh
+        wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.mesh)
+        wireframe.paint_uniform_color([0.7, 0.7, 0.7])
+        geometries.append(wireframe)
+
+        for positions, weights, cmap_name in [
+            (outside_positions, outside_weights, outside_colormap),
+            (inside_positions, inside_weights, inside_colormap),
+        ]:
+            if len(positions) == 0:
+                continue
+            # Normalize weights to [0, 1]
+            w_min, w_max = weights.min(), weights.max()
+            if w_max > w_min:
+                norm_w = (weights - w_min) / (w_max - w_min)
+            else:
+                norm_w = np.ones_like(weights)
+            cmap = plt.cm.get_cmap(cmap_name)
+            rgba = cmap(norm_w)
+            colors = rgba[:, :3]
+
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(positions)
+            pcd.colors = o3d.utility.Vector3dVector(colors)
+            geometries.append(pcd)
+
+        print(f"[Visualizer] Free-space heatmap: "
+              f"{len(outside_positions)} outside, {len(inside_positions)} inside points")
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name="Free-Space Sampling Heatmap", width=1920, height=1080)
+
+        render_option = vis.get_render_option()
+        render_option.point_size = point_size
+        render_option.line_width = 1.0
+
+        for geom in geometries:
+            vis.add_geometry(geom)
+
+        print("Press Q to close visualization")
+        vis.run()
+        vis.destroy_window()
 
     def create_frustrum_lineset(self, viewpoint, direction, params):
         """Create a LineSet representing the frustum volume."""

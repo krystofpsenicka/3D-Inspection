@@ -13,6 +13,8 @@ from time import time as get_time
 from visibility.core import FrustumParams, ViewpointSampler, orient_normals_outward, get_frustum_basis
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
+from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
+from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
 
 
 def load_mesh(mesh_path: str | None) -> o3d.geometry.TriangleMesh:
@@ -104,7 +106,7 @@ def main():
     )
     parser.add_argument("mesh_path", nargs="?", default=None,
                         help="Path to mesh file (default: sphere r=5)")
-    parser.add_argument("--method", choices=["epsilon"], default="epsilon",
+    parser.add_argument("--method", choices=["epsilon", "epsilon_cuda"], default="epsilon",
                         help="Method to compare against raycast (default: epsilon)")
     parser.add_argument("--num-viewpoints", type=int, default=5,
                         help="Number of viewpoints to evaluate (default: 5)")
@@ -127,16 +129,19 @@ def main():
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
     # --- Viewpoints ---
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far)
+    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
     viewpoints = sampler.sample_outside_mesh(num_candidates=args.num_viewpoints)
 
     # --- Instantiate both queries ---
-    gt_query = RaycastingVisibilityQuery(mesh, target_points, normals, frustum_params)
+    gt_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
 
-    if args.method == "epsilon":
-        pred_query = EpsilonVisibilityQuery(mesh, target_points, normals, frustum_params)
-    else:
-        raise ValueError(f"Unknown method: {args.method}")
+    match args.method:
+        case "epsilon":
+            pred_query = EpsilonVisibilityQuery(mesh, target_points, normals, frustum_params)
+        case "epsilon_cuda":
+            pred_query = EpsilonVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
+        case _:
+            raise ValueError(f"Unknown method: {args.method}")
 
     print(f"\nComparing '{args.method}' vs raycast on {len(viewpoints)} viewpoints "
           f"({len(target_points)} surface points)...\n")

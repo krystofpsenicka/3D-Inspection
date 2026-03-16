@@ -25,13 +25,11 @@ class FrustumParams:
 @dataclass
 class EpsilonHyperparams:
     """Tunable hyperparameters for epsilon-visibility."""
-    gamma_method: str = "median"         # how to aggregate front-facing distances for γ
-                                         # options: median, mean, p10, p25, p75, p90
-    epsilon_scale: float = 1.0           # multiplier on computed ε (0.5 = finer, 2.0 = coarser)
-    delta_k: int = 5                     # k for k-NN in δ estimation
-    delta_agg: str = "max"               # aggregation for δ: max, p99, p95, p90
-    back_face_threshold: float = -1e-6   # dot-product threshold for back-face check
-
+    gamma_method: str = "p30"
+    epsilon_scale: float = 1.2
+    delta_k: int = 8
+    delta_agg: str = "max"
+    back_face_threshold: float = -1e-6
 
 @dataclass
 class ViewpointResult:

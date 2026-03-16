@@ -208,15 +208,10 @@ def run_comparison_pipeline():
     )
 
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far)
+    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
-    candidates = sampler.sample_outside_mesh(
-        num_candidates=NUM_CANDIDATE_VPs,
-        offset_scale=0.95,
-        pos_noise_std=0.05,
-        dir_noise_std=0.05,
-    )
+    candidates = sampler.sample_outside_mesh(num_candidates=NUM_CANDIDATE_VPs)
 
     start_time_rc_init = get_time()
     visibility_query_raycast = RaycastingVisibilityQuery(

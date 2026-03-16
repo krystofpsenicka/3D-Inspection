@@ -236,6 +236,15 @@ def main() -> None:
     logger.info("  Sampled %d points.  Normal estimation done.", len(target_points))
 
     # ══════════════════════════════════════════════════════════════════════
+    # STAGE 2b – Build surface-only occupancy grid for sampling
+    # ══════════════════════════════════════════════════════════════════════
+    logger.info("[2b/9] Building surface-only occupancy grid for sampling …")
+    from VRP.occupancy_grid import build_occupancy_grid
+    sampling_og = build_occupancy_grid(fill_interior=False)
+    logger.info("  Sampling OG shape: %s  res=%.2f m  free=%d",
+                sampling_og.grid.shape, sampling_og.resolution, sampling_og.num_free)
+
+    # ══════════════════════════════════════════════════════════════════════
     # STAGE 3 – Generate candidate viewpoints + filter below mesh
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[3/9] Generating %d candidate viewpoints …", args.num_candidates)
@@ -247,12 +256,11 @@ def main() -> None:
         target_points=target_points,
         normals=normals,
         frustum_far=args.frustum_far,
+        collision_radius=_vrp_cfg.ROBOT_RADIUS,
+        occupancy_grid=sampling_og,
     )
     candidates = sampler.sample_outside_mesh(
         num_candidates=args.num_candidates,
-        offset_scale=1.0,
-        pos_noise_std=0.3,    # scaled up for 50 m mesh (was 0.05)
-        dir_noise_std=0.01,
     )
     logger.info("  Generated %d candidates.", len(candidates))
 
