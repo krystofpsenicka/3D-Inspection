@@ -21,7 +21,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from .config import (
+from ..config import (
     ASSETS_PATH,
     CONFIGS_PATH,
     MESH_PATH,
@@ -29,8 +29,8 @@ from .config import (
     MESH_TARGET_LENGTH,
     STATIC_OBSTACLES,
 )
-from .route_executor import ExecutionResult
-from .utils import load_local_robot_config
+from ..routing.route_executor import ExecutionResult
+from ..utils import load_local_robot_config
 
 logger = logging.getLogger(__name__)
 

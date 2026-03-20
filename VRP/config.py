@@ -23,8 +23,7 @@ MESH_TARGET_LENGTH = 40.0
 
 # ── Occupancy grid ─────────────────────────────────────────────────────────────
 VOXEL_RESOLUTION = 0.10        # metres per voxel edge
-# ESDF voxel resolution (metres). Defaults to VOXEL_RESOLUTION but can be
-# tuned independently for the cuRobo VOXEL collision checker.
+# ESDF voxel resolution (metres). Defaults to VOXEL_RESOLUTION.
 ESDF_VOXEL_RESOLUTION = VOXEL_RESOLUTION
 ROBOT_RADIUS     = 0.35        # collision sphere radius (brov.yml)
 # Inflate occupancy by this many voxels on each side
@@ -32,38 +31,10 @@ INFLATION_VOXELS = int(ROBOT_RADIUS / VOXEL_RESOLUTION) + 1   # ≥ 4
 
 # ── Robot physical / planning constants (ported from run_multi_auv_waypoints.py) ─
 BROV_CUBOID_DIMS   = [0.7, 0.5, 0.35]
-OBSTACLE_CUBOID_DIMS = [d * 2 for d in BROV_CUBOID_DIMS]      # Minkowski sum
 TRAJOPT_HORIZON    = 64
 
-# Static obstacles in the environment (same as reference script)
-STATIC_OBSTACLES = {
-    "rock_1":         {"dims": [0.5, 0.5, 0.4], "pose": [2.0,  1.0, 0.5,  1.0, 0.0, 0.0, 0.0]},
-    "rock_2":         {"dims": [0.4, 0.3, 0.3], "pose": [1.5, -1.0, 0.3,  1.0, 0.0, 0.0, 0.0]},
-    "coral_structure":{"dims": [0.3, 0.3, 0.6], "pose": [3.0,  0.0, 0.4,  1.0, 0.0, 0.0, 0.0]},
-}
-
-# ── cuRobo hardened planner settings (per PDF spec) ───────────────────────────
-CUROBO_NUM_TRAJOPT_SEEDS      = 1024
-CUROBO_NUM_GRAPH_SEEDS        = 1024
-CUROBO_INTERPOLATION_DT       = 0.02
-CUROBO_TRAJOPT_TSTEPS         = 64
-CUROBO_FIX_TERMINAL_ACTION    = True
-CUROBO_MAX_ATTEMPTS           = 10
-
-# dt-scaling retry ladder (interpolation_dt values to try in order)
-CUROBO_DT_LADDER = [0.02, 0.05, 0.10]
-
-# Seeds used when constructing MotionGen (pre-allocated GPU buffer).
-# 1024 is ideal for single-robot but OOMs on 24 GB with multiple robots.
-# Match the reference script (run_multi_auv_waypoints.py) for multi-robot.
-CUROBO_NUM_SEEDS_MULTI = 12
-
-# Position-only fallback orientation weights: [rot_x, rot_y, rot_z, pos_x, pos_y, pos_z]
-CUROBO_POS_ONLY_WEIGHTS = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
-
-# Hard wall-clock budget per segment (seconds). Planning is aborted after this
-# regardless of how many dt-ladder / planner layers remain.
-SEGMENT_PLAN_BUDGET_S = 45.0
+# Static obstacles – empty dict; callers iterate over it, so no-op.
+STATIC_OBSTACLES = {}
 
 # ── cuOpt / cuGraph subprocess ─────────────────────────────────────────────────
 # Path to the Python binary inside the RAPIDS conda env.
@@ -119,6 +90,15 @@ SPACE_TIME_DWELL_S = 2.0
 # worst-case spline deviation.
 SPLINE_SAFETY_VOXELS = 1
 
+# ── Trajectory replay ─────────────────────────────────────────────────────────
+TRAJ_DT = 0.02                   # seconds – replay sample period
+
+# ── Space-Time A* tuning ─────────────────────────────────────────────────────
+ST_ASTAR_MAX_EXPANSIONS = 500_000   # default expansion budget
+OMPL_SIMPLIFY_MAX_TIME = 0.5       # seconds – OMPL path simplifier budget
+SPACE_TIME_HOP_DISTANCE = 2.0      # metres – stride for straight-line hops
+SNAP_TO_FREE_MAX_RADIUS = 10       # BFS shells for snap-to-free
+
 # ── Camera geometry (from URDF kinematic chain) ───────────────────────────────
 # Total offset of the camera_optical_frame from base_link along the robot's
 # forward (+X) axis at zero joint angles (0.20 + 0.02 + 0.02 + 0.06 m).
@@ -131,26 +111,3 @@ AUV_MAX_ACCEL    = 1.5          # m/s² (for future trapezoidal profile)
 # ── Isaac Sim replay ───────────────────────────────────────────────────────────
 WAIT_STEPS_PER_WAYPOINT = 25   # sim steps to hold at each waypoint
 STEPS_PER_WAYPOINT      = 64   # estimated motion steps per waypoint leg (for traffic-light timing)
-
-# ── OceanSim underwater visualisation ─────────────────────────────────────────
-# Which BROV model to use from OceanSim assets (Bluerov/BROV_low.usd or BROV_high.usd).
-# Use BROV_high.usd for fidelity when running a single robot; BROV_low.usd is faster
-# with multiple robots.
-OCEANSIM_BROV_USD = "BROV_low.usd"
-
-# OceanSim UW_Camera rendering parameters (Akkaynak & Treibitz revised model):
-#   [0:3]  backscatter_value  – RGB (0-1): colour of the scattered light haze
-#   [3:6]  backscatter_coeff  – RGB: how quickly backscatter builds up with distance
-#   [6:9]  attenuation_coeff  – RGB: how quickly direct signal attenuates with distance
-# Defaults represent typical coastal / slightly turbid water.  Tune via the
-# OceanSim Color Picker tool (OceanSim → Color Picker in the Isaac Sim UI).
-OCEANSIM_UW_PARAMS: list = [
-    0.0,  0.31, 0.24,   # backscatter value  (R, G, B)
-    0.05, 0.05, 0.20,   # backscatter coeff  (R, G, B)
-    0.05, 0.05, 0.05,   # attenuation coeff  (R, G, B)
-]
-
-# Z-coordinate of the water surface in the stage (metres, stage-up = +Z).
-# The water-surface USD is translated to this height; the barometer sensor also
-# uses this value.  Set to the approximate top of the scene / above the ship.
-OCEANSIM_WATER_SURFACE_Z = 14.0

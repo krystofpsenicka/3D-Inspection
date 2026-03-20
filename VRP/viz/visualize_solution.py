@@ -57,38 +57,6 @@ def parse_args() -> argparse.Namespace:
         help="Launch Isaac Sim without a GUI window.",
     )
     p.add_argument(
-        "--oceansim",
-        action="store_true",
-        help=(
-            "Use the OceanSim underwater renderer instead of the vanilla Isaac Sim "
-            "visualizer.  Requires the isaaclab conda environment with the OceanSim "
-            "extension installed."
-        ),
-    )
-    p.add_argument(
-        "--no_uw_camera",
-        action="store_true",
-        help=(
-            "When --oceansim is active, skip attaching the OceanSim UW_Camera sensor "
-            "(faster startup, useful for batch evaluation runs)."
-        ),
-    )
-    p.add_argument(
-        "--no_caustics",
-        action="store_true",
-        help=(
-            "When --oceansim is active, skip enabling RTX caustics "
-            "(useful on GPUs / drivers where caustics are unsupported)."
-        ),
-    )
-    p.add_argument(
-        "--uw_camera_robot",
-        type=int,
-        default=0,
-        metavar="IDX",
-        help="Robot index (0-based) that gets the UW_Camera attached (--oceansim only).",
-    )
-    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable DEBUG logging.",
@@ -128,27 +96,10 @@ def main() -> None:
         num_robots, total_wps, total_steps,
     )
 
-    # ── Replay in Isaac Sim (vanilla or OceanSim) ────────────────────
-    if args.oceansim:
-        log.info(
-            "Launching OceanSim underwater replay "
-            "(headless=%s, uw_camera=%s, caustics=%s) …",
-            args.headless,
-            not args.no_uw_camera,
-            not args.no_caustics,
-        )
-        from VRP.visualization_oceansim import replay_in_oceansim
-        replay_in_oceansim(
-            exec_result,
-            headless=args.headless,
-            uw_camera=not args.no_uw_camera,
-            uw_camera_robot_idx=args.uw_camera_robot,
-            caustics=not args.no_caustics,
-        )
-    else:
-        log.info("Launching vanilla Isaac Sim replay (headless=%s) …", args.headless)
-        from VRP.visualization import replay_in_isaac_sim
-        replay_in_isaac_sim(exec_result, headless=args.headless)
+    # ── Replay in Isaac Sim ──────────────────────────────────────────
+    log.info("Launching Isaac Sim replay (headless=%s) …", args.headless)
+    from VRP.viz.visualization import replay_in_isaac_sim
+    replay_in_isaac_sim(exec_result, headless=args.headless)
 
 
 if __name__ == "__main__":

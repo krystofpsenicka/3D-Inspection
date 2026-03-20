@@ -7,8 +7,6 @@ Builds an inflated voxel occupancy grid from the environment mesh
 The grid is the central data structure shared by:
   • gpu_distance_matrix.py  (cuGraph / A* cost-matrix input)
   • traffic_light.py        (path corridor overlap checks)
-  • trajectory_planner.py   (OMPL RRT* obstacle input)
-
 All coordinates below use the **world** frame (metres).
 """
 
@@ -22,7 +20,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from .config import (
+from ..config import (
     INFLATION_VOXELS,
     MESH_PATH,
     MESH_POSE,
@@ -32,15 +30,16 @@ from .config import (
     VOXEL_RESOLUTION,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # ── Re-export core types from shared ──────────────────────────────────────────
 from shared.occupancy_grid import (
     OccupancyGrid,
     inflate_grid,
     downsample_occupancy_grid,
 )
-
-# Keep the old private name as an alias for backward compatibility
-_inflate_grid = inflate_grid
 
 
 # ── Grid builder helpers ─────────────────────────────────────────────────────
@@ -73,48 +72,100 @@ def _add_cuboid_obstacles(
 
 def get_mesh_world_bounds(
     mesh_path: str = MESH_PATH,
+    mesh_target_length: float = MESH_TARGET_LENGTH,
+    mesh_pose: list = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Return ``(bounds_min, bounds_max)`` of the environment mesh in world frame.
 
-    Applies the same uniform scale (``MESH_TARGET_LENGTH``) and pose
-    (``MESH_POSE``) that ``build_occupancy_grid`` uses, but skips
-    voxelisation.  Use this to determine depot / start positions *before*
-    the grid is built.
+    Applies the same uniform scale and pose that ``build_occupancy_grid``
+    uses, but skips voxelisation.  Use this to determine depot / start
+    positions *before* the grid is built.
 
     Returns
     -------
     bounds_min, bounds_max : np.ndarray (3,)
         World-frame axis-aligned bounding box corners after scale + pose.
-
-    Raises
-    ------
-    FileNotFoundError
-        If ``mesh_path`` does not exist.
     """
-    import trimesh
-    from scipy.spatial.transform import Rotation as R
+    from shared.mesh_loader import load_and_transform_mesh
 
-    if not os.path.exists(mesh_path):
-        raise FileNotFoundError(f"[get_mesh_world_bounds] Mesh not found: {mesh_path}")
-
-    scene_or_mesh = trimesh.load(mesh_path, force="mesh")
-    if isinstance(scene_or_mesh, trimesh.Scene):
-        mesh = trimesh.util.concatenate(list(scene_or_mesh.geometry.values()))
-    else:
-        mesh = scene_or_mesh
-
-    longest = float(mesh.extents.max())
-    if longest > 0:
-        mesh.apply_scale(MESH_TARGET_LENGTH / longest)
-
-    T_pose = np.eye(4)
-    T_pose[:3, 3] = MESH_POSE[:3]
-    quat_wxyz = MESH_POSE[3:7]
-    rot = R.from_quat([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])
-    T_pose[:3, :3] = rot.as_matrix()
-    mesh.apply_transform(T_pose)
-
+    if mesh_pose is None:
+        mesh_pose = MESH_POSE
+    mesh = load_and_transform_mesh(mesh_path, mesh_target_length, mesh_pose)
     return np.asarray(mesh.bounds[0], dtype=float), np.asarray(mesh.bounds[1], dtype=float)
+
+
+def _voxelize_mesh(
+    mesh,
+    grid_shape: np.ndarray,
+    origin: np.ndarray,
+    resolution: float,
+    fill_interior: bool,
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """Voxelize a trimesh mesh into a raw occupancy grid.
+
+    Returns ``(raw_grid, filled_raw_grid)`` where ``filled_raw_grid`` is
+    always the flood-filled version (for two-EDT SDF), regardless of
+    ``fill_interior``.
+    """
+    vg_surface = mesh.voxelized(pitch=resolution)
+    vg_filled = vg_surface.fill()
+
+    vg = vg_filled if fill_interior else vg_surface
+
+    vox_matrix = vg.matrix
+    fill_label = "Filled" if fill_interior else "Surface-only"
+    logger.info(
+        "[OccupancyGrid] %s voxelization: %s voxels occupied (shape %s)",
+        fill_label, int(vox_matrix.sum()), vox_matrix.shape,
+    )
+
+    raw_grid = np.zeros(grid_shape, dtype=bool)
+
+    vox_world_origin = np.asarray(vg.transform[:3, 3])
+    vox_origin_ijk = np.floor(
+        (vox_world_origin - origin) / resolution
+    ).astype(int)
+    dst_min = np.maximum(vox_origin_ijk, 0)
+    src_min = np.maximum(-vox_origin_ijk, 0)
+    dst_max = np.minimum(vox_origin_ijk + np.array(vox_matrix.shape), grid_shape)
+    src_max = src_min + (dst_max - dst_min)
+    raw_grid[
+        dst_min[0]: dst_max[0],
+        dst_min[1]: dst_max[1],
+        dst_min[2]: dst_max[2],
+    ] = vox_matrix[
+        src_min[0]: src_max[0],
+        src_min[1]: src_max[1],
+        src_min[2]: src_max[2],
+    ]
+    logger.info("[OccupancyGrid] Mesh voxels occupied: %s", int(raw_grid.sum()))
+
+    # Store the filled voxelization for two-EDT SDF computation.
+    filled_raw_grid = np.zeros(grid_shape, dtype=bool)
+    vox_world_origin_f = np.asarray(vg_filled.transform[:3, 3])
+    vox_origin_ijk_f = np.floor(
+        (vox_world_origin_f - origin) / resolution
+    ).astype(int)
+    vox_matrix_f = vg_filled.matrix
+    dst_min_f = np.maximum(vox_origin_ijk_f, 0)
+    src_min_f = np.maximum(-vox_origin_ijk_f, 0)
+    dst_max_f = np.minimum(vox_origin_ijk_f + np.array(vox_matrix_f.shape), grid_shape)
+    src_max_f = src_min_f + (dst_max_f - dst_min_f)
+    filled_raw_grid[
+        dst_min_f[0]: dst_max_f[0],
+        dst_min_f[1]: dst_max_f[1],
+        dst_min_f[2]: dst_max_f[2],
+    ] = vox_matrix_f[
+        src_min_f[0]: src_max_f[0],
+        src_min_f[1]: src_max_f[1],
+        src_min_f[2]: src_max_f[2],
+    ]
+    logger.info(
+        "[OccupancyGrid] Filled voxelization stored: %s voxels",
+        int(filled_raw_grid.sum()),
+    )
+
+    return raw_grid, filled_raw_grid
 
 
 def build_occupancy_grid(
@@ -126,6 +177,8 @@ def build_occupancy_grid(
     cache_path: Optional[str] = None,
     force_rebuild: bool = False,
     fill_interior: bool = True,
+    mesh_target_length: float = MESH_TARGET_LENGTH,
+    mesh_pose: list = None,
 ) -> OccupancyGrid:
     """Build a 3D occupancy grid from the environment mesh + static obstacles.
 
@@ -165,55 +218,37 @@ def build_occupancy_grid(
     -------
     OccupancyGrid
     """
-    import trimesh
-
     # ── Cache hit ─────────────────────────────────────────────────────────────
     if cache_path and not force_rebuild and os.path.exists(cache_path):
-        print(f"[OccupancyGrid] Loading cached grid from {cache_path}")
+        logger.info("[OccupancyGrid] Loading cached grid from %s", cache_path)
         return OccupancyGrid.load(cache_path)
 
+    if mesh_pose is None:
+        mesh_pose = MESH_POSE
+
     fill_msg = "filled" if fill_interior else "surface-only"
-    print(f"[OccupancyGrid] Building grid from {mesh_path} "
-          f"(res={resolution}m, inflation={inflation_voxels}vox, {fill_msg}) …")
+    logger.info(
+        "[OccupancyGrid] Building grid from %s (res=%sm, inflation=%svox, %s) …",
+        mesh_path, resolution, inflation_voxels, fill_msg,
+    )
 
     # ── 1. Load mesh ──────────────────────────────────────────────────────────
     mesh_scale_factor: Optional[float] = None
     if os.path.exists(mesh_path):
-        scene_or_mesh = trimesh.load(mesh_path, force="mesh")
-        if isinstance(scene_or_mesh, trimesh.Scene):
-            # Merge all scene geometries into a single mesh
-            mesh = trimesh.util.concatenate(
-                [g for g in scene_or_mesh.geometry.values()]
-            )
-        else:
-            mesh = scene_or_mesh
-        print(f"[OccupancyGrid] Mesh loaded: {len(mesh.vertices)} verts, "
-              f"{len(mesh.faces)} faces")
-
-        # ── 1a. Uniform scale so longest axis == MESH_TARGET_LENGTH ───────
-        longest = float(mesh.extents.max())
-        if longest > 0:
-            mesh_scale_factor = MESH_TARGET_LENGTH / longest
-            mesh.apply_scale(mesh_scale_factor)
-            print(f"[OccupancyGrid] Mesh scaled ×{mesh_scale_factor:.4f}  "
-                  f"extents now: {mesh.extents.tolist()}")
-
-        # ── 1b. Apply MESH_POSE so occupancy matches the visual scene ─────
-        T_pose = np.eye(4)
-        T_pose[:3, 3] = MESH_POSE[:3]               # translation
-        # Convert quaternion [qw, qx, qy, qz] → rotation matrix via trimesh
-        quat_wxyz = MESH_POSE[3:7]
-        from scipy.spatial.transform import Rotation as R
-        rot = R.from_quat([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])  # scipy expects xyzw
-        T_pose[:3, :3] = rot.as_matrix()
-        mesh.apply_transform(T_pose)
-        print(f"[OccupancyGrid] Mesh pose applied: {MESH_POSE}  "
-              f"bounds: {mesh.bounds.tolist()}")
-
+        from shared.mesh_loader import load_and_transform_mesh
+        mesh = load_and_transform_mesh(mesh_path, mesh_target_length, mesh_pose)
+        mesh_scale_factor = mesh.metadata.get("scale_factor")
+        logger.info(
+            "[OccupancyGrid] Mesh loaded: %s verts, %s faces, scale=%s",
+            len(mesh.vertices), len(mesh.faces), mesh_scale_factor,
+        )
+        logger.info("[OccupancyGrid] Mesh bounds: %s", mesh.bounds.tolist())
         mesh_available = True
     else:
-        print(f"[OccupancyGrid] WARNING: mesh not found at {mesh_path}. "
-              f"Using obstacle-only grid.")
+        logger.warning(
+            "[OccupancyGrid] WARNING: mesh not found at %s. Using obstacle-only grid.",
+            mesh_path,
+        )
         mesh_available = False
 
     # ── 2. Determine grid bounds ───────────────────────────────────────────────
@@ -228,96 +263,40 @@ def build_occupancy_grid(
     # Extend bounds to cover any extra free points (e.g. depots above the mesh)
     if extra_free_points is not None and len(extra_free_points) > 0:
         pts = np.asarray(extra_free_points, dtype=float)
-        margin = resolution  # one voxel clearance above/below each point
+        # Margin: at least 3 voxels or ceil(robot_radius / resolution) voxels,
+        # ensuring waypoints remain free after inflation + coarse downsampling.
+        margin_voxels = max(3, int(np.ceil(ROBOT_RADIUS / resolution)))
+        margin = margin_voxels * resolution
         pts_min = pts.min(axis=0) - margin
         pts_max = pts.max(axis=0) + margin
         orig_max_z = bounds_max[2]
         bounds_min = np.minimum(bounds_min, pts_min)
         bounds_max = np.maximum(bounds_max, pts_max)
-        print(f"[OccupancyGrid] Extended bounds to cover {len(pts)} depot point(s).  "
-              f"Z: {orig_max_z:.2f} → {bounds_max[2]:.2f} m")
+        logger.info(
+            "[OccupancyGrid] Extended bounds to cover %s depot point(s). Z: %.2f → %.2f m",
+            len(pts), orig_max_z, bounds_max[2],
+        )
 
     origin = bounds_min.copy()
     grid_shape = np.ceil((bounds_max - bounds_min) / resolution).astype(int)
     grid_shape = np.maximum(grid_shape, 1)      # guard against zero-size
-    print(f"[OccupancyGrid] Grid shape: {tuple(grid_shape)}  "
-          f"({np.prod(grid_shape)/1e6:.1f} M voxels)")
-
-    raw_grid = np.zeros(grid_shape, dtype=bool)
+    logger.info(
+        "[OccupancyGrid] Grid shape: %s  (%.1f M voxels)",
+        tuple(grid_shape), np.prod(grid_shape) / 1e6,
+    )
 
     # ── 3. Voxelise mesh ──────────────────────────────────────────────────────
     filled_raw_grid = None
     if mesh_available:
-        # trimesh voxel grid pitch = resolution
-        vg_surface = mesh.voxelized(pitch=resolution)
-        vg_filled = vg_surface.fill()
-
-        if fill_interior:
-            # Fill the interior so the hull is a solid obstacle, not just a
-            # thin surface shell.  This is critical for both A* pathfinding
-            # and the ESDF (otherwise the SDF is near-zero everywhere and
-            # cuRobo plans trajectories through the hull).
-            vg = vg_filled
-        else:
-            vg = vg_surface
-
-        # vg.matrix is a dense bool array; indices are relative to vg.origin
-        vox_matrix = vg.matrix
-        fill_label = "Filled" if fill_interior else "Surface-only"
-        print(f"[OccupancyGrid] {fill_label} voxelization: "
-              f"{int(vox_matrix.sum())} voxels occupied "
-              f"(shape {vox_matrix.shape})")
-        # trimesh stores the voxel grid origin in the transform matrix
-        vox_world_origin = np.asarray(vg.transform[:3, 3])
-        vox_origin_ijk = np.floor(
-            (vox_world_origin - origin) / resolution
-        ).astype(int)
-        # Copy into raw_grid at the correct offset
-        dst_min = np.maximum(vox_origin_ijk, 0)
-        src_min = np.maximum(-vox_origin_ijk, 0)
-        dst_max = np.minimum(vox_origin_ijk + np.array(vox_matrix.shape), grid_shape)
-        src_max = src_min + (dst_max - dst_min)
-        raw_grid[
-            dst_min[0]: dst_max[0],
-            dst_min[1]: dst_max[1],
-            dst_min[2]: dst_max[2],
-        ] = vox_matrix[
-            src_min[0]: src_max[0],
-            src_min[1]: src_max[1],
-            src_min[2]: src_max[2],
-        ]
-        print(f"[OccupancyGrid] Mesh voxels occupied: {int(raw_grid.sum())}")
-
-        # Also store the filled voxelization for two-EDT SDF computation.
-        # When fill_interior=True, this is the same as raw_grid.
-        # When fill_interior=False, this gives us the filled interior needed
-        # for robust SDF sign determination.
-        filled_raw_grid = np.zeros(grid_shape, dtype=bool)
-        vg_f = vg_filled
-        vox_world_origin_f = np.asarray(vg_f.transform[:3, 3])
-        vox_origin_ijk_f = np.floor(
-            (vox_world_origin_f - origin) / resolution
-        ).astype(int)
-        vox_matrix_f = vg_f.matrix
-        dst_min_f = np.maximum(vox_origin_ijk_f, 0)
-        src_min_f = np.maximum(-vox_origin_ijk_f, 0)
-        dst_max_f = np.minimum(vox_origin_ijk_f + np.array(vox_matrix_f.shape), grid_shape)
-        src_max_f = src_min_f + (dst_max_f - dst_min_f)
-        filled_raw_grid[
-            dst_min_f[0]: dst_max_f[0],
-            dst_min_f[1]: dst_max_f[1],
-            dst_min_f[2]: dst_max_f[2],
-        ] = vox_matrix_f[
-            src_min_f[0]: src_max_f[0],
-            src_min_f[1]: src_max_f[1],
-            src_min_f[2]: src_max_f[2],
-        ]
-        print(f"[OccupancyGrid] Filled voxelization stored: "
-              f"{int(filled_raw_grid.sum())} voxels")
+        raw_grid, filled_raw_grid = _voxelize_mesh(
+            mesh, grid_shape, origin, resolution, fill_interior,
+        )
+    else:
+        raw_grid = np.zeros(grid_shape, dtype=bool)
 
     # ── 4. Mark static cuboid obstacles ───────────────────────────────────────
     _add_cuboid_obstacles(raw_grid, origin, resolution, STATIC_OBSTACLES)
-    print(f"[OccupancyGrid] After cuboids: {int(raw_grid.sum())} occupied voxels")
+    logger.info("[OccupancyGrid] After cuboids: %s occupied voxels", int(raw_grid.sum()))
 
     # ── 5. Preserve raw grid before inflation (for ESDF) ────────────────────
     raw_grid_copy = raw_grid.copy()
@@ -327,8 +306,10 @@ def build_occupancy_grid(
         inflated_grid = inflate_grid(raw_grid, inflation_voxels)
     else:
         inflated_grid = raw_grid
-    print(f"[OccupancyGrid] After inflation: {int(inflated_grid.sum())} occupied  "
-          f"({int((~inflated_grid).sum())} free)")
+    logger.info(
+        "[OccupancyGrid] After inflation: %s occupied  (%s free)",
+        int(inflated_grid.sum()), int((~inflated_grid).sum()),
+    )
 
     # ── 5b. Preserve filled raw grid (for two-EDT SDF) ───────────────────
     # Add cuboid obstacles to filled_raw_grid too (they are solid obstacles)
@@ -352,6 +333,6 @@ def build_occupancy_grid(
     if cache_path:
         os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
         og.save(cache_path)
-        print(f"[OccupancyGrid] Saved to {cache_path}")
+        logger.info("[OccupancyGrid] Saved to %s", cache_path)
 
     return og

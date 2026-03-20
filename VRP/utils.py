@@ -11,6 +11,7 @@ Ported helpers from brov_auv_curobo/run_multi_auv_waypoints.py:
 """
 
 from __future__ import annotations
+import logging
 import os
 import sys
 from typing import List, Optional, Tuple
@@ -24,6 +25,9 @@ from VRP.config import (
     ROBOT_CFG_DIR,
     STATIC_OBSTACLES,
 )
+
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # cuRobo imports (optional – utils should still be importable without them
 # to allow waypoint / grid work without a full cuRobo GPU env)
@@ -153,10 +157,10 @@ def build_esdf_voxel_grid(og) -> "VoxelGrid":
         feature_tensor=esdf_tensor,
         feature_dtype=torch.float32,
     )
-    print(f"[ESDF] VoxelGrid built: dims={[f'{d:.1f}' for d in dims]}m  "
-          f"voxel_size={og.resolution}m  "
-          f"tensor={esdf_tensor.shape[0]} elements  "
-          f"ESDF range=[{esdf_tensor.min():.3f}, {esdf_tensor.max():.3f}]")
+    logger.info("[ESDF] VoxelGrid built: dims=%s m, voxel_size=%s m, "
+                "tensor=%d elements, ESDF range=[%.3f, %.3f]",
+                [f'{d:.1f}' for d in dims], og.resolution,
+                esdf_tensor.shape[0], float(esdf_tensor.min()), float(esdf_tensor.max()))
     return vg
 
 
@@ -297,10 +301,7 @@ def find_trajectory_collisions(
 # ---------------------------------------------------------------------------
 
 def save_solution(result: "ExecutionResult", path: str) -> None:  # noqa: F821
-    """Pickle an :class:`~route_executor.ExecutionResult` to *path*.
-
-    The file can later be loaded by :func:`load_solution` in the Isaac Sim
-    environment without needing cuRobo or OR-Tools to be installed.
+    """Save an :class:`~route_executor.ExecutionResult` to NPZ+JSON.
 
     Parameters
     ----------
@@ -308,28 +309,79 @@ def save_solution(result: "ExecutionResult", path: str) -> None:  # noqa: F821
         The completed execution result returned by
         :class:`~route_executor.RouteExecutor`.
     path:
-        Destination file path (``*.pkl`` recommended).
+        Destination file path (extension is replaced with .npz/.json).
     """
-    import pickle
+    import json
 
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "wb") as fh:
-        pickle.dump(result, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    base = path.rsplit(".", 1)[0] if "." in path else path
+
+    # Pack ragged trajectory arrays
+    arrays = {}
+    for field_name in ("all_traj_positions", "all_traj_velocities"):
+        robot_trajs = getattr(result, field_name)
+        all_steps = []
+        offsets = [0]
+        for robot_steps in robot_trajs:
+            if robot_steps:
+                all_steps.append(np.stack(robot_steps))
+            offsets.append(offsets[-1] + len(robot_steps))
+        arrays[field_name] = np.concatenate(all_steps) if all_steps else np.empty((0, 8))
+        arrays[f"{field_name}_offsets"] = np.array(offsets, dtype=np.int64)
+
+    arrays["initial_positions"] = np.array(result.initial_positions)
+
+    np.savez_compressed(base + ".npz", **arrays)
+
+    meta = {
+        "all_waypoints": result.all_waypoints,
+        "joint_names": result.joint_names,
+        "fail_counts": result.fail_counts,
+    }
+    with open(base + ".json", "w") as f:
+        json.dump(meta, f)
 
 
 def load_solution(path: str) -> "ExecutionResult":  # noqa: F821
-    """Load an :class:`~route_executor.ExecutionResult` from a pickle file.
+    """Load an :class:`~route_executor.ExecutionResult` from NPZ+JSON.
+
+    Falls back to pickle for old cached files.
 
     Parameters
     ----------
     path:
-        Path to the ``.pkl`` file written by :func:`save_solution`.
+        Path to the saved file (extension is replaced with .npz/.json).
 
     Returns
     -------
     ExecutionResult
     """
-    import pickle
+    import json
+    from VRP.routing.route_executor import ExecutionResult
 
+    base = path.rsplit(".", 1)[0] if "." in path else path
+    npz_path = base + ".npz"
+    json_path = base + ".json"
+
+    if os.path.exists(npz_path) and os.path.exists(json_path):
+        data = np.load(npz_path)
+        with open(json_path) as f:
+            meta = json.load(f)
+
+        def unpack_ragged(name):
+            flat = data[name]
+            offsets = data[f"{name}_offsets"]
+            return [list(flat[offsets[i]:offsets[i+1]]) for i in range(len(offsets)-1)]
+
+        return ExecutionResult(
+            all_traj_positions=unpack_ragged("all_traj_positions"),
+            all_traj_velocities=unpack_ragged("all_traj_velocities"),
+            all_waypoints=meta["all_waypoints"],
+            initial_positions=list(data["initial_positions"]),
+            joint_names=meta["joint_names"],
+            fail_counts=meta["fail_counts"],
+        )
+    # Backward compat: pickle
+    import pickle
     with open(path, "rb") as fh:
         return pickle.load(fh)

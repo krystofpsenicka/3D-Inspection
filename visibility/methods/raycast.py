@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import open3d as o3d
 from numpy.linalg import norm
@@ -6,6 +7,9 @@ from typing import Tuple
 
 from ..core.types import FrustumParams
 from ..core.base import VisibilityQuery
+from ..core.constants import NORM_EPS, RAYCAST_TOLERANCE
+
+logger = logging.getLogger(__name__)
 
 
 class RaycastingVisibilityQuery(VisibilityQuery):
@@ -20,9 +24,9 @@ class RaycastingVisibilityQuery(VisibilityQuery):
 
         self.scene = o3d.t.geometry.RaycastingScene()
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-        print("[RaycastingQuery] Initialized O3D RaycastingScene (BVH) for occlusion checks.")
+        logger.info("[RaycastingQuery] Initialized O3D RaycastingScene (BVH) for occlusion checks.")
 
-    def compute_visibility(self, viewpoint: np.ndarray, direction: np.ndarray) -> Tuple[np.ndarray, float]:
+    def compute_visibility(self, viewpoint: np.ndarray, orientation: np.ndarray) -> Tuple[np.ndarray, float]:
         """
         Checks visibility using the RaycastingScene: a ray is cast from the
         viewpoint to each target point. If the ray hits the mesh *before* it
@@ -30,7 +34,7 @@ class RaycastingVisibilityQuery(VisibilityQuery):
         """
         start = get_time()
 
-        candidate_indices = self.points_in_frustum_with_kdtree(viewpoint, direction)
+        candidate_indices = self.points_in_frustum_with_kdtree(viewpoint, orientation)
 
         if len(candidate_indices) == 0:
             return np.array([]), get_time() - start
@@ -42,7 +46,7 @@ class RaycastingVisibilityQuery(VisibilityQuery):
         vectors = candidate_points - origins
 
         distances = norm(vectors, axis=1)
-        directions = vectors / (distances[:, np.newaxis] + 1e-12)
+        directions = vectors / (distances[:, np.newaxis] + NORM_EPS)
 
         rays = np.hstack([origins, directions])
         rays_tensor = o3d.core.Tensor(rays, dtype=o3d.core.Dtype.Float32)
@@ -50,8 +54,7 @@ class RaycastingVisibilityQuery(VisibilityQuery):
         ans = self.scene.cast_rays(rays_tensor)
         t_hit = ans['t_hit'].numpy()
 
-        TOLERANCE = 1e-4
-        is_visible_mask = (t_hit >= distances - TOLERANCE)
+        is_visible_mask = (t_hit >= distances - RAYCAST_TOLERANCE)
 
         visible_indices = candidate_indices[is_visible_mask]
 

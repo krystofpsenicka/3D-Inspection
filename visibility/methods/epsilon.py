@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import open3d as o3d
 from numpy.linalg import norm
@@ -6,25 +7,9 @@ from typing import Tuple, Optional
 
 from ..core.types import FrustumParams, EpsilonHyperparams
 from ..core.base import VisibilityQuery
+from ..core.constants import NORM_EPS, DELTA_AGG_FUNCS, GAMMA_AGG_FUNCS
 
-_DELTA_AGG_FUNCS = {
-    "max": np.max,
-    "p99": lambda x: np.percentile(x, 99),
-    "p95": lambda x: np.percentile(x, 95),
-    "p90": lambda x: np.percentile(x, 90),
-}
-
-_GAMMA_AGG_FUNCS = {
-    "median": np.median,
-    "mean": np.mean,
-    "p10": lambda x: np.percentile(x, 10),
-    "p25": lambda x: np.percentile(x, 25),
-    "p30": lambda x: np.percentile(x, 30),
-    "p40": lambda x: np.percentile(x, 40),
-    "p60": lambda x: np.percentile(x, 60),
-    "p75": lambda x: np.percentile(x, 75),
-    "p90": lambda x: np.percentile(x, 90),
-}
+logger = logging.getLogger(__name__)
 
 
 class EpsilonVisibilityQuery(VisibilityQuery):
@@ -48,20 +33,20 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         self.pcd.normals = o3d.utility.Vector3dVector(normals)
 
         if epsilon_deg is not None:
-            print(f"Using provided epsilon: {epsilon_deg} degrees")
+            logger.info("Using provided epsilon: %s degrees", epsilon_deg)
             self.fixed_epsilon = np.deg2rad(epsilon_deg)
             self.delta = None
-            print(f"Using Epsilon (radians): {self.fixed_epsilon:.6f} "
-                  f"({np.rad2deg(self.fixed_epsilon):.3f} degrees)")
+            logger.info("Using Epsilon (radians): %.6f (%.3f degrees)",
+                        self.fixed_epsilon, np.rad2deg(self.fixed_epsilon))
         else:
-            print("Epsilon not provided, estimating δ from point set...")
+            logger.info("Epsilon not provided, estimating δ from point set...")
             self.fixed_epsilon = None
             self.delta = self._estimate_delta()
-            print(f"Estimated δ (sampling density): {self.delta:.6f}")
+            logger.info("Estimated δ (sampling density): %.6f", self.delta)
 
     def visualize_normals(self, normal_scale=20.0):
         """Visualizes the mesh, the target points, and their computed normals."""
-        print("\nVisualizing Normals")
+        logger.info("Visualizing Normals")
 
         mesh_vis = o3d.geometry.TriangleMesh(self.mesh)
         mesh_vis.paint_uniform_color([0.8, 0.8, 0.8])
@@ -110,7 +95,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
             return 0.1
 
         sample_indices = np.random.choice(self.num_points, sample_size, replace=False)
-        agg_func = _DELTA_AGG_FUNCS[self.hp.delta_agg]
+        agg_func = DELTA_AGG_FUNCS[self.hp.delta_agg]
 
         distances = []
         for idx in sample_indices:
@@ -123,7 +108,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
     def _compute_epsilon(self, distances, front_facing):
         """Compute per-viewpoint ε = 2·arctan(δ/(4γ)) where γ = aggregated viewing distance."""
         front_distances = distances[front_facing]
-        gamma_func = _GAMMA_AGG_FUNCS[self.hp.gamma_method]
+        gamma_func = GAMMA_AGG_FUNCS[self.hp.gamma_method]
         if len(front_distances) == 0:
             gamma = self.frustum_params.far / 4.0
         else:
@@ -131,11 +116,11 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         gamma = max(gamma, 1e-6)
         return 2.0 * np.arctan(self.delta / (4.0 * gamma)) * self.hp.epsilon_scale
 
-    def compute_visibility(self, viewpoint, direction):
+    def compute_visibility(self, viewpoint, orientation):
         """Compute epsilon-visible region using back-face and occlusion checks."""
         start = get_time()
 
-        frustum_indices = self.points_in_frustum_with_kdtree(viewpoint, direction)
+        frustum_indices = self.points_in_frustum_with_kdtree(viewpoint, orientation)
 
         if len(frustum_indices) == 0:
             return np.array([]), get_time() - start
@@ -146,7 +131,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         # Check back-face visibility
         view_dirs = frustum_points - viewpoint
         view_dirs_norm = norm(view_dirs, axis=1)
-        view_dirs = view_dirs / (view_dirs_norm[:, np.newaxis] + 1e-12)
+        view_dirs = view_dirs / (view_dirs_norm[:, np.newaxis] + NORM_EPS)
 
         dot_products = np.sum(view_dirs * frustum_normals, axis=1)
         front_facing = dot_products < self.hp.back_face_threshold
@@ -190,7 +175,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         num_bins_phi = max(1, int(np.ceil(np.pi / epsilon)))
 
         theta = np.arctan2(relative[:, 1], relative[:, 0])
-        phi = np.arcsin(np.clip(relative[:, 2] / (distances + 1e-12), -1, 1))
+        phi = np.arcsin(np.clip(relative[:, 2] / (distances + NORM_EPS), -1, 1))
 
         theta_bins = ((theta + np.pi) / (2 * np.pi) * num_bins_theta).astype(int) % num_bins_theta
         phi_bins = ((phi + np.pi / 2) / np.pi * num_bins_phi).astype(int) % num_bins_phi

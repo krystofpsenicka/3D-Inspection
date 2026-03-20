@@ -35,18 +35,23 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .config import (
+from ..config import (
     BROV_CUBOID_DIMS,
     CAMERA_OFFSET_FORWARD,
     CAMERA_OFFSET_UP,
+    OMPL_SIMPLIFY_MAX_TIME,
+    SNAP_TO_FREE_MAX_RADIUS,
     SPACE_TIME_DT,
     SPACE_TIME_DWELL_S,
+    SPACE_TIME_HOP_DISTANCE,
     SPACE_TIME_MAX_HORIZON_S,
     SPACE_TIME_MAX_WAIT,
     SPACE_TIME_RESOLUTION,
+    ST_ASTAR_MAX_EXPANSIONS,
 )
 
 from shared.occupancy_grid import downsample_occupancy_grid
+from shared.grid_utils import OFFSETS_26, WEIGHTS_26
 
 logger = logging.getLogger(__name__)
 
@@ -79,17 +84,8 @@ def _robot_xyz_from_waypoint(wp7: np.ndarray) -> np.ndarray:
 
 
 # ── 26-connected spatial offsets + wait action ───────────────────────────
-_SPATIAL_OFFSETS: List[Tuple[int, int, int]] = [
-    (di, dj, dk)
-    for di in (-1, 0, 1)
-    for dj in (-1, 0, 1)
-    for dk in (-1, 0, 1)
-    if not (di == 0 and dj == 0 and dk == 0)
-]
-_SPATIAL_WEIGHTS: np.ndarray = np.array(
-    [math.sqrt(di * di + dj * dj + dk * dk) for di, dj, dk in _SPATIAL_OFFSETS],
-    dtype=np.float64,
-)
+_SPATIAL_OFFSETS = OFFSETS_26
+_SPATIAL_WEIGHTS = WEIGHTS_26
 # Append the *wait* action: (0, 0, 0) with zero spatial cost
 _OFFSETS_27 = _SPATIAL_OFFSETS + [(0, 0, 0)]
 _WEIGHTS_27 = np.append(_SPATIAL_WEIGHTS, 0.0)
@@ -195,41 +191,8 @@ def coarse_to_world(ijk: np.ndarray, origin: np.ndarray, res: float) -> np.ndarr
 
 def _snap_coarse_to_free(grid: np.ndarray, ijk: np.ndarray) -> np.ndarray:
     """BFS-snap each voxel index to the nearest free coarse voxel."""
-    from collections import deque
-
-    Nx, Ny, Nz = grid.shape
-    out = ijk.copy()
-    for row in range(len(ijk)):
-        ix, iy, iz = int(ijk[row, 0]), int(ijk[row, 1]), int(ijk[row, 2])
-        ix = max(0, min(ix, Nx - 1))
-        iy = max(0, min(iy, Ny - 1))
-        iz = max(0, min(iz, Nz - 1))
-        if not grid[ix, iy, iz]:
-            out[row] = [ix, iy, iz]
-            continue
-        visited = set()
-        q = deque()
-        q.append((ix, iy, iz))
-        visited.add((ix, iy, iz))
-        found = False
-        while q and not found:
-            cx, cy, cz = q.popleft()
-            for di, dj, dk in _SPATIAL_OFFSETS:
-                nx, ny, nz = cx + di, cy + dj, cz + dk
-                if not (0 <= nx < Nx and 0 <= ny < Ny and 0 <= nz < Nz):
-                    continue
-                if (nx, ny, nz) in visited:
-                    continue
-                visited.add((nx, ny, nz))
-                if not grid[nx, ny, nz]:
-                    out[row] = [nx, ny, nz]
-                    found = True
-                    break
-                q.append((nx, ny, nz))
-        if not found:
-            logger.warning("[snap] Could not free voxel %s", ijk[row])
-            out[row] = [ix, iy, iz]
-    return out
+    from shared.grid_utils import snap_to_free
+    return snap_to_free(grid, ijk)
 
 
 # ── Space-Time A* ────────────────────────────────────────────────────────────
@@ -243,7 +206,7 @@ def space_time_astar(
     resolution: float,
     time_step_cost: float = 0.01,
     max_time_steps: int = 0,
-    max_expansions: int = 500_000,
+    max_expansions: int = ST_ASTAR_MAX_EXPANSIONS,
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Space-Time A* on a 26-connected coarse 3-D grid + wait.
 
@@ -340,7 +303,7 @@ def simplify_path_ompl(
     path_xyz: np.ndarray,
     og,
     robot_radius: float = 0.35,
-    max_time: float = 0.5,
+    max_time: float = OMPL_SIMPLIFY_MAX_TIME,
 ) -> np.ndarray:
     """Simplify a 3-D path using OMPL ``PathSimplifier``.
 
@@ -517,7 +480,7 @@ def plan_robot_route_st(
 
         # Sub-sample: keep every Kth waypoint to reduce the number of
         # Space-Time A* calls (each hop is short enough to plan quickly)
-        stride_voxels = max(1, int(round(2.0 / coarse_res)))  # ~2 m hops
+        stride_voxels = max(1, int(round(SPACE_TIME_HOP_DISTANCE / coarse_res)))
         sub_idx = list(range(0, len(leg_ijk), stride_voxels))
         if sub_idx[-1] != len(leg_ijk) - 1:
             sub_idx.append(len(leg_ijk) - 1)
@@ -538,6 +501,13 @@ def plan_robot_route_st(
             )
 
             if result is None:
+                # Retry with doubled expansion budget before falling back
+                result = space_time_astar(
+                    coarse_grid, s_ijk, g_ijk, t_cursor, reservation,
+                    coarse_res, max_expansions=2 * ST_ASTAR_MAX_EXPANSIONS,
+                )
+
+            if result is None:
                 logger.warning(
                     "  [route] ST-A* failed hop %d→%d (leg %d→%d, t=%d). "
                     "Using straight-line fallback.",
@@ -548,6 +518,8 @@ def plan_robot_route_st(
                     np.linspace(int(s_ijk[d]), int(g_ijk[d]), n + 1).astype(np.intp)
                     for d in range(3)
                 ], axis=1)
+                # Snap any occupied voxels to nearest free
+                fb_ijk = _snap_coarse_to_free(coarse_grid, fb_ijk)
                 fb_t = np.arange(t_cursor, t_cursor + len(fb_ijk), dtype=np.intp)
                 result = (fb_ijk, fb_t)
 
@@ -590,7 +562,7 @@ def plan_robot_route_st(
                 planned_ijk, coarse_origin, coarse_res,
             )
             smoothed_world = simplify_path_ompl(
-                planned_world, fine_og, robot_radius, max_time=0.5,
+                planned_world, fine_og, robot_radius, max_time=OMPL_SIMPLIFY_MAX_TIME,
             )
 
             if len(smoothed_world) >= 2:

@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Tuple
 import matplotlib.pyplot as plt
 
 from visibility.core.types import FrustumParams, ViewpointResult, OptimizationResult
-from visibility.core.sampling import ViewpointSampler
+from visibility.sampling import ViewpointSampler
 from visibility.core import orient_normals_outward
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
@@ -44,7 +44,7 @@ def check_epsilon_solution_with_raycast(raycast_query: RaycastingVisibilityQuery
     for vp_result in epsilon_result.viewpoints:
         visible_indices_rc, _ = raycast_query.compute_visibility(
             viewpoint=vp_result.position,
-            direction=vp_result.direction
+            orientation=vp_result.orientation
         )
         total_visible_mask[visible_indices_rc] = True
 
@@ -181,9 +181,10 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7)
 
+    from shared.geometry import direction_roll_to_quaternion
     candidate_pos = target_points[:num_candidates] + normals[:num_candidates] * 1.5
     candidate_dir = -normals[:num_candidates]
-    candidates = list(zip(candidate_pos, candidate_dir))
+    candidates = [(pos, direction_roll_to_quaternion(d)) for pos, d in zip(candidate_pos, candidate_dir)]
 
     return mesh, target_points, normals, frustum_params, candidates
 

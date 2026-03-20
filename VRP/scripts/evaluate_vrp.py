@@ -50,12 +50,12 @@ if _PROJECT_ROOT not in sys.path:
 if _VRP_ROOT not in sys.path:
     sys.path.insert(0, _VRP_ROOT)
 
-from VRP.occupancy_grid import build_occupancy_grid, OccupancyGrid, get_mesh_world_bounds
-from VRP.waypoint_loader import load_waypoints
-from VRP.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
-from VRP.vrp_solver import solve_vrp, VRPResult
-from VRP.route_executor import RouteExecutor, ExecutionResult
-from VRP.vrp_planner import _compute_start_grid
+from VRP.core.occupancy_grid import build_occupancy_grid, OccupancyGrid, get_mesh_world_bounds
+from VRP.core.waypoint_loader import load_waypoints
+from VRP.core.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
+from VRP.solver.vrp_solver import solve_vrp, VRPResult
+from VRP.routing.route_executor import RouteExecutor, ExecutionResult
+from VRP.scripts.vrp_planner import _compute_start_grid
 from VRP.utils import (
     load_local_robot_config,
     find_trajectory_collisions,

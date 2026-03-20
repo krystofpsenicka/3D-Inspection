@@ -10,7 +10,8 @@ import numpy as np
 import open3d as o3d
 from time import time as get_time
 
-from visibility.core import FrustumParams, ViewpointSampler, orient_normals_outward
+from visibility.core import FrustumParams, orient_normals_outward
+from visibility.sampling import ViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
@@ -85,21 +86,21 @@ def main():
           f"({len(target_points)} surface points)...\n")
 
     visibility_map = {}
-    for i, (pos, direction) in enumerate(viewpoints):
+    for i, (pos, orientation) in enumerate(viewpoints):
         t0 = get_time()
-        visible_indices, comp_time = query.compute_visibility(pos, direction)
+        visible_indices, comp_time = query.compute_visibility(pos, orientation)
         print(f"  VP {i}: visible {len(visible_indices)} / {len(target_points)}  "
               f"time={get_time() - t0:.3f} s")
-        visibility_map[tuple(pos.tolist()), tuple(direction.tolist())] = visible_indices.astype(int)
+        visibility_map[i] = visible_indices.astype(int)
 
     # --- Visualize ---
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
     if args.separate:
         print("\nOpening visualization windows (close each to advance)...")
         for i in range(len(viewpoints)):
-            visualizer.visualize_visibility_results(visibility_map, i)
+            visualizer.visualize_visibility_results(visibility_map, i, candidates=viewpoints)
     else:
-        visualizer.visualize_all_visibility_results(visibility_map)
+        visualizer.visualize_all_visibility_results(visibility_map, candidates=viewpoints)
 
 
 if __name__ == "__main__":

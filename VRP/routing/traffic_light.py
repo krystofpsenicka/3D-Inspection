@@ -24,7 +24,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from .config import (
+from ..config import (
     TRAFFIC_CORRIDOR_WIDTH,
     WAIT_STEPS_PER_WAYPOINT,
 )
@@ -113,7 +113,7 @@ def build_legs(
     og:
         :class:`~occupancy_grid.OccupancyGrid`; used to compute A* paths.
     """
-    from .gpu_distance_matrix import extract_astar_path  # lazy import
+    from ..core.gpu_distance_matrix import extract_astar_path  # lazy import
 
     xyz = waypoints_world[:, :3] if waypoints_world.ndim == 2 else waypoints_world
 

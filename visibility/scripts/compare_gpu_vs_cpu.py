@@ -14,7 +14,7 @@ from time import time as get_time
 from typing import List, Tuple
 
 from visibility.core.types import FrustumParams
-from visibility.core.sampling import ViewpointSampler
+from visibility.sampling import ViewpointSampler
 from visibility.core import orient_normals_outward
 
 # CPU methods
@@ -75,13 +75,13 @@ def load_scene(mesh_path=None):
 def benchmark_single_visibility(query, viewpoints, label):
     """Benchmark per-viewpoint visibility computation."""
     # Warm up
-    for vp, d in viewpoints[:NUM_WARMUP_VPS]:
-        query.compute_visibility(vp, d)
+    for vp, orient in viewpoints[:NUM_WARMUP_VPS]:
+        query.compute_visibility(vp, orient)
 
     times = []
     total_visible = 0
-    for vp, d in viewpoints[NUM_WARMUP_VPS:NUM_WARMUP_VPS + NUM_TIMED_VPS]:
-        vis, t = query.compute_visibility(vp, d)
+    for vp, orient in viewpoints[NUM_WARMUP_VPS:NUM_WARMUP_VPS + NUM_TIMED_VPS]:
+        vis, t = query.compute_visibility(vp, orient)
         times.append(t)
         total_visible += len(vis)
 
@@ -104,29 +104,29 @@ def benchmark_frustum_culling(query_cpu, query_gpu_bf, query_gpu_kd, viewpoints)
 
     # CPU KDTree
     times_cpu = []
-    for vp, d in test_vps:
+    for vp, orient in test_vps:
         t0 = get_time()
-        idx = query_cpu.points_in_frustum_with_kdtree(vp, d)
+        idx = query_cpu.points_in_frustum_with_kdtree(vp, orient)
         times_cpu.append(get_time() - t0)
     print(f"  CPU KDTree:        {np.mean(times_cpu)*1000:.2f} ± {np.std(times_cpu)*1000:.2f} ms")
 
     # GPU brute-force
-    for vp, d in test_vps[:3]:
-        query_gpu_bf.points_in_frustum_bruteforce_gpu(vp, d)
+    for vp, orient in test_vps[:3]:
+        query_gpu_bf.points_in_frustum_bruteforce_gpu(vp, orient)
     times_gpu_bf = []
-    for vp, d in test_vps:
+    for vp, orient in test_vps:
         t0 = get_time()
-        idx = query_gpu_bf.points_in_frustum_bruteforce_gpu(vp, d)
+        idx = query_gpu_bf.points_in_frustum_bruteforce_gpu(vp, orient)
         times_gpu_bf.append(get_time() - t0)
     print(f"  GPU Brute-force:   {np.mean(times_gpu_bf)*1000:.2f} ± {np.std(times_gpu_bf)*1000:.2f} ms")
 
     # GPU KDTree hybrid
-    for vp, d in test_vps[:3]:
-        query_gpu_kd.points_in_frustum_kdtree_gpu(vp, d)
+    for vp, orient in test_vps[:3]:
+        query_gpu_kd.points_in_frustum_kdtree_gpu(vp, orient)
     times_gpu_kd = []
-    for vp, d in test_vps:
+    for vp, orient in test_vps:
         t0 = get_time()
-        idx = query_gpu_kd.points_in_frustum_kdtree_gpu(vp, d)
+        idx = query_gpu_kd.points_in_frustum_kdtree_gpu(vp, orient)
         times_gpu_kd.append(get_time() - t0)
     print(f"  GPU KDTree+GPU:    {np.mean(times_gpu_kd)*1000:.2f} ± {np.std(times_gpu_kd)*1000:.2f} ms")
 

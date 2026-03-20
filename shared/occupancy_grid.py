@@ -13,7 +13,6 @@ in VRP-specific configuration.
 from __future__ import annotations
 
 import logging
-import pickle
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -134,12 +133,46 @@ class OccupancyGrid:
     # ── Persistence ───────────────────────────────────────────────────────────
 
     def save(self, path: str) -> None:
-        """Pickle the grid to disk for caching."""
-        with open(path, "wb") as f:
-            pickle.dump(self, f)
+        """Save the grid to NPZ (arrays) + JSON (metadata)."""
+        import json
+        base = path.rsplit(".", 1)[0] if "." in path else path
+        np.savez_compressed(
+            base + ".npz",
+            grid=self.grid,
+            raw_grid=self.raw_grid if self.raw_grid is not None else np.empty(0),
+            filled_raw_grid=self.filled_raw_grid if self.filled_raw_grid is not None else np.empty(0),
+        )
+        meta = {
+            "resolution": self.resolution,
+            "origin": self.origin.tolist(),
+            "mesh_scale": self.mesh_scale,
+        }
+        with open(base + ".json", "w") as f:
+            json.dump(meta, f)
 
     @classmethod
     def load(cls, path: str) -> "OccupancyGrid":
+        import json
+        import os
+        base = path.rsplit(".", 1)[0] if "." in path else path
+        npz_path = base + ".npz"
+        json_path = base + ".json"
+        if os.path.exists(npz_path) and os.path.exists(json_path):
+            data = np.load(npz_path)
+            with open(json_path) as f:
+                meta = json.load(f)
+            raw = data["raw_grid"] if data["raw_grid"].size > 0 else None
+            filled = data["filled_raw_grid"] if data["filled_raw_grid"].size > 0 else None
+            return cls(
+                grid=data["grid"],
+                origin=np.array(meta["origin"]),
+                resolution=meta["resolution"],
+                raw_grid=raw,
+                filled_raw_grid=filled,
+                mesh_scale=meta.get("mesh_scale"),
+            )
+        # Backward compat: try pickle
+        import pickle
         with open(path, "rb") as f:
             return pickle.load(f)
 
@@ -149,23 +182,27 @@ class OccupancyGrid:
 def inflate_grid(grid: np.ndarray, inflation_voxels: int) -> np.ndarray:
     """Morphological dilation of the obstacle grid by *inflation_voxels* voxels.
 
-    Uses scipy's binary_dilation which is equivalent to a 3D sphere structuring
-    element of radius ``inflation_voxels``.  This expands every obstacle by
-    the robot's collision radius so that path planners can treat the robot
-    as a point.
+    Uses a spherical structuring element of radius ``inflation_voxels``.
+    This expands every obstacle by the robot's collision radius so that
+    path planners can treat the robot as a point.
+
+    Tries CuPy (GPU) first for speed; falls back to scipy on CPU.
     """
-    from scipy.ndimage import binary_dilation
-    # Build a spherical structuring element
     r = inflation_voxels
-    d = 2 * r + 1
-    se = np.zeros((d, d, d), dtype=bool)
-    cx, cy, cz = r, r, r
-    for ix in range(d):
-        for iy in range(d):
-            for iz in range(d):
-                if (ix - cx) ** 2 + (iy - cy) ** 2 + (iz - cz) ** 2 <= r ** 2:
-                    se[ix, iy, iz] = True
-    return binary_dilation(grid, structure=se)
+    coords = np.mgrid[-r:r+1, -r:r+1, -r:r+1]
+    se = (coords[0]**2 + coords[1]**2 + coords[2]**2) <= r**2
+
+    try:
+        import cupy as cp
+        from cupyx.scipy.ndimage import binary_dilation as gpu_dilation
+        grid_gpu = cp.asarray(grid)
+        se_gpu = cp.asarray(se)
+        result = gpu_dilation(grid_gpu, structure=se_gpu)
+        return cp.asnumpy(result)
+    except (ImportError, Exception) as exc:
+        logger.debug("GPU inflate_grid unavailable (%s), using scipy.", exc)
+        from scipy.ndimage import binary_dilation
+        return binary_dilation(grid, structure=se)
 
 
 # ── Grid down-sampling ───────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import open3d as o3d
 from scipy.spatial import KDTree
@@ -6,6 +7,8 @@ from time import time as get_time
 from typing import List, Dict, Tuple
 
 from .types import FrustumParams, ViewpointResult
+
+logger = logging.getLogger(__name__)
 
 
 def get_frustum_basis(direction):
@@ -22,6 +25,15 @@ def get_frustum_basis(direction):
     up = np.cross(right, direction)
 
     return right, up
+
+
+def get_frustum_basis_from_quaternion(q_wxyz):
+    """Extract (forward, right, up) from quaternion [qw,qx,qy,qz], +X forward."""
+    from scipy.spatial.transform import Rotation as R
+
+    rot = R.from_quat([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]])
+    mat = rot.as_matrix()
+    return mat[:, 0], mat[:, 1], mat[:, 2]  # forward, right, up
 
 
 def get_frustum_bounding_sphere(viewpoint, direction, params):
@@ -47,18 +59,24 @@ class VisibilityQuery:
         self.frustum_params = frustum_params
         self.num_points = len(target_points)
         self.kdtree = KDTree(self.target_points)
-        print(f"[VisibilityQuery] Initialized base query for {self.num_points} target points.")
+        logger.info("[VisibilityQuery] Initialized base query for %d target points.", self.num_points)
 
-    def compute_visibility(self, viewpoint: np.ndarray, direction: np.ndarray) -> Tuple[np.ndarray, float]:
+    def compute_visibility(self, viewpoint: np.ndarray, orientation: np.ndarray) -> Tuple[np.ndarray, float]:
         """
         Computes the visible indices and computation time from a single viewpoint.
         Must be implemented by subclasses.
+
+        Args:
+            viewpoint: 3D position.
+            orientation: quaternion [qw,qx,qy,qz].
         """
         raise NotImplementedError("Subclasses must implement compute_visibility")
 
-    def points_in_frustum_with_kdtree(self, viewpoint, direction):
+    def points_in_frustum_with_kdtree(self, viewpoint, orientation):
         """Frustum culling with KD-tree spatial query."""
-        center, radius = get_frustum_bounding_sphere(viewpoint, direction, self.frustum_params)
+        forward, right, up = get_frustum_basis_from_quaternion(orientation)
+
+        center, radius = get_frustum_bounding_sphere(viewpoint, forward, self.frustum_params)
         candidate_indices = self.kdtree.query_ball_point(center, radius)
 
         if len(candidate_indices) == 0:
@@ -67,11 +85,10 @@ class VisibilityQuery:
         candidate_points = self.target_points[candidate_indices]
 
         vp_vectors = candidate_points - viewpoint
-        proj_distance = np.dot(vp_vectors, direction)
+        proj_distance = np.dot(vp_vectors, forward)
 
         mask = (proj_distance >= self.frustum_params.near) & (proj_distance <= self.frustum_params.far)
 
-        right, up = get_frustum_basis(direction)
         tan_half_fov = np.tan(self.frustum_params.fov_y / 2.0)
         max_size = proj_distance * tan_half_fov
 
@@ -82,20 +99,24 @@ class VisibilityQuery:
 
         return np.array(candidate_indices)[mask]
 
-    def compute_visibility_for_all_candidates(self, candidates: List[Tuple[np.ndarray, np.ndarray]]) -> Tuple[Dict[Tuple[Tuple[float, ...], Tuple[float, ...]], np.ndarray], float]:
-        """Pre-computes and returns visibility for a list of candidates."""
+    def compute_visibility_for_all_candidates(self, candidates: List[Tuple[np.ndarray, np.ndarray]]) -> Tuple[Dict[int, np.ndarray], float]:
+        """Pre-computes visibility for all candidates.
+
+        Returns ``(visibility_map, total_time)`` where ``visibility_map``
+        maps candidate index → visible point indices array.
+        """
         start_time = get_time()
-        visibility_map = {}
+        visibility_map: Dict[int, np.ndarray] = {}
 
-        for i, (vp, direction) in enumerate(candidates):
+        for i, (vp, orientation) in enumerate(candidates):
             if (i + 1) % 100 == 0:
-                print(f"  [VisibilityQuery] ... computed {i+1} / {len(candidates)} candidates")
+                logger.info("  [VisibilityQuery] ... computed %d / %d candidates", i + 1, len(candidates))
 
-            visible_indices, _ = self.compute_visibility(vp, direction)
-            visibility_map[(tuple(vp), tuple(direction))] = visible_indices
+            visible_indices, _ = self.compute_visibility(vp, orientation)
+            visibility_map[i] = visible_indices
 
         total_time = get_time() - start_time
-        print(f"[VisibilityQuery] Visibility computation finished in {total_time:.2f}s")
+        logger.info("[VisibilityQuery] Visibility computation finished in %.2fs", total_time)
         return visibility_map, total_time
 
     def compute_redundancy(self, viewpoints: List[ViewpointResult]) -> float:

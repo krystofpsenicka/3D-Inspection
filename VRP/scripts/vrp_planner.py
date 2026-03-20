@@ -22,19 +22,19 @@ from typing import List, Optional
 
 import numpy as np
 
-from .config import (
+from ..config import (
     ASSETS_PATH,
     CONFIGS_PATH,
     CUOPT_SERVICE_TIME,
     RAPIDS_PYTHON,
     ROBOT_RADIUS,
 )
-from .gpu_distance_matrix import build_route_path_cache, compute_distance_matrix
-from .occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
-from .route_executor import ExecutionResult, RouteExecutor
-from .utils import load_local_robot_config
-from .vrp_solver import VRPResult, solve_vrp
-from .waypoint_loader import load_waypoints
+from ..core.gpu_distance_matrix import build_route_path_cache, compute_distance_matrix
+from ..core.occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
+from ..routing.route_executor import ExecutionResult, RouteExecutor
+from ..utils import load_local_robot_config
+from ..solver.vrp_solver import VRPResult, solve_vrp
+from ..core.waypoint_loader import load_waypoints
 
 logger = logging.getLogger(__name__)
 
@@ -272,13 +272,13 @@ class VRPPipeline:
 
         # ── Optional: save solution for later Isaac Sim replay ────────
         if cfg.save_solution_path:
-            from .utils import save_solution
+            from ..utils import save_solution
             save_solution(exec_result, cfg.save_solution_path)
             logger.info("Solution saved to: %s", cfg.save_solution_path)
 
         # ── Optional: Isaac Sim replay (same-env mode) ────────────────
         if cfg.replay_in_isaac and not cfg.save_solution_path:
-            from .visualization import replay_in_isaac_sim
+            from ..viz.visualization import replay_in_isaac_sim
             replay_in_isaac_sim(exec_result, headless=cfg.headless)
 
         return exec_result

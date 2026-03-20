@@ -27,7 +27,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 
-from .config import (
+from ..config import (
     CUOPT_SERVICE_TIME,
     RAPIDS_PYTHON,
     VRP_ROOT as VRP_DIR,
@@ -131,7 +131,7 @@ class GPUSolver:
         self.rapids_python = os.path.expanduser(rapids_python)
         self.service_time  = service_time
         self.timeout       = timeout
-        self._script       = str(Path(VRP_DIR) / "cuopt_subprocess.py")
+        self._script       = str(Path(VRP_DIR) / "solver" / "cuopt_subprocess.py")
 
     # ------------------------------------------------------------------
 
@@ -174,8 +174,9 @@ class GPUSolver:
         n = dist_matrix.shape[0]
         depot_set = set(depots)
         n_inspection = n - len(depot_set)
-        # Exact ceil(n/k) — no slack, forces cuOpt to distribute stops evenly
-        balanced_cap = math.ceil(n_inspection / num_vehicles)
+        # ceil(n/k) + 15% slack — allows solver flexibility for distance optimisation
+        base_cap = math.ceil(n_inspection / num_vehicles)
+        balanced_cap = base_cap + max(1, math.ceil(0.15 * base_cap))
 
         cfg = {
             "n":                n,
@@ -320,9 +321,10 @@ class ORToolsSolver:
         dist_dim = routing.GetDimensionOrDie("Distance")
         dist_dim.SetGlobalSpanCostCoefficient(self.span_cost_coefficient)
 
-        # Dimension: stop count — hard-cap each vehicle at balanced load
+        # Dimension: stop count — hard-cap each vehicle at balanced load + slack
         n_inspection = n - len(depot_set)
-        balanced_cap = math.ceil(n_inspection / num_vehicles) + 1
+        base_cap = math.ceil(n_inspection / num_vehicles)
+        balanced_cap = base_cap + max(1, math.ceil(0.15 * base_cap))
 
         def count_callback(from_idx, to_idx):
             node = manager.IndexToNode(to_idx)

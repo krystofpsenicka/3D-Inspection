@@ -31,7 +31,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .config import (
+from ..config import (
     AUV_CRUISE_SPEED,
     BROV_CUBOID_DIMS,
     ROBOT_RADIUS,
@@ -40,18 +40,16 @@ from .config import (
     SPACE_TIME_MAX_HORIZON_S,
     SPACE_TIME_RESOLUTION,
     SPLINE_SAFETY_VOXELS,
+    TRAJ_DT,
 )
 from .space_time_astar import (
     ReservationTable,
     downsample_occupancy_grid,
     plan_robot_route_st,
 )
-from .utils import find_trajectory_collisions
+from ..utils import find_trajectory_collisions
 
 logger = logging.getLogger(__name__)
-
-# ── Trajectory interpolation defaults ─────────────────────────────────────────
-TRAJ_DT = 0.02  # seconds – replay sample period
 
 
 # ─── Result dataclass ────────────────────────────────────────────────────────
@@ -112,19 +110,75 @@ class RouteExecutor:
 
     # ──────────────────────────────────────────────────────────────────
 
+    def _plan_sequential(
+        self,
+        routes: List[List[int]],
+        waypoints_world: np.ndarray,
+        priority_order: List[int],
+        route_costs: List[float],
+        coarse_grid: np.ndarray,
+        coarse_origin: np.ndarray,
+        coarse_res: float,
+        T_max: int,
+        half_v: np.ndarray,
+        path_cache: Optional[dict],
+        dwell_s: float,
+    ):
+        """Plan all robots sequentially in given priority order.
+
+        Returns (robot_world_paths, robot_coarse_times, robot_wp_schedules, makespan).
+        """
+        n_robots = self.num_robots
+        reservation = ReservationTable(coarse_grid.shape, T_max, half_v)
+
+        robot_world_paths: List[Optional[np.ndarray]] = [None] * n_robots
+        robot_coarse_times: List[Optional[np.ndarray]] = [None] * n_robots
+        robot_wp_schedules: List[Optional[list]] = [None] * n_robots
+
+        for priority, robot_idx in enumerate(priority_order):
+            route = routes[robot_idx]
+            world_xyz, coarse_t, wp_schedule = plan_robot_route_st(
+                coarse_grid, coarse_origin, coarse_res,
+                reservation, route, waypoints_world,
+                path_cache=path_cache,
+                dwell_s=dwell_s,
+                dt=SPACE_TIME_DT,
+                fine_og=self.og,
+                robot_radius=ROBOT_RADIUS,
+            )
+            robot_world_paths[robot_idx] = world_xyz
+            robot_coarse_times[robot_idx] = coarse_t
+            robot_wp_schedules[robot_idx] = wp_schedule
+
+        # Compute makespan (max final time across robots)
+        makespan = 0.0
+        for i in range(n_robots):
+            ct = robot_coarse_times[i]
+            if ct is not None and len(ct) > 0:
+                makespan = max(makespan, float(ct[-1]) * SPACE_TIME_DT)
+
+        return robot_world_paths, robot_coarse_times, robot_wp_schedules, makespan
+
+    # ──────────────────────────────────────────────────────────────────
+
     def execute(
         self,
         routes:          List[List[int]],
         waypoints_world: np.ndarray,
-        traffic_plan=None,
         path_cache: Optional[dict] = None,
         dwell_s: float = SPACE_TIME_DWELL_S,
+        n_priority_trials: int = 5,
     ) -> ExecutionResult:
         """Build collision-free trajectories via Priority-Based Sequential
         Planning and return an :class:`ExecutionResult`.
+
+        Parameters
+        ----------
+        n_priority_trials : int
+            Number of random priority orderings to try. The best (lowest
+            makespan) is kept. Set to 0 to use only the default ordering.
         """
         n_robots = self.num_robots
-        n_dof    = len(self.start_configs[0])  # 8
 
         # Build per-robot waypoint list for visualisation
         all_waypoints: List[List[List[float]]] = [
@@ -140,7 +194,6 @@ class RouteExecutor:
                 coarse_res=SPACE_TIME_RESOLUTION,
             )
         else:
-            # No occupancy grid available – create an empty one
             logger.warning("No occupancy grid; collision avoidance with "
                            "static obstacles is disabled.")
             coarse_grid = np.zeros((10, 10, 10), dtype=np.bool_)
@@ -148,21 +201,14 @@ class RouteExecutor:
             coarse_res = SPACE_TIME_RESOLUTION
 
         T_max = max(1, int(math.ceil(SPACE_TIME_MAX_HORIZON_S / SPACE_TIME_DT)))
-        # Robot AABB half-extents in coarse voxels (≥1 so at least the
-        # centre voxel is always reserved).  We add SPLINE_SAFETY_VOXELS
-        # to compensate for cubic-spline overshoot during smooth interp.
         dims = np.array(BROV_CUBOID_DIMS, dtype=np.float64)
         half_v = np.maximum(np.ceil(dims / (2.0 * coarse_res)).astype(np.intp), 1)
         half_v += SPLINE_SAFETY_VOXELS
-        reservation = ReservationTable(coarse_grid.shape, T_max, half_v)
 
-        logger.info("[executor] Coarse grid %s  T=%d  half_v=%s  "
-                    "reservation %.1f MB",
-                    coarse_grid.shape, T_max, half_v,
-                    reservation._data.nbytes / 1e6)
+        logger.info("[executor] Coarse grid %s  T=%d  half_v=%s",
+                    coarse_grid.shape, T_max, half_v)
 
-        # ── 2. Priority ordering: longest route first ─────────────────
-        # Estimate route cost from path_cache or Euclidean distance
+        # ── 2. Priority ordering ──────────────────────────────────────
         route_costs: List[float] = []
         for i, route in enumerate(routes):
             cost = 0.0
@@ -176,45 +222,48 @@ class RouteExecutor:
                         waypoints_world[b, :3] - waypoints_world[a, :3]))
             route_costs.append(cost)
 
-        priority_order = sorted(range(n_robots), key=lambda i: -route_costs[i])
-        logger.info("[executor] Priority order (longest first): %s  costs=%s",
-                    priority_order, [f"{route_costs[i]:.1f}" for i in priority_order])
+        default_order = sorted(range(n_robots), key=lambda i: -route_costs[i])
+        logger.info("[executor] Default priority (longest first): %s  costs=%s",
+                    default_order, [f"{route_costs[i]:.1f}" for i in default_order])
 
-        # ── 3. Plan each robot sequentially ───────────────────────────
-        # Stores per-robot coarse-resolution results
-        robot_world_paths: List[Optional[np.ndarray]] = [None] * n_robots
-        robot_coarse_times: List[Optional[np.ndarray]] = [None] * n_robots
-        robot_wp_schedules: List[Optional[list]] = [None] * n_robots
-        for priority, robot_idx in enumerate(priority_order):
-            route = routes[robot_idx]
-            logger.info("[executor] Planning robot %d (priority %d/%d, "
-                        "%d legs, est. %.1fm) …",
-                        robot_idx, priority + 1, n_robots,
-                        len(route) - 1, route_costs[robot_idx])
+        # ── 3. Try priority orderings, keep best makespan ─────────────
+        best_result = self._plan_sequential(
+            routes, waypoints_world, default_order, route_costs,
+            coarse_grid, coarse_origin, coarse_res, T_max, half_v,
+            path_cache, dwell_s,
+        )
+        best_makespan = best_result[3]
+        best_order = default_order
+        logger.info("[executor] Default order makespan: %.1f s", best_makespan)
 
-            world_xyz, coarse_t, wp_schedule = plan_robot_route_st(
-                coarse_grid, coarse_origin, coarse_res,
-                reservation, route, waypoints_world,
-                path_cache=path_cache,
-                dwell_s=dwell_s,
-                dt=SPACE_TIME_DT,
-                fine_og=self.og,
-                robot_radius=ROBOT_RADIUS,
+        for trial in range(n_priority_trials):
+            random_order = list(np.random.permutation(n_robots))
+            trial_result = self._plan_sequential(
+                routes, waypoints_world, random_order, route_costs,
+                coarse_grid, coarse_origin, coarse_res, T_max, half_v,
+                path_cache, dwell_s,
             )
+            trial_makespan = trial_result[3]
+            logger.info("[executor] Trial %d order %s makespan: %.1f s",
+                        trial + 1, random_order, trial_makespan)
+            if trial_makespan < best_makespan:
+                best_result = trial_result
+                best_makespan = trial_makespan
+                best_order = random_order
 
-            if len(world_xyz) == 0:
-                logger.warning("  Robot %d: ST planning returned empty path!",
-                               robot_idx)
-            else:
-                logger.info("  Robot %d: %d coarse samples, t=[%d..%d] "
-                            "(%.1f s)",
-                            robot_idx, len(world_xyz),
-                            int(coarse_t[0]), int(coarse_t[-1]),
-                            float(coarse_t[-1]) * SPACE_TIME_DT)
+        logger.info("[executor] Best priority order: %s  makespan=%.1f s",
+                    best_order, best_makespan)
 
-            robot_world_paths[robot_idx] = world_xyz
-            robot_coarse_times[robot_idx] = coarse_t
-            robot_wp_schedules[robot_idx] = wp_schedule
+        robot_world_paths, robot_coarse_times, robot_wp_schedules, _ = best_result
+
+        for robot_idx in best_order:
+            w_xyz = robot_world_paths[robot_idx]
+            c_t = robot_coarse_times[robot_idx]
+            if w_xyz is not None and len(w_xyz) > 0:
+                logger.info("  Robot %d: %d coarse samples, t=[%d..%d] (%.1f s)",
+                            robot_idx, len(w_xyz),
+                            int(c_t[0]), int(c_t[-1]),
+                            float(c_t[-1]) * SPACE_TIME_DT)
 
         # ── 4. Smooth-interpolate to replay resolution ────────────────
         all_traj_positions:  List[List[np.ndarray]] = [[] for _ in range(n_robots)]
@@ -282,7 +331,8 @@ class RouteExecutor:
                 all_traj_positions[i].append(sp.astype(np.float32))
                 all_traj_velocities[i].append(sv.astype(np.float32))
 
-        # ── 5. Safety AABB check (should be clean) ────────────────────
+        # ── 5. Safety checks ────────────────────────────────────────────
+        # 5a. Inter-robot AABB check
         collisions = find_trajectory_collisions(all_traj_positions,
                                                 np.array(BROV_CUBOID_DIMS, dtype=np.float32))
         if collisions:
@@ -291,6 +341,21 @@ class RouteExecutor:
                            len(collisions))
         else:
             logger.info("[executor] No residual AABB collisions – clean plan.")
+
+        # 5b. Fine OG obstacle check on smoothed trajectories
+        if self.og is not None:
+            for i in range(n_robots):
+                og_collisions = 0
+                for step_pos in all_traj_positions[i]:
+                    xyz = step_pos[:3]
+                    if not self.og.is_free_world(xyz):
+                        og_collisions += 1
+                if og_collisions > 0:
+                    logger.warning(
+                        "[executor] Robot %d: %d / %d trajectory steps "
+                        "collide with fine OG.",
+                        i, og_collisions, len(all_traj_positions[i]),
+                    )
 
         return ExecutionResult(
             all_traj_positions  = all_traj_positions,

@@ -21,7 +21,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from VRP.config import (
+from ..config import (
     MESH_PATH,
     MESH_POSE,
     MESH_TARGET_LENGTH,
@@ -345,7 +345,7 @@ def load_waypoints_from_inspection(
     for vp in all_viewpoints:
         pos = np.asarray(vp.position, dtype=np.float32)
         # Derive quaternion from view direction if available
-        quat = _direction_to_quat(np.asarray(vp.direction, dtype=np.float32))
+        quat = np.asarray(vp.orientation, dtype=np.float32)
         waypoints.append([
             float(pos[0]), float(pos[1]), float(pos[2]),
             float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]),

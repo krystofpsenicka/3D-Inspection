@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import open3d as o3d
 import matplotlib.pyplot as plt
@@ -5,7 +6,10 @@ import PIL.Image
 from typing import Dict, Tuple
 
 from .core.types import FrustumParams, OptimizationResult
-from .core.base import get_frustum_basis
+from .core.base import get_frustum_basis, get_frustum_basis_from_quaternion
+from shared.geometry import quaternion_to_forward
+
+logger = logging.getLogger(__name__)
 
 
 class Visualizer:
@@ -21,11 +25,11 @@ class Visualizer:
         self.normals = normals
         self.num_points = len(target_points)
         self.frustum_params = frustum_params
-        print("[Visualizer] Initialized visualization module.")
+        logger.info("[Visualizer] Initialized visualization module.")
 
     def visualize_normals(self, normal_scale: float = 0.05):
         """Visualizes the mesh, the target points, and their computed normals."""
-        print("\n[Visualizer] Visualizing target points and normals...")
+        logger.info("[Visualizer] Visualizing target points and normals...")
 
         pcd_vis = o3d.geometry.PointCloud()
         pcd_vis.points = o3d.utility.Vector3dVector(self.target_points)
@@ -55,19 +59,18 @@ class Visualizer:
         o3d.visualization.draw_geometries(geometries, window_name="Target Points and Normals")
 
     def visualize_visibility_results(self,
-                                     visibility_map: Dict[Tuple[Tuple[float, ...], Tuple[float, ...]], np.ndarray],
-                                     candidate_index: int = 0):
+                                     visibility_map,
+                                     candidate_index: int = 0,
+                                     candidates=None):
         """Visualizes a specific candidate's visibility against the mesh and target points."""
-        candidate_list = list(visibility_map.keys())
-        if not candidate_list:
-            print("[Visualizer] Error: Visibility map is empty.")
+        if not visibility_map:
+            logger.warning("[Visualizer] Visibility map is empty.")
             return
 
-        index_to_visualize = candidate_index % len(candidate_list)
-        selected_key = candidate_list[index_to_visualize]
-        selected_vp_pos = np.array(selected_key[0])
-        selected_vp_dir = np.array(selected_key[1])
-        visible_indices = visibility_map[selected_key]
+        index_to_visualize = candidate_index % len(visibility_map)
+        selected_vp_pos = np.asarray(candidates[index_to_visualize][0])
+        selected_vp_orient = np.asarray(candidates[index_to_visualize][1])
+        visible_indices = visibility_map[index_to_visualize]
 
         geometries = []
 
@@ -98,7 +101,8 @@ class Visualizer:
             geometries.append(vp_sphere)
 
         arrow_length = self.frustum_params.far * 0.2
-        arrow_end = selected_vp_pos + selected_vp_dir * arrow_length
+        forward = quaternion_to_forward(selected_vp_orient)
+        arrow_end = selected_vp_pos + forward * arrow_length
 
         arrow_points = np.array([selected_vp_pos, arrow_end])
         arrow_lines = np.array([[0, 1]])
@@ -109,21 +113,23 @@ class Visualizer:
         line_set.colors = o3d.utility.Vector3dVector([[1.0, 1.0, 0.0]])
         geometries.append(line_set)
 
-        frustum = self.create_frustrum_lineset(selected_vp_pos, selected_vp_dir, self.frustum_params)
+        frustum = self.create_frustrum_lineset(selected_vp_pos, selected_vp_orient, self.frustum_params)
         frustum.paint_uniform_color([1.0, 1.0, 0.0])
         geometries.append(frustum)
 
         geometries.append(pcd_vis)
 
-        print(f"\n[Visualizer] Visualizing Candidate {index_to_visualize}: {len(visible_indices)} visible points.")
+        logger.info("[Visualizer] Visualizing Candidate %d: %d visible points.",
+                    index_to_visualize, len(visible_indices))
         o3d.visualization.draw_geometries(geometries,
                                           window_name=f"Visibility Visualization (Candidate {index_to_visualize})")
 
     def visualize_all_visibility_results(self,
-                                         visibility_map: Dict[Tuple[Tuple[float, ...], Tuple[float, ...]], np.ndarray]):
+                                         visibility_map,
+                                         candidates=None):
         """Visualizes all viewpoints together in a single window with per-viewpoint colors."""
         if not visibility_map:
-            print("[Visualizer] Error: Visibility map is empty.")
+            logger.warning("[Visualizer] Visibility map is empty.")
             return
 
         geometries = []
@@ -133,8 +139,7 @@ class Visualizer:
         base_mesh.compute_vertex_normals()
         geometries.append(base_mesh)
 
-        candidate_list = list(visibility_map.keys())
-        num_vps = len(candidate_list)
+        num_vps = len(visibility_map)
 
         # Generate colors, skipping any too close to red (reserved for uncovered)
         raw_colors = plt.cm.tab20(np.linspace(0, 1, max(20, num_vps)))
@@ -157,10 +162,10 @@ class Visualizer:
             uncovered_pcd.paint_uniform_color([1.0, 0.0, 0.0])
             geometries.append(uncovered_pcd)
 
-        for i, key in enumerate(candidate_list):
-            pos = np.array(key[0])
-            direction = np.array(key[1])
-            visible_indices = visibility_map[key]
+        for i in range(num_vps):
+            pos = np.asarray(candidates[i][0])
+            orientation = np.asarray(candidates[i][1])
+            visible_indices = visibility_map[i]
             color = list(vp_colors[i % len(vp_colors)])
 
             # Sphere
@@ -171,13 +176,14 @@ class Visualizer:
             geometries.append(vp_sphere)
 
             # Frustum
-            frustum = self.create_frustrum_lineset(pos, direction, self.frustum_params)
+            frustum = self.create_frustrum_lineset(pos, orientation, self.frustum_params)
             frustum.paint_uniform_color(color)
             geometries.append(frustum)
 
             # Direction arrow
             arrow_length = 0.5
-            arrow_end = pos + direction * arrow_length
+            forward = quaternion_to_forward(orientation)
+            arrow_end = pos + forward * arrow_length
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
             arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
@@ -191,8 +197,8 @@ class Visualizer:
                 visible_pcd.paint_uniform_color(color)
                 geometries.append(visible_pcd)
 
-        print(f"\n[Visualizer] Showing all {num_vps} viewpoints together "
-              f"({self.num_points - len(uncovered_indices)}/{self.num_points} covered).")
+        logger.info("[Visualizer] Showing all %d viewpoints together (%d/%d covered).",
+                    num_vps, self.num_points - len(uncovered_indices), self.num_points)
 
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name="All Viewpoints Visibility", width=1920, height=1080)
@@ -205,7 +211,7 @@ class Visualizer:
         for geom in geometries:
             vis.add_geometry(geom)
 
-        print("Press Q to close visualization")
+        logger.info("Press Q to close visualization")
         vis.run()
         vis.destroy_window()
 
@@ -241,7 +247,7 @@ class Visualizer:
             viewpoint_sphere.compute_vertex_normals()
             geometries.append(viewpoint_sphere)
 
-            frustum = self.create_frustrum_lineset(vp.position, vp.direction, self.frustum_params)
+            frustum = self.create_frustrum_lineset(vp.position, vp.orientation, self.frustum_params)
             frustum.paint_uniform_color(color)
             geometries.append(frustum)
 
@@ -252,7 +258,8 @@ class Visualizer:
                 geometries.append(visible_pcd)
 
             arrow_length = 0.5
-            arrow_end = vp.position + vp.direction * arrow_length
+            forward = quaternion_to_forward(vp.orientation)
+            arrow_end = vp.position + forward * arrow_length
             arrow_points = np.array([vp.position, arrow_end])
             arrow_lines = np.array([[0, 1]])
             arrow = o3d.geometry.LineSet()
@@ -266,9 +273,9 @@ class Visualizer:
     def visualize_solution_pcd(self, result: OptimizationResult,
                                title: str = "Viewpoint Solution"):
         """Visualize the complete solution interactively."""
-        print(f"\nVisualizing solution: {title}")
-        print(f"Total viewpoints: {result.num_viewpoints}")
-        print(f"Coverage: {result.total_coverage * 100:.2f}%")
+        logger.info("Visualizing solution: %s", title)
+        logger.info("Total viewpoints: %d", result.num_viewpoints)
+        logger.info("Coverage: %.2f%%", result.total_coverage * 100)
 
         geometries = self._create_solution_geometries(result)
 
@@ -283,13 +290,13 @@ class Visualizer:
         for geom in geometries:
             vis.add_geometry(geom)
 
-        print(f"\nPress Q to close visualization")
+        logger.info("Press Q to close visualization")
         vis.run()
         vis.destroy_window()
 
     def save_solution_animation(self, result: OptimizationResult, filename: str, frames: int = 200):
         """Saves a GIF animation of the solution by orbiting the camera."""
-        print(f"Generating animation: {filename}")
+        logger.info("Generating animation: %s", filename)
 
         geometries = self._create_solution_geometries(result)
 
@@ -311,7 +318,7 @@ class Visualizer:
         step_size = 10.0
         ctr.rotate(0.0, -500.0)
 
-        print(f"  - Rendering {frames} frames...")
+        logger.info("  - Rendering %d frames...", frames)
         for i in range(frames):
             ctr.rotate(step_size, 0.0)
             vis.poll_events()
@@ -326,14 +333,14 @@ class Visualizer:
         if image_frames:
             image_frames[0].save(filename, save_all=True, append_images=image_frames[1:],
                                  duration=50, loop=0)
-            print(f"  - Saved GIF to {filename}")
+            logger.info("  - Saved GIF to %s", filename)
 
     def visualize_solution_triangles(self, result: OptimizationResult,
                                      mesh: o3d.geometry.TriangleMesh,
                                      title: str = "Triangle Visibility Solution"):
         """Visualize the complete solution with triangle-based visibility."""
-        print(f"\nVisualizing triangle-based solution: {title}")
-        print(f"Total viewpoints: {result.num_viewpoints}")
+        logger.info("Visualizing triangle-based solution: %s", title)
+        logger.info("Total viewpoints: %d", result.num_viewpoints)
 
         num_triangles = len(np.asarray(mesh.triangles))
         geometries = []
@@ -368,12 +375,13 @@ class Visualizer:
             viewpoint_sphere.compute_vertex_normals()
             geometries.append(viewpoint_sphere)
 
-            frustum = self.create_frustrum_lineset(vp.position, vp.direction, self.frustum_params)
+            frustum = self.create_frustrum_lineset(vp.position, vp.orientation, self.frustum_params)
             frustum.paint_uniform_color(color)
             geometries.append(frustum)
 
             arrow_length = 0.5
-            arrow_end = vp.position + vp.direction * arrow_length
+            forward = quaternion_to_forward(vp.orientation)
+            arrow_end = vp.position + forward * arrow_length
             arrow_points = np.array([vp.position, arrow_end])
             arrow_lines = np.array([[0, 1]])
             arrow = o3d.geometry.LineSet()
@@ -396,26 +404,25 @@ class Visualizer:
         vis.destroy_window()
 
     def visualize_visibility_results_triangles(self,
-                                               visibility_map: Dict[Tuple[Tuple[float, ...], Tuple[float, ...]], np.ndarray],
+                                               visibility_map,
                                                mesh: o3d.geometry.TriangleMesh,
-                                               candidate_index: int = 0):
+                                               candidate_index: int = 0,
+                                               candidates=None):
         """Visualizes a specific candidate's triangle visibility."""
-        candidate_list = list(visibility_map.keys())
-        if not candidate_list:
-            print("[Visualizer] Error: Visibility map is empty.")
+        if not visibility_map:
+            logger.warning("[Visualizer] Visibility map is empty.")
             return
 
-        index_to_visualize = candidate_index % len(candidate_list)
-        selected_key = candidate_list[index_to_visualize]
-        selected_vp_pos = np.array(selected_key[0])
-        selected_vp_dir = np.array(selected_key[1])
-        visible_triangle_indices = visibility_map[selected_key]
+        index_to_visualize = candidate_index % len(visibility_map)
+        selected_vp_pos = np.asarray(candidates[index_to_visualize][0])
+        selected_vp_orient = np.asarray(candidates[index_to_visualize][1])
+        visible_triangle_indices = visibility_map[index_to_visualize]
 
         geometries = []
 
         num_triangles = len(np.asarray(mesh.triangles))
-        print(f"\n[Visualizer] Visualizing Candidate {index_to_visualize}: "
-              f"{len(visible_triangle_indices)}/{num_triangles} visible triangles.")
+        logger.info("[Visualizer] Visualizing Candidate %d: %d/%d visible triangles.",
+                    index_to_visualize, len(visible_triangle_indices), num_triangles)
 
         triangle_colors = np.full((num_triangles, 3), [0.5, 0.5, 0.5], dtype=np.float64)
         triangle_colors[visible_triangle_indices] = [0.0, 1.0, 0.0]
@@ -441,7 +448,8 @@ class Visualizer:
             geometries.append(vp_sphere)
 
         arrow_length = self.frustum_params.far * 0.2
-        arrow_end = selected_vp_pos + selected_vp_dir * arrow_length
+        forward = quaternion_to_forward(selected_vp_orient)
+        arrow_end = selected_vp_pos + forward * arrow_length
 
         arrow_points = np.array([selected_vp_pos, arrow_end])
         arrow_lines = np.array([[0, 1]])
@@ -460,7 +468,8 @@ class Visualizer:
                              inside_positions: np.ndarray, inside_weights: np.ndarray,
                              outside_colormap: str = "Reds",
                              inside_colormap: str = "Blues",
-                             point_size: float = 3.0):
+                             point_size: float = 3.0,
+                             window_name: str = "Free-Space Sampling Heatmap"):
         """Visualize feasible sampling regions as colored point clouds over a wireframe mesh."""
         geometries = []
 
@@ -490,11 +499,11 @@ class Visualizer:
             pcd.colors = o3d.utility.Vector3dVector(colors)
             geometries.append(pcd)
 
-        print(f"[Visualizer] Free-space heatmap: "
-              f"{len(outside_positions)} outside, {len(inside_positions)} inside points")
+        logger.info("[Visualizer] Free-space heatmap: %d outside, %d inside points",
+                    len(outside_positions), len(inside_positions))
 
         vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name="Free-Space Sampling Heatmap", width=1920, height=1080)
+        vis.create_window(window_name=window_name, width=1920, height=1080)
 
         render_option = vis.get_render_option()
         render_option.point_size = point_size
@@ -503,18 +512,278 @@ class Visualizer:
         for geom in geometries:
             vis.add_geometry(geom)
 
-        print("Press Q to close visualization")
+        logger.info("Press Q to close visualization")
         vis.run()
         vis.destroy_window()
 
-    def create_frustrum_lineset(self, viewpoint, direction, params):
+    def visualize_resampling_progression(self, normal_vis_map, normal_candidates,
+                                         targeted_vis_map, targeted_candidates,
+                                         point_size=4.0):
+        """Visualize resampling in three phases: normal VPs, targeted VPs one-by-one, combined."""
+        BLUE = [0.0, 0.4, 0.8]
+        ORANGE = [1.0, 0.5, 0.0]
+        RED = [1.0, 0.0, 0.0]
+        GREEN = [0.0, 1.0, 0.0]
+        GRAY = [0.5, 0.5, 0.5]
+
+        n_normal = len(normal_candidates)
+        n_targeted = len(targeted_candidates)
+
+        # Compute cumulative coverage from normal candidates
+        normal_covered = set()
+        for visible_indices in normal_vis_map.values():
+            normal_covered.update(visible_indices.tolist())
+
+        normal_coverage_pct = len(normal_covered) / self.num_points * 100
+
+        # --- Phase 1: Normal candidates ---
+        geometries = []
+
+        wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.mesh)
+        wireframe.paint_uniform_color([0.7, 0.7, 0.7])
+        geometries.append(wireframe)
+
+        # Generate per-VP blue shades
+        raw_blues = plt.cm.Blues(np.linspace(0.4, 0.9, max(1, n_normal)))
+
+        for i in range(n_normal):
+            pos = np.asarray(normal_candidates[i][0])
+            orientation = np.asarray(normal_candidates[i][1])
+            color = list(raw_blues[i][:3])
+
+            vp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.15)
+            vp_sphere.translate(pos)
+            vp_sphere.paint_uniform_color(color)
+            vp_sphere.compute_vertex_normals()
+            geometries.append(vp_sphere)
+
+            frustum = self.create_frustrum_lineset(pos, orientation, self.frustum_params)
+            frustum.paint_uniform_color(color)
+            geometries.append(frustum)
+
+            forward = quaternion_to_forward(orientation)
+            arrow_end = pos + forward * 0.5
+            arrow = o3d.geometry.LineSet()
+            arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
+            arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
+            arrow.paint_uniform_color(color)
+            geometries.append(arrow)
+
+            visible_indices = normal_vis_map.get(i, np.array([], dtype=int))
+            if len(visible_indices) > 0:
+                vis_pcd = o3d.geometry.PointCloud()
+                vis_pcd.points = o3d.utility.Vector3dVector(self.target_points[visible_indices])
+                vis_pcd.paint_uniform_color(color)
+                geometries.append(vis_pcd)
+
+        uncovered_indices = set(range(self.num_points)) - normal_covered
+        if uncovered_indices:
+            uncov_pcd = o3d.geometry.PointCloud()
+            uncov_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(uncovered_indices)])
+            uncov_pcd.paint_uniform_color(RED)
+            geometries.append(uncov_pcd)
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(
+            window_name=f"Phase 1: Normal VPs ({n_normal} VPs, coverage={normal_coverage_pct:.1f}%)",
+            width=1920, height=1080)
+        render_option = vis.get_render_option()
+        render_option.point_size = point_size
+        render_option.line_width = 2.0
+        render_option.mesh_show_back_face = True
+        for geom in geometries:
+            vis.add_geometry(geom)
+        logger.info("Phase 1: %d normal VPs, coverage=%.1f%%. Press Q to continue.",
+                     n_normal, normal_coverage_pct)
+        vis.run()
+        vis.destroy_window()
+
+        # --- Phase 2: Targeted candidates one-by-one ---
+        cumulative_covered = set(normal_covered)
+
+        for t_idx in range(n_targeted):
+            geometries = []
+
+            wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.mesh)
+            wireframe.paint_uniform_color([0.7, 0.7, 0.7])
+            geometries.append(wireframe)
+
+            # Normal candidates as small blue spheres (no frustums)
+            for i in range(n_normal):
+                pos = np.asarray(normal_candidates[i][0])
+                vp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.08)
+                vp_sphere.translate(pos)
+                vp_sphere.paint_uniform_color(BLUE)
+                vp_sphere.compute_vertex_normals()
+                geometries.append(vp_sphere)
+
+            # Previously-added targeted candidates as small orange spheres
+            for j in range(t_idx):
+                pos = np.asarray(targeted_candidates[j][0])
+                vp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.08)
+                vp_sphere.translate(pos)
+                vp_sphere.paint_uniform_color(ORANGE)
+                vp_sphere.compute_vertex_normals()
+                geometries.append(vp_sphere)
+
+            # Current targeted candidate as large orange sphere with frustum + arrow
+            cur_pos = np.asarray(targeted_candidates[t_idx][0])
+            cur_orient = np.asarray(targeted_candidates[t_idx][1])
+
+            cur_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.2)
+            cur_sphere.translate(cur_pos)
+            cur_sphere.paint_uniform_color(ORANGE)
+            cur_sphere.compute_vertex_normals()
+            geometries.append(cur_sphere)
+
+            frustum = self.create_frustrum_lineset(cur_pos, cur_orient, self.frustum_params)
+            frustum.paint_uniform_color(ORANGE)
+            geometries.append(frustum)
+
+            forward = quaternion_to_forward(cur_orient)
+            arrow_end = cur_pos + forward * 0.5
+            arrow = o3d.geometry.LineSet()
+            arrow.points = o3d.utility.Vector3dVector(np.array([cur_pos, arrow_end]))
+            arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
+            arrow.paint_uniform_color(ORANGE)
+            geometries.append(arrow)
+
+            # Determine newly covered points
+            cur_visible = targeted_vis_map.get(t_idx, np.array([], dtype=int))
+            newly_covered = set(cur_visible.tolist()) - cumulative_covered
+            still_uncovered = set(range(self.num_points)) - cumulative_covered - newly_covered
+
+            # Gray = already covered
+            if cumulative_covered:
+                gray_pcd = o3d.geometry.PointCloud()
+                gray_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(cumulative_covered)])
+                gray_pcd.paint_uniform_color(GRAY)
+                geometries.append(gray_pcd)
+
+            # Green = newly covered by this VP
+            if newly_covered:
+                green_pcd = o3d.geometry.PointCloud()
+                green_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(newly_covered)])
+                green_pcd.paint_uniform_color(GREEN)
+                geometries.append(green_pcd)
+
+            # Red = still uncovered
+            if still_uncovered:
+                red_pcd = o3d.geometry.PointCloud()
+                red_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(still_uncovered)])
+                red_pcd.paint_uniform_color(RED)
+                geometries.append(red_pcd)
+
+            cumulative_covered.update(newly_covered)
+            cur_coverage_pct = len(cumulative_covered) / self.num_points * 100
+
+            vis = o3d.visualization.Visualizer()
+            vis.create_window(
+                window_name=f"Targeted VP {t_idx+1}/{n_targeted} "
+                            f"(+{len(newly_covered)} pts, coverage={cur_coverage_pct:.1f}%)",
+                width=1920, height=1080)
+            render_option = vis.get_render_option()
+            render_option.point_size = point_size
+            render_option.line_width = 2.0
+            render_option.mesh_show_back_face = True
+            for geom in geometries:
+                vis.add_geometry(geom)
+            logger.info("Targeted VP %d/%d: +%d pts, coverage=%.1f%%. Press Q to continue.",
+                         t_idx + 1, n_targeted, len(newly_covered), cur_coverage_pct)
+            vis.run()
+            vis.destroy_window()
+
+        # --- Phase 3: Final combined view ---
+        all_candidates = list(normal_candidates) + list(targeted_candidates)
+        all_vis_map = {}
+        for i, vis_indices in normal_vis_map.items():
+            all_vis_map[i] = vis_indices
+        for i, vis_indices in targeted_vis_map.items():
+            all_vis_map[n_normal + i] = vis_indices
+
+        total_covered = set()
+        for vis_indices in all_vis_map.values():
+            total_covered.update(vis_indices.tolist())
+        final_coverage_pct = len(total_covered) / self.num_points * 100
+
+        geometries = []
+
+        wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.mesh)
+        wireframe.paint_uniform_color([0.7, 0.7, 0.7])
+        geometries.append(wireframe)
+
+        # Generate per-VP colors
+        raw_colors = plt.cm.tab20(np.linspace(0, 1, max(20, len(all_candidates))))
+        vp_colors = []
+        for c in raw_colors:
+            r, g, b = c[:3]
+            if r > 0.7 and g < 0.3 and b < 0.3:
+                continue
+            vp_colors.append((r, g, b))
+
+        uncovered_final = set(range(self.num_points)) - total_covered
+        if uncovered_final:
+            uncov_pcd = o3d.geometry.PointCloud()
+            uncov_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(uncovered_final)])
+            uncov_pcd.paint_uniform_color(RED)
+            geometries.append(uncov_pcd)
+
+        for i, candidate in enumerate(all_candidates):
+            pos = np.asarray(candidate[0])
+            orientation = np.asarray(candidate[1])
+            is_targeted = i >= n_normal
+            base_color = ORANGE if is_targeted else BLUE
+            vis_color = list(vp_colors[i % len(vp_colors)])
+
+            vp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.15)
+            vp_sphere.translate(pos)
+            vp_sphere.paint_uniform_color(base_color)
+            vp_sphere.compute_vertex_normals()
+            geometries.append(vp_sphere)
+
+            frustum = self.create_frustrum_lineset(pos, orientation, self.frustum_params)
+            frustum.paint_uniform_color(base_color)
+            geometries.append(frustum)
+
+            forward = quaternion_to_forward(orientation)
+            arrow_end = pos + forward * 0.5
+            arrow = o3d.geometry.LineSet()
+            arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
+            arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
+            arrow.paint_uniform_color(base_color)
+            geometries.append(arrow)
+
+            visible_indices = all_vis_map.get(i, np.array([], dtype=int))
+            if len(visible_indices) > 0:
+                vis_pcd = o3d.geometry.PointCloud()
+                vis_pcd.points = o3d.utility.Vector3dVector(self.target_points[visible_indices])
+                vis_pcd.paint_uniform_color(vis_color)
+                geometries.append(vis_pcd)
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(
+            window_name=f"Final: {n_normal} normal + {n_targeted} targeted "
+                        f"(coverage={final_coverage_pct:.1f}%)",
+            width=1920, height=1080)
+        render_option = vis.get_render_option()
+        render_option.point_size = point_size
+        render_option.line_width = 2.0
+        render_option.mesh_show_back_face = True
+        for geom in geometries:
+            vis.add_geometry(geom)
+        logger.info("Final: %d normal + %d targeted VPs, coverage=%.1f%%. Press Q to close.",
+                     n_normal, n_targeted, final_coverage_pct)
+        vis.run()
+        vis.destroy_window()
+
+    def create_frustrum_lineset(self, viewpoint, orientation, params):
         """Create a LineSet representing the frustum volume."""
         half_angle_rad = (params.fov_y / 2.0)
         far_half_size = params.far * np.tan(half_angle_rad)
 
-        right, up = get_frustum_basis(direction)
+        forward, right, up = get_frustum_basis_from_quaternion(orientation)
 
-        far_center = viewpoint + direction * params.far
+        far_center = viewpoint + forward * params.far
 
         r = right * far_half_size
         u = up * far_half_size

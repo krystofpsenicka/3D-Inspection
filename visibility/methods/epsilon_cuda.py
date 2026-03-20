@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import cupy as cp
 import open3d as o3d
@@ -7,13 +8,9 @@ from typing import Optional
 
 from ..core.types import FrustumParams, EpsilonHyperparams
 from ..core.base_cuda import VisibilityQueryCuda
+from ..core.constants import NORM_EPS, CUDA_BLOCK_SIZE, DELTA_AGG_FUNCS
 
-_DELTA_AGG_FUNCS = {
-    "max": np.max,
-    "p99": lambda x: np.percentile(x, 99),
-    "p95": lambda x: np.percentile(x, 95),
-    "p90": lambda x: np.percentile(x, 90),
-}
+logger = logging.getLogger(__name__)
 
 _GAMMA_AGG_FUNCS_CP = {
     "median": cp.median,
@@ -92,16 +89,16 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         self.hp = hyperparams or EpsilonHyperparams()
 
         if epsilon_deg is not None:
-            print(f"Using provided epsilon: {epsilon_deg} degrees")
+            logger.info("Using provided epsilon: %s degrees", epsilon_deg)
             self.fixed_epsilon = np.deg2rad(epsilon_deg)
             self.delta = None
-            print(f"Using Epsilon (radians): {self.fixed_epsilon:.6f} "
-                  f"({np.rad2deg(self.fixed_epsilon):.3f} degrees)")
+            logger.info("Using Epsilon (radians): %.6f (%.3f degrees)",
+                        self.fixed_epsilon, np.rad2deg(self.fixed_epsilon))
         else:
-            print("Epsilon not provided, estimating δ from point set...")
+            logger.info("Epsilon not provided, estimating δ from point set...")
             self.fixed_epsilon = None
             self.delta = self._estimate_delta()
-            print(f"Estimated δ (sampling density): {self.delta:.6f}")
+            logger.info("Estimated δ (sampling density): %.6f", self.delta)
 
     def _estimate_delta(self):
         """Estimate sampling density δ (Lemma 6.1): aggregation of k-neighbor distances."""
@@ -110,7 +107,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             return 0.1
 
         sample_indices = np.random.choice(self.num_points, sample_size, replace=False)
-        agg_func = _DELTA_AGG_FUNCS[self.hp.delta_agg]
+        agg_func = DELTA_AGG_FUNCS[self.hp.delta_agg]
 
         distances = []
         for idx in sample_indices:
@@ -131,11 +128,11 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         gamma = max(gamma, 1e-6)
         return 2.0 * np.arctan(self.delta / (4.0 * gamma)) * self.hp.epsilon_scale
 
-    def compute_visibility(self, viewpoint, direction):
+    def compute_visibility(self, viewpoint, orientation):
         """Compute epsilon-visible region using GPU back-face and occlusion checks."""
         start = get_time()
 
-        frustum_indices = self.points_in_frustum_gpu(viewpoint, direction)
+        frustum_indices = self.points_in_frustum_gpu(viewpoint, orientation)
 
         if len(frustum_indices) == 0:
             return np.array([]), get_time() - start
@@ -148,7 +145,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         vp_gpu = cp.asarray(viewpoint, dtype=cp.float32)
         view_dirs = frustum_points - vp_gpu
         view_dirs_norm = cp.linalg.norm(view_dirs, axis=1)
-        view_dirs = view_dirs / (view_dirs_norm[:, cp.newaxis] + 1e-12)
+        view_dirs = view_dirs / (view_dirs_norm[:, cp.newaxis] + NORM_EPS)
 
         dot_products = cp.sum(view_dirs * frustum_normals, axis=1)
         front_facing = dot_products < self.hp.back_face_threshold
@@ -193,7 +190,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         num_bins_phi = max(1, int(np.ceil(np.pi / epsilon)))
 
         theta = cp.arctan2(relative[:, 1], relative[:, 0])
-        phi = cp.arcsin(cp.clip(relative[:, 2] / (distances + 1e-12), -1, 1))
+        phi = cp.arcsin(cp.clip(relative[:, 2] / (distances + NORM_EPS), -1, 1))
 
         theta_bins = ((theta + np.pi) / (2 * np.pi) * num_bins_theta).astype(cp.int32) % num_bins_theta
         phi_bins = ((phi + np.pi / 2) / np.pi * num_bins_phi).astype(cp.int32) % num_bins_phi
@@ -214,10 +211,9 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             occluder_distances = distances[occluder_indices].astype(cp.float32)
 
             M = len(occluder_indices)
-            block_size = 256
-            grid_size = (M + block_size - 1) // block_size
+            grid_size = (M + CUDA_BLOCK_SIZE - 1) // CUDA_BLOCK_SIZE
             _SCATTER_MIN_KERNEL(
-                (grid_size,), (block_size,),
+                (grid_size,), (CUDA_BLOCK_SIZE,),
                 (occluder_bin_keys, occluder_distances, bin_min_dist, np.int32(M))
             )
 
@@ -231,10 +227,9 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             K = len(front_indices)
             vis_result = cp.zeros(K, dtype=cp.int32)
 
-            block_size = 256
-            grid_size = (K + block_size - 1) // block_size
+            grid_size = (K + CUDA_BLOCK_SIZE - 1) // CUDA_BLOCK_SIZE
             _VISIBILITY_CHECK_KERNEL(
-                (grid_size,), (block_size,),
+                (grid_size,), (CUDA_BLOCK_SIZE,),
                 (front_bin_keys, front_distances, bin_min_dist, vis_result, np.int32(K))
             )
 

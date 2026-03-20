@@ -27,25 +27,24 @@ import tempfile
 import subprocess
 from typing import List, Optional, Tuple
 
+import logging
+
 import numpy as np
+
+# Ensure project root is on sys.path so `shared` is importable when this
+# script runs as a standalone subprocess inside the RAPIDS conda env.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from shared.grid_utils import OFFSETS_26 as _OFFSETS_26, WEIGHTS_26 as _WEIGHTS_26, snap_to_free as _snap_to_free
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ── CPU A* helpers ────────────────────────────────────────────────────────────
 # ─────────────────────────────────────────────────────────────────────────────
-
-# 26-connected 3D neighbourhood offsets and their Euclidean weights
-_OFFSETS_26: List[Tuple[int, int, int]] = [
-    (di, dj, dk)
-    for di in (-1, 0, 1)
-    for dj in (-1, 0, 1)
-    for dk in (-1, 0, 1)
-    if not (di == 0 and dj == 0 and dk == 0)
-]
-_WEIGHTS_26: np.ndarray = np.array(
-    [np.sqrt(di**2 + dj**2 + dk**2) for di, dj, dk in _OFFSETS_26],
-    dtype=np.float32,
-)
 
 
 def _astar_single(
@@ -140,50 +139,11 @@ def compute_distance_matrix_cpu(
             matrix[j, i] = d
             done += 1
             if done % 20 == 0:
-                print(f"  [A*] {done}/{total_pairs} pairs …", end="\r")
-    print(f"  [A*] {total_pairs}/{total_pairs} pairs done.          ")
+                logger.info("  [A*] %s/%s pairs …", done, total_pairs)
+    logger.info("  [A*] %s/%s pairs done.", total_pairs, total_pairs)
     return matrix
 
 
-def _snap_to_free(
-    grid: np.ndarray,
-    ijk_array: np.ndarray,
-    max_radius: int = 10,
-) -> np.ndarray:
-    """For each index in ``ijk_array``, snap to nearest free voxel if occupied.
-
-    Uses a bounded BFS outward from the given index.
-    """
-    shape = np.array(grid.shape)
-    result = ijk_array.copy()
-    for n, ijk in enumerate(ijk_array):
-        ijk = np.clip(ijk, 0, shape - 1)
-        if not grid[tuple(ijk)]:
-            result[n] = ijk
-            continue
-        # BFS to find nearest free
-        found = False
-        from collections import deque
-        queue = deque([tuple(ijk)])
-        visited = {tuple(ijk)}
-        while queue:
-            cur = queue.popleft()
-            if not grid[cur]:
-                result[n] = np.array(cur)
-                found = True
-                break
-            ci, cj, ck = cur
-            for di, dj, dk in _OFFSETS_26:
-                ni, nj, nk = ci + di, cj + dj, ck + dk
-                if not (0 <= ni < shape[0] and 0 <= nj < shape[1] and 0 <= nk < shape[2]):
-                    continue
-                nb = (ni, nj, nk)
-                if nb not in visited:
-                    visited.add(nb)
-                    queue.append(nb)
-        if not found:
-            result[n] = np.clip(ijk, 0, shape - 1)
-    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -216,7 +176,7 @@ def _cuGraph_distance_matrix_main():
     waypoints   = wp_flat.reshape(N, 3)
     out_path    = cfg["out_matrix_path"]
 
-    print(f"[cuGraph] Grid shape: {grid.shape}, {N} waypoints")
+    logger.info("[cuGraph] Grid shape: %s, %s waypoints", grid.shape, N)
 
     try:
         import cudf
@@ -236,7 +196,7 @@ def _cuGraph_distance_matrix_main():
         # Build a mapping: flat_idx -> sequential node id
         flat_to_node = {int(f): i for i, f in enumerate(free_flat)}
         F = len(free_flat)
-        print(f"[cuGraph] Free voxels: {F}", flush=True)
+        logger.info("[cuGraph] Free voxels: %s", F)
 
         offsets = np.array(_OFFSETS_26, dtype=np.int32)
         weights_arr = np.array(_WEIGHTS_26, dtype=np.float32) * float(resolution)
@@ -282,8 +242,10 @@ def _cuGraph_distance_matrix_main():
         gdf = cudf.DataFrame({"src": src_arr, "dst": dst_arr, "weight": wt_arr})
         G   = cugraph.Graph()
         G.from_cudf_edgelist(gdf, source="src", destination="dst", edge_attr="weight")
-        print(f"[cuGraph] Graph built: {G.number_of_nodes()} nodes, "
-              f"{G.number_of_edges()} edges", flush=True)
+        logger.info(
+            "[cuGraph] Graph built: %s nodes, %s edges",
+            G.number_of_nodes(), G.number_of_edges(),
+        )
 
         # ── Snap waypoints to free node IDs ───────────────────────────────
         wp_ijk  = np.floor((waypoints - origin) / resolution).astype(int)
@@ -303,16 +265,16 @@ def _cuGraph_distance_matrix_main():
                     continue
                 dist = df.at[int(dst_node), "distance"] if int(dst_node) in df.index else np.inf
                 matrix[i, j] = float(dist)
-            print(f"  [cuGraph] Dijkstra {i+1}/{N} done", end="\r", flush=True)
-        print(f"  [cuGraph] All-pairs done.                    ", flush=True)
+            logger.info("  [cuGraph] Dijkstra %s/%s done", i + 1, N)
+        logger.info("  [cuGraph] All-pairs done.")
 
     except Exception as e:
-        print(f"[cuGraph] FAILED ({e}), falling back to CPU A*", flush=True)
+        logger.warning("[cuGraph] FAILED (%s), falling back to CPU A*", e)
         # Fallback inside subprocess
         matrix = compute_distance_matrix_cpu(grid, origin, resolution, waypoints)
 
     np.save(out_path, matrix)
-    print(f"[cuGraph] Matrix saved to {out_path}", flush=True)
+    logger.info("[cuGraph] Matrix saved to %s", out_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -344,15 +306,15 @@ def compute_distance_matrix(
     matrix : (N, N) float32 in metres.
     """
     if rapids_python is None:
-        from VRP.config import RAPIDS_PYTHON
+        from ..config import RAPIDS_PYTHON
         rapids_python = RAPIDS_PYTHON
 
     if cache_path and not force_rebuild and os.path.exists(cache_path):
-        print(f"[DistMatrix] Loading cached matrix from {cache_path}")
+        logger.info("[DistMatrix] Loading cached matrix from %s", cache_path)
         return np.load(cache_path)
 
     N = len(waypoints_world)
-    print(f"[DistMatrix] Computing {N}×{N} distance matrix …")
+    logger.info("[DistMatrix] Computing %s×%s distance matrix …", N, N)
 
     # ── Try GPU subprocess ────────────────────────────────────────────────────
     gpu_ok = (
@@ -364,12 +326,12 @@ def compute_distance_matrix(
         try:
             matrix = _compute_via_subprocess(og, waypoints_world, rapids_python)
         except Exception as e:
-            print(f"[DistMatrix] cuGraph subprocess error: {e}  → falling back to CPU A* …")
+            logger.warning("[DistMatrix] cuGraph subprocess error: %s  → falling back to CPU A* …", e)
             matrix = compute_distance_matrix_cpu(
                 og.grid, og.origin, og.resolution, waypoints_world
             )
     else:
-        print("[DistMatrix] cuGraph unavailable, using CPU A* …")
+        logger.info("[DistMatrix] cuGraph unavailable, using CPU A* …")
         matrix = compute_distance_matrix_cpu(
             og.grid, og.origin, og.resolution, waypoints_world
         )
@@ -377,7 +339,7 @@ def compute_distance_matrix(
     if cache_path:
         os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
         np.save(cache_path, matrix)
-        print(f"[DistMatrix] Saved to {cache_path}")
+        logger.info("[DistMatrix] Saved to %s", cache_path)
 
     return matrix
 
@@ -417,7 +379,7 @@ def _compute_via_subprocess(
             json.dump(cfg, f)
 
         script_path = os.path.abspath(__file__)
-        print(f"[DistMatrix] Launching cuGraph subprocess …")
+        logger.info("[DistMatrix] Launching cuGraph subprocess …")
         result = subprocess.run(
             [rapids_python, script_path, config_path],
             capture_output=False,
@@ -447,7 +409,7 @@ def extract_astar_path(
     path : (M, 3) array of world-frame XYZ waypoints along the collision-free
         path, or shape ``(0, 3)`` if no path exists.
     """
-    from VRP.occupancy_grid import OccupancyGrid
+    from VRP.core.occupancy_grid import OccupancyGrid
 
     grid       = og.grid
     resolution = og.resolution
@@ -552,7 +514,7 @@ def build_route_path_cache(
         path = extract_astar_path(og, xyz[i], xyz[j])
 
         if len(path) == 0:
-            print(f"[path_cache] WARNING: no A* path {i}\u2192{j} — will plan direct.")
+            logger.warning("[path_cache] WARNING: no A* path %s\u2192%s — will plan direct.", i, j)
             cache[(i, j)] = np.array([xyz[i], xyz[j]], dtype=np.float32)
             continue
 
@@ -576,10 +538,12 @@ def build_route_path_cache(
                             [len(path) - 1]])
         ).astype(int)
         cache[(i, j)] = path[picked]
-        print(f"[path_cache] {i}\u2192{j}: {len(path)} A* pts "
-              f"\u2192 {len(cache[(i, j)])} sub-pts  ({total:.1f} m)")
+        logger.info(
+            "[path_cache] %s\u2192%s: %s A* pts \u2192 %s sub-pts  (%.1f m)",
+            i, j, len(path), len(cache[(i, j)]), total,
+        )
 
-    print(f"[path_cache] Built paths for {len(cache)} route segments.")
+    logger.info("[path_cache] Built paths for %s route segments.", len(cache))
     return cache
 
 

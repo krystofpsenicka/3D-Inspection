@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import cupy as cp
 from time import time as get_time
@@ -5,6 +6,8 @@ from typing import List, Tuple
 
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQuery
+
+logger = logging.getLogger(__name__)
 
 
 class GreedyOptimizerCuda:
@@ -17,14 +20,14 @@ class GreedyOptimizerCuda:
     def __init__(self, visibility_query: VisibilityQuery):
         self.query = visibility_query
         self.num_points = visibility_query.num_points
-        print(f"[GreedyOptimizerCuda] Initialized with {type(visibility_query).__name__}.")
+        logger.info("[GreedyOptimizerCuda] Initialized with %s.", type(visibility_query).__name__)
 
     def optimize(self, candidates: List[Tuple[np.ndarray, np.ndarray]],
                  target_coverage: float = 0.95,
                  max_viewpoints: int = 50) -> OptimizationResult:
         """GPU greedy set-cover optimization."""
-        print(f"\n[GreedyOptimizerCuda] Starting GPU greedy optimization "
-              f"with {len(candidates)} candidates.")
+        logger.info("[GreedyOptimizerCuda] Starting GPU greedy optimization with %d candidates.",
+                    len(candidates))
         start_time = get_time()
 
         if self.num_points == 0 or not candidates:
@@ -34,18 +37,17 @@ class GreedyOptimizerCuda:
         initial_visibility_map, vis_comp_time = \
             self.query.compute_visibility_for_all_candidates(candidates)
 
-        candidate_list = list(initial_visibility_map.keys())
-        n_candidates = len(candidate_list)
+        n_candidates = len(candidates)
 
         # Build dense visibility matrix on GPU (n_candidates x n_points, uint8)
         V = cp.zeros((n_candidates, self.num_points), dtype=cp.uint8)
-        for i, key in enumerate(candidate_list):
-            visible_indices = initial_visibility_map[key]
+        for i in range(n_candidates):
+            visible_indices = initial_visibility_map[i]
             if len(visible_indices) > 0:
                 V[i, visible_indices] = 1
 
-        print(f"[GreedyOptimizerCuda] Visibility matrix on GPU: "
-              f"{V.shape} ({V.nbytes / 1e6:.1f} MB)")
+        logger.info("[GreedyOptimizerCuda] Visibility matrix on GPU: %s (%.1f MB)",
+                    V.shape, V.nbytes / 1e6)
 
         # Greedy loop on GPU
         uncovered = cp.ones(self.num_points, dtype=cp.uint8)
@@ -58,7 +60,7 @@ class GreedyOptimizerCuda:
 
         while total_covered < target_covered and len(selected_viewpoints) < max_viewpoints:
             if not cp.any(candidate_mask):
-                print("  [GreedyOptimizerCuda] No more candidates. Breaking.")
+                logger.info("  [GreedyOptimizerCuda] No more candidates. Breaking.")
                 break
 
             # GPU matmul: score each candidate by number of newly covered points
@@ -70,7 +72,7 @@ class GreedyOptimizerCuda:
             best_score = int(scores[best])
 
             if best_score == 0:
-                print("  [GreedyOptimizerCuda] No candidate provides new coverage. Stopping.")
+                logger.info("  [GreedyOptimizerCuda] No candidate provides new coverage. Stopping.")
                 break
 
             # Update coverage
@@ -82,18 +84,18 @@ class GreedyOptimizerCuda:
             total_covered = self.num_points - int(cp.sum(uncovered))
             coverage = total_covered / self.num_points
 
-            best_vp_tuple, best_dir_tuple = candidate_list[best]
+            best_vp, best_orient = candidates[best]
 
             selected_viewpoints.append(ViewpointResult(
-                position=np.array(best_vp_tuple),
-                direction=np.array(best_dir_tuple),
+                position=np.asarray(best_vp),
+                orientation=np.asarray(best_orient),
                 visible_indices=newly_covered_indices,
                 coverage_score=best_score / self.num_points,
                 computation_time=0.0,
             ))
 
-            print(f"  [GreedyOptimizerCuda] Selected VP {len(selected_viewpoints)}: "
-                  f"+{best_score} points, Total coverage={coverage * 100:.1f}%")
+            logger.info("  [GreedyOptimizerCuda] Selected VP %d: +%d points, Total coverage=%.1f%%",
+                        len(selected_viewpoints), best_score, coverage * 100)
 
         optimization_time = get_time() - optimization_start_time
         total_time = get_time() - start_time
@@ -110,4 +112,5 @@ class GreedyOptimizerCuda:
             redundancy=redundancy,
             visibility_computation_time=vis_comp_time,
             optimization_time=optimization_time,
+            visibility_map=initial_visibility_map,
         )

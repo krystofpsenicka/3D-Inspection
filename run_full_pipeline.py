@@ -35,7 +35,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import pickle
 import sys
 from dataclasses import asdict
 from time import time as get_time
@@ -52,11 +51,7 @@ VISIBILITY_DIR = os.path.join(REPO_ROOT, "visibility")
 if VISIBILITY_DIR not in sys.path:
     sys.path.insert(0, os.path.dirname(VISIBILITY_DIR))
 
-# ── Override VRP config BEFORE importing VRP modules ─────────────────────────
-# We need the mesh to be 50 m, not 40 m.
 import VRP.config as _vrp_cfg
-
-_ORIGINAL_MESH_TARGET_LENGTH = _vrp_cfg.MESH_TARGET_LENGTH
 
 # The GLB file stores vertices in Y-up convention (glTF standard).
 # Isaac Sim's GLB→USD converter implicitly prepends a Y-up→Z-up rotation
@@ -106,6 +101,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--solver", choices=["auto", "cuopt", "ortools"],
                    default="auto", help="VRP solver backend.")
     p.add_argument("--seed", type=int, default=42, help="Random seed.")
+    p.add_argument("--curvature_weighting", action="store_true",
+                   help="Enable curvature-weighted sampling (bias toward complex regions).")
+    p.add_argument("--resample_fraction", type=float, default=0.0,
+                   help="Fraction of candidates generated via targeted resampling "
+                        "(0.0 = disabled, 0.25 = 25%% targeted). Default: 0.0")
+    p.add_argument("--resampling_strategy", choices=["random", "optimal"],
+                   default="random",
+                   help="Targeted resampling strategy: 'random' (proximity-weighted) "
+                        "or 'optimal' (Differential Evolution).")
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args()
 
@@ -114,33 +118,47 @@ def parse_args() -> argparse.Namespace:
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _direction_to_quaternion(direction: np.ndarray) -> np.ndarray:
-    """Convert a unit view-direction vector to quaternion [qw, qx, qy, qz].
+def _save_pipeline_data(pipeline_data: dict, path: str) -> None:
+    """Save pipeline output as NPZ (arrays) + JSON (metadata).
 
-    The convention is: the camera looks along +X in its local frame, so we
-    compute the rotation that maps +X → *direction*.
+    ExecutionResult is saved separately via :func:`VRP.utils.save_solution`.
     """
-    from scipy.spatial.transform import Rotation as R
+    import json as _json
+    from VRP.utils import save_solution
 
-    d = direction / (np.linalg.norm(direction) + 1e-12)
-    forward = np.array([1.0, 0.0, 0.0])
+    base = path.rsplit(".", 1)[0] if "." in path else path
+    os.makedirs(os.path.dirname(os.path.abspath(base)) or ".", exist_ok=True)
 
-    cross = np.cross(forward, d)
-    cross_norm = np.linalg.norm(cross)
+    # Save ExecutionResult separately
+    save_solution(pipeline_data["exec_result"], base + "_exec")
 
-    if cross_norm < 1e-8:
-        # Parallel or anti-parallel
-        if np.dot(forward, d) > 0:
-            return np.array([1.0, 0.0, 0.0, 0.0])  # identity
+    # Collect numpy arrays
+    arrays = {}
+    json_meta = {}
+    skip_keys = {"exec_result", "optimization_result"}
+    for k, v in pipeline_data.items():
+        if k in skip_keys:
+            continue
+        if isinstance(v, np.ndarray):
+            arrays[k] = v
+        elif isinstance(v, list) and v and isinstance(v[0], np.ndarray):
+            arrays[k] = np.array(v)
         else:
-            # 180° rotation about any perpendicular axis
-            return np.array([0.0, 0.0, 1.0, 0.0])  # 180° about Y
+            json_meta[k] = v
 
-    axis = cross / cross_norm
-    angle = np.arccos(np.clip(np.dot(forward, d), -1.0, 1.0))
-    rot = R.from_rotvec(axis * angle)
-    qx, qy, qz, qw = rot.as_quat()  # scipy returns [x,y,z,w]
-    return np.array([qw, qx, qy, qz])
+    # Save optimization_result fields we need
+    opt = pipeline_data.get("optimization_result")
+    if opt is not None:
+        json_meta["optimization_result"] = {
+            "selected_indices": opt.selected_indices if hasattr(opt, "selected_indices") else [],
+            "total_coverage": opt.total_coverage,
+            "num_viewpoints": opt.num_viewpoints,
+            "per_vp_coverage": opt.per_vp_coverage if hasattr(opt, "per_vp_coverage") else opt.coverage_per_viewpoint,
+        }
+
+    np.savez_compressed(base + ".npz", **arrays)
+    with open(base + ".json", "w") as f:
+        _json.dump(json_meta, f, default=str)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -154,18 +172,16 @@ def main() -> None:
         format="%(levelname)-8s %(name)s: %(message)s",
     )
     np.random.seed(args.seed)
+    try:
+        import cupy as cp
+        cp.random.seed(args.seed)
+    except ImportError:
+        pass
 
     MESH_TARGET_LENGTH = args.mesh_target_length
     MESH_PATH = _vrp_cfg.MESH_PATH
     # Use the rotation-corrected pose (trimesh Y-up → Z-up adjustment).
     MESH_POSE = _CORRECTED_MESH_POSE
-
-    # Patch VRP config so every downstream module (occupancy_grid, etc.)
-    # uses the correct scale and corrected pose.
-    _vrp_cfg.MESH_TARGET_LENGTH = MESH_TARGET_LENGTH
-    _vrp_cfg.MESH_POSE = MESH_POSE
-    # Recompute inflation voxels for consistency.
-    _vrp_cfg.INFLATION_VOXELS = int(_vrp_cfg.ROBOT_RADIUS / _vrp_cfg.VOXEL_RESOLUTION) + 1
 
     logger.info("=" * 70)
     logger.info("FULL INSPECTION PIPELINE")
@@ -187,23 +203,11 @@ def main() -> None:
     # STAGE 1 – Load & transform mesh
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[1/9] Loading and transforming mesh …")
-    import trimesh
     import open3d as o3d
-    from scipy.spatial.transform import Rotation as Rot
+    from shared.mesh_loader import load_and_transform_mesh
 
-    raw_tm = trimesh.load(MESH_PATH, force="mesh")
-    if isinstance(raw_tm, trimesh.Scene):
-        raw_tm = trimesh.util.concatenate(list(raw_tm.geometry.values()))
-
-    longest = float(raw_tm.extents.max())
-    mesh_scale = MESH_TARGET_LENGTH / longest if longest > 0 else 1.0
-    raw_tm.apply_scale(mesh_scale)
-
-    T_pose = np.eye(4)
-    T_pose[:3, 3] = MESH_POSE[:3]
-    qw, qx, qy, qz = MESH_POSE[3:7]
-    T_pose[:3, :3] = Rot.from_quat([qx, qy, qz, qw]).as_matrix()
-    raw_tm.apply_transform(T_pose)
+    raw_tm = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
+    mesh_scale = raw_tm.metadata.get("scale_factor", 1.0)
 
     mesh_bounds_min = raw_tm.bounds[0]
     mesh_bounds_max = raw_tm.bounds[1]
@@ -239,8 +243,16 @@ def main() -> None:
     # STAGE 2b – Build surface-only occupancy grid for sampling
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[2b/9] Building surface-only occupancy grid for sampling …")
-    from VRP.occupancy_grid import build_occupancy_grid
-    sampling_og = build_occupancy_grid(fill_interior=False)
+    from math import ceil
+    from VRP.core.occupancy_grid import build_occupancy_grid
+    sampling_min_clearance = 2 * _vrp_cfg.ROBOT_RADIUS
+    sampling_og = build_occupancy_grid(
+        fill_interior=False,
+        padding=args.frustum_far + sampling_min_clearance,
+        inflation_voxels=ceil(sampling_min_clearance / _vrp_cfg.VOXEL_RESOLUTION),
+        mesh_target_length=MESH_TARGET_LENGTH,
+        mesh_pose=MESH_POSE,
+    )
     logger.info("  Sampling OG shape: %s  res=%.2f m  free=%d",
                 sampling_og.grid.shape, sampling_og.resolution, sampling_og.num_free)
 
@@ -248,8 +260,13 @@ def main() -> None:
     # STAGE 3 – Generate candidate viewpoints + filter below mesh
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[3/9] Generating %d candidate viewpoints …", args.num_candidates)
+    if args.curvature_weighting:
+        logger.info("  Curvature weighting: ENABLED")
+    if args.resample_fraction > 0:
+        logger.info("  Targeted resampling: ENABLED (fraction=%.2f, strategy=%s)",
+                    args.resample_fraction, args.resampling_strategy)
 
-    from visibility.core.sampling import ViewpointSampler
+    from visibility.sampling import ViewpointSampler
 
     sampler = ViewpointSampler(
         mesh=o3d_mesh,
@@ -259,15 +276,11 @@ def main() -> None:
         collision_radius=_vrp_cfg.ROBOT_RADIUS,
         occupancy_grid=sampling_og,
     )
-    candidates = sampler.sample_outside_mesh(
-        num_candidates=args.num_candidates,
-    )
-    logger.info("  Generated %d candidates.", len(candidates))
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 4 – Compute raycast visibility for all candidates
+    # STAGE 4 – Build visibility query
     # ══════════════════════════════════════════════════════════════════════
-    logger.info("[4/9] Computing raycast visibility for %d candidates …", len(candidates))
+    logger.info("[4/9] Building raycast visibility query …")
 
     from visibility.core.types import FrustumParams, ViewpointResult, OptimizationResult
     from visibility.methods.raycast import RaycastingVisibilityQuery
@@ -286,25 +299,46 @@ def main() -> None:
         frustum_params=frustum_params,
     )
 
-    visibility_map, vis_time = raycast_query.compute_visibility_for_all_candidates(
-        candidates
-    )
-    logger.info("  Visibility computed in %.1f s.  %d candidates evaluated.",
-                vis_time, len(visibility_map))
-
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 5 – Greedy set cover at target coverage
     # ══════════════════════════════════════════════════════════════════════
-    logger.info("[5/9] Running greedy set cover at %.0f%% …", args.target_coverage * 100)
-
     from visibility.optimizers.greedy import GreedyOptimizer
-
     optimizer = GreedyOptimizer(raycast_query)
-    opt_result: OptimizationResult = optimizer.optimize(
-        candidates=candidates,
-        target_coverage=args.target_coverage,
-        max_viewpoints=1000,
-    )
+
+    if args.resample_fraction > 0:
+        # Sampler handles initial sampling + targeted resampling
+        logger.info("[3–5/9] Sampling + resampling + greedy (%d candidates, %.0f%% targeted) …",
+                    args.num_candidates, args.resample_fraction * 100)
+        candidates, vis_map = sampler.sample_with_resampling(
+            num_candidates=args.num_candidates,
+            visibility_query=raycast_query,
+            target_coverage=args.target_coverage,
+            curvature_weighting=args.curvature_weighting,
+            resample_fraction=args.resample_fraction,
+            strategy=args.resampling_strategy,
+        )
+        logger.info("  Total candidates after resampling: %d", len(candidates))
+        opt_result: OptimizationResult = optimizer.optimize(
+            candidates=candidates,
+            target_coverage=args.target_coverage,
+            max_viewpoints=1000,
+            precomputed_visibility_map=vis_map,
+        )
+    else:
+        # Original flow: sample → greedy computes visibility internally
+        candidates = sampler.sample_outside_mesh(
+            num_candidates=args.num_candidates,
+            curvature_weighting=args.curvature_weighting,
+        )
+        logger.info("  Generated %d candidates.", len(candidates))
+        logger.info("[5/9] Running greedy set cover at %.0f%% (%d candidates) …",
+                    args.target_coverage * 100, len(candidates))
+        opt_result: OptimizationResult = optimizer.optimize(
+            candidates=candidates,
+            target_coverage=args.target_coverage,
+            max_viewpoints=1000,
+        )
+    visibility_map = opt_result.visibility_map
     logger.info("  Selected %d viewpoints.  Coverage=%.2f%%  Time=%.1f s",
                 opt_result.num_viewpoints, opt_result.total_coverage * 100,
                 opt_result.total_time)
@@ -318,7 +352,7 @@ def main() -> None:
     selected_wp_7dof = np.zeros((opt_result.num_viewpoints, 7), dtype=np.float64)
     for i, vp in enumerate(opt_result.viewpoints):
         selected_wp_7dof[i, :3] = vp.position
-        selected_wp_7dof[i, 3:] = _direction_to_quaternion(vp.direction)
+        selected_wp_7dof[i, 3:] = vp.orientation  # already a quaternion
 
     logger.info("  Waypoints array shape: %s", selected_wp_7dof.shape)
 
@@ -327,11 +361,14 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[7/9] Building occupancy grid & distance matrix …")
 
-    from VRP.occupancy_grid import build_occupancy_grid, get_mesh_world_bounds, OccupancyGrid
-    from VRP.vrp_planner import _compute_start_grid
-    from VRP.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
+    from VRP.core.occupancy_grid import build_occupancy_grid, get_mesh_world_bounds, OccupancyGrid
+    from VRP.scripts.vrp_planner import _compute_start_grid
+    from VRP.core.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
 
-    mesh_bmin, mesh_bmax = get_mesh_world_bounds()
+    mesh_bmin, mesh_bmax = get_mesh_world_bounds(
+        mesh_target_length=MESH_TARGET_LENGTH,
+        mesh_pose=MESH_POSE,
+    )
     robot_start_xyzs = _compute_start_grid(
         args.num_robots, mesh_bmin, mesh_bmax
     )
@@ -349,6 +386,9 @@ def main() -> None:
     ])
     og = build_occupancy_grid(
         extra_free_points=extra_free_pts,
+        fill_interior=False,
+        mesh_target_length=MESH_TARGET_LENGTH,
+        mesh_pose=MESH_POSE,
     )
     logger.info("  Grid shape: %s  res=%.2f m", og.grid.shape, og.resolution)
 
@@ -366,7 +406,7 @@ def main() -> None:
     # cuGraph graph memory scales with free-voxel count (~12 B/edge × 26 adj).
     # Find the finest integer downsampling factor that keeps free voxels under
     # budget so the distance matrix is as accurate as VRAM allows.
-    from VRP.space_time_astar import downsample_occupancy_grid
+    from VRP.routing.space_time_astar import downsample_occupancy_grid
     _MAX_FREE_VOXELS = 5_000_000   # ~1.6 GB edge list → safe on 8-GB cards
 
     def _pick_distmatrix_og(fine_og, max_free: int):
@@ -400,8 +440,8 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[8/9] Solving VRP (%s) and executing routes …", args.solver)
 
-    from VRP.vrp_solver import solve_vrp, VRPResult
-    from VRP.route_executor import RouteExecutor, ExecutionResult
+    from VRP.solver.vrp_solver import solve_vrp, VRPResult
+    from VRP.routing.route_executor import RouteExecutor, ExecutionResult
     from VRP.utils import load_local_robot_config
 
     vrp_result: VRPResult = solve_vrp(
@@ -498,9 +538,7 @@ def main() -> None:
         "exec_result": exec_result,
     }
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)) or ".", exist_ok=True)
-    with open(args.output, "wb") as f:
-        pickle.dump(pipeline_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    _save_pipeline_data(pipeline_data, args.output)
 
     elapsed = get_time() - t0
     logger.info("=" * 70)

@@ -26,6 +26,8 @@ pip-wheel-metadata/
 
 # Data / generated output
 *.pkl
+*.npz
+*.json
 *.gif
 *.usd
 *.glb

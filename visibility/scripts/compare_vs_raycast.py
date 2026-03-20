@@ -10,7 +10,9 @@ import numpy as np
 import open3d as o3d
 from time import time as get_time
 
-from visibility.core import FrustumParams, ViewpointSampler, orient_normals_outward, get_frustum_basis
+from visibility.core import FrustumParams, orient_normals_outward, get_frustum_basis_from_quaternion
+from shared.geometry import quaternion_to_forward
+from visibility.sampling import ViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
@@ -61,7 +63,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
 
     geometries = [mesh_vis, pcd_vis]
 
-    for i, (pos, direction) in enumerate(viewpoints):
+    for i, (pos, orientation) in enumerate(viewpoints):
         radius = 0.015 if i == vp_index else 0.01
         color = [1.0, 0.0, 0.0] if i == vp_index else [0.0, 0.0, 1.0]
         sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
@@ -70,9 +72,10 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
         sphere.compute_vertex_normals()
         geometries.append(sphere)
 
-    pos, direction = viewpoints[vp_index]
+    pos, orientation = viewpoints[vp_index]
+    forward = quaternion_to_forward(orientation)
     arrow_length = frustum_params.far * 0.2
-    arrow_end = pos + direction * arrow_length
+    arrow_end = pos + forward * arrow_length
     arrow = o3d.geometry.LineSet()
     arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
     arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
@@ -82,8 +85,8 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
     # Build frustum lineset without constructing a full Visualizer
     half_angle = frustum_params.fov_y / 2.0
     far_half = frustum_params.far * np.tan(half_angle)
-    right, up = get_frustum_basis(direction)
-    far_center = pos + direction * frustum_params.far
+    _, right, up = get_frustum_basis_from_quaternion(orientation)
+    far_center = pos + forward * frustum_params.far
     r, u = right * far_half, up * far_half
     f_corners = [pos, far_center + r + u, far_center - r + u,
                  far_center - r - u, far_center + r - u]
@@ -154,11 +157,11 @@ def main():
     precisions, recalls, f1s = [], [], []
     vp_results = []  # store (gt_set, pred_set) for visualization
 
-    for i, (pos, direction) in enumerate(viewpoints):
+    for i, (pos, orientation) in enumerate(viewpoints):
         t0 = get_time()
 
-        gt_indices, _ = gt_query.compute_visibility(pos, direction)
-        pred_indices, _ = pred_query.compute_visibility(pos, direction)
+        gt_indices, _ = gt_query.compute_visibility(pos, orientation)
+        pred_indices, _ = pred_query.compute_visibility(pos, orientation)
 
         elapsed = get_time() - t0
 

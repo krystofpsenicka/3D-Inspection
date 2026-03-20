@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "3d-inspection"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "trimesh",
+    "open3d",
+    "cupy-cuda12x",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+vrp = ["ortools"]
+
+[tool.setuptools.packages.find]
+include = ["VRP*", "visibility*", "shared*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
