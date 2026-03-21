@@ -31,6 +31,7 @@ from __future__ import annotations
 import heapq
 import logging
 import math
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -54,6 +55,21 @@ from shared.occupancy_grid import downsample_occupancy_grid
 from shared.grid_utils import OFFSETS_26, WEIGHTS_26
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Planning quality metrics ─────────────────────────────────────────────
+
+@dataclass
+class PlanningStats:
+    """Per-robot metrics from Space-Time A* planning.
+
+    Used by the priority ordering heuristic to identify robots that
+    suffer most from conflicts and should be planned earlier.
+    """
+    wait_steps:    int   = 0    # total time steps spent waiting
+    detour_ratio:  float = 0.0  # actual / straight-line distance ratio
+    astar_failures: int  = 0    # hops where A* returned None
+    astar_retries:  int  = 0    # hops where retry with larger budget was needed
 
 
 # ── Camera offset helper ──────────────────────────────────────────────────
@@ -410,7 +426,7 @@ def plan_robot_route_st(
     dt: float = SPACE_TIME_DT,
     fine_og=None,
     robot_radius: float = 0.35,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, list, PlanningStats]:
     """Plan one robot through its full VRP route using Space-Time A*.
 
     For each leg:
@@ -436,11 +452,12 @@ def plan_robot_route_st(
 
     Returns
     -------
-    ``(world_xyz, coarse_time_steps, wp_schedule)`` where
+    ``(world_xyz, coarse_time_steps, wp_schedule, stats)`` where
     ``world_xyz`` is an ``(M, 3)`` world-frame XYZ array,
-    ``coarse_time_steps`` is an ``(M,)`` coarse time-step index array, and
+    ``coarse_time_steps`` is an ``(M,)`` coarse time-step index array,
     ``wp_schedule`` is a list of ``(t_dwell_start, t_dwell_end, node_idx)``
-    tuples recording when (in coarse time) each VRP waypoint is dwelled at.
+    tuples recording when (in coarse time) each VRP waypoint is dwelled at,
+    and ``stats`` is a :class:`PlanningStats` with quality metrics.
     """
     wp_arr = np.asarray(waypoints_world)
     # Compute robot body positions accounting for camera offset
@@ -450,6 +467,8 @@ def plan_robot_route_st(
     coarse_times: list = []       # list of (k,) int arrays
     wp_schedule: list = []        # list of (t_dwell_start, t_dwell_end, node_idx)
     t_cursor = 0
+    stats = PlanningStats()
+    straight_line_total = 0.0     # accumulate for detour_ratio
 
     hold_steps = max(1, int(round(dwell_s / dt)))
 
@@ -485,6 +504,9 @@ def plan_robot_route_st(
         if sub_idx[-1] != len(leg_ijk) - 1:
             sub_idx.append(len(leg_ijk) - 1)
         sub_ijk = leg_ijk[sub_idx]
+        # Track straight-line distance for detour_ratio
+        straight_line_total += float(np.linalg.norm(
+            xyz_all[curr_node] - xyz_all[prev_node]))
 
         # ── A* planning for every hop of this leg ─────────────────────
         leg_plan_pos: list = []   # per-hop ijk arrays
@@ -502,12 +524,14 @@ def plan_robot_route_st(
 
             if result is None:
                 # Retry with doubled expansion budget before falling back
+                stats.astar_retries += 1
                 result = space_time_astar(
                     coarse_grid, s_ijk, g_ijk, t_cursor, reservation,
                     coarse_res, max_expansions=2 * ST_ASTAR_MAX_EXPANSIONS,
                 )
 
             if result is None:
+                stats.astar_failures += 1
                 logger.warning(
                     "  [route] ST-A* failed hop %d→%d (leg %d→%d, t=%d). "
                     "Using straight-line fallback.",
@@ -624,7 +648,8 @@ def plan_robot_route_st(
         wp_schedule.append((t_dwell_start, int(t_cursor), curr_node))
 
     if not coarse_positions:
-        return np.empty((0, 3), dtype=np.float64), np.empty((0,), dtype=np.intp), []
+        return (np.empty((0, 3), dtype=np.float64),
+                np.empty((0,), dtype=np.intp), [], stats)
 
     all_ijk = np.concatenate(coarse_positions, axis=0)
     all_t   = np.concatenate(coarse_times, axis=0)
@@ -634,4 +659,14 @@ def plan_robot_route_st(
 
     # Use the OMPL-smooth world coordinates directly (not voxel-centre re-derivation)
     world_xyz = np.concatenate(world_positions, axis=0)
-    return world_xyz, all_t, wp_schedule
+
+    # Compute wait steps and detour ratio
+    if len(world_xyz) >= 2:
+        actual_dist = float(np.sum(np.linalg.norm(np.diff(world_xyz, axis=0), axis=1)))
+        stats.detour_ratio = (actual_dist / straight_line_total
+                              if straight_line_total > 1e-9 else 1.0)
+        # Count wait steps: consecutive identical positions
+        diffs = np.linalg.norm(np.diff(world_xyz, axis=0), axis=1)
+        stats.wait_steps = int(np.sum(diffs < 1e-6))
+
+    return world_xyz, all_t, wp_schedule, stats

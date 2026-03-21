@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
                    help="Number of AUV robots for VRP.")
     p.add_argument("--mesh_target_length", type=float, default=50.0,
                    help="Target length (m) of the ship along its longest axis.")
-    p.add_argument("--num_surface_points", type=int, default=100_000,
+    p.add_argument("--num_surface_points", type=int, default=200_000,
                    help="Number of surface points to sample on the mesh.")
     p.add_argument("--num_candidates", type=int, default=1500,
                    help="Number of candidate viewpoints to generate.")
@@ -99,15 +99,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--frustum_aspect", type=float, default=1.0,
                    help="Frustum aspect ratio (width/height).")
     p.add_argument("--solver", choices=["auto", "cuopt", "ortools"],
-                   default="auto", help="VRP solver backend.")
+                   default="cuopt", help="VRP solver backend.")
     p.add_argument("--seed", type=int, default=42, help="Random seed.")
     p.add_argument("--curvature_weighting", action="store_true",
                    help="Enable curvature-weighted sampling (bias toward complex regions).")
-    p.add_argument("--resample_fraction", type=float, default=0.0,
+    p.add_argument("--resample_fraction", type=float, default=0.5,
                    help="Fraction of candidates generated via targeted resampling "
                         "(0.0 = disabled, 0.25 = 25%% targeted). Default: 0.0")
     p.add_argument("--resampling_strategy", choices=["random", "optimal"],
-                   default="random",
+                   default="optimal",
                    help="Targeted resampling strategy: 'random' (proximity-weighted) "
                         "or 'optimal' (Differential Evolution).")
     p.add_argument("--verbose", "-v", action="store_true")
@@ -283,7 +283,7 @@ def main() -> None:
     logger.info("[4/9] Building raycast visibility query …")
 
     from visibility.core.types import FrustumParams, ViewpointResult, OptimizationResult
-    from visibility.methods.raycast import RaycastingVisibilityQuery
+    from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
 
     frustum_params = FrustumParams(
         fov_y=np.deg2rad(args.frustum_fov_deg),
@@ -292,7 +292,7 @@ def main() -> None:
         far=args.frustum_far,
     )
 
-    raycast_query = RaycastingVisibilityQuery(
+    raycast_query = RaycastingVisibilityQueryCuda(
         mesh=o3d_mesh,
         target_points=target_points,
         normals=normals,

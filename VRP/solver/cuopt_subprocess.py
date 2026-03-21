@@ -91,11 +91,6 @@ def _solve(matrix: np.ndarray, num_vehicles: int, n: int,
         cudf.Series(depots, dtype=np.int32),
     )
 
-    # Allow vehicles to skip the return-to-depot leg (open routes for AUVs)
-    data_model.set_drop_return_trips(
-        cudf.Series([1] * num_vehicles, dtype=np.int8)
-    )
-
     # Capacity: each non-depot location has demand 1
     depot_set = set(depots)
     demands = [0 if i in depot_set else 1 for i in range(n)]

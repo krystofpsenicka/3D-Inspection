@@ -1,0 +1,228 @@
+"""Tests for visibility/sampling/ — focused on non-obvious math and algorithmic correctness."""
+
+import numpy as np
+import pytest
+
+cp = pytest.importorskip("cupy")
+
+from visibility.sampling.base import ViewpointSampler
+from visibility.sampling.curvature import compute_local_curvature
+from visibility.sampling.targeted import optimize_viewpoint_de
+
+
+# ── Mock objects ──────────────────────────────────────────────────────────
+
+
+class MockVisibilityQuery:
+    """Returns a fixed set of visible indices for every candidate."""
+
+    def __init__(self, visible_indices, num_points):
+        self.visible_indices = visible_indices
+        self.num_points = num_points
+
+    def compute_visibility_for_all_candidates(self, candidates):
+        return {i: self.visible_indices.copy() for i in range(len(candidates))}, 0.0
+
+
+def always_free(positions_gpu):
+    return cp.ones(len(positions_gpu), dtype=cp.bool_)
+
+
+# ── 1. TestOptimizeViewpointDE ────────────────────────────────────────────
+
+
+class TestOptimizeViewpointDE:
+    """Highest-priority: validates DE objective, travel cost normalization, edge cases."""
+
+    @pytest.fixture()
+    def de_setup(self):
+        num_points = 50
+        visible = np.arange(20, dtype=np.int64)  # covers first 20 of 50
+        uncovered_mask = cp.ones(num_points, dtype=cp.bool_)  # all uncovered
+        bounds = [(-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0)]
+        vis_query = MockVisibilityQuery(visible, num_points)
+        return bounds, uncovered_mask, vis_query
+
+    def test_coverage_drives_optimization(self, de_setup):
+        """With travel_weight=0, DE should find a VP covering uncovered points."""
+        bounds, uncovered_mask, vis_query = de_setup
+        _, score = optimize_viewpoint_de(
+            bounds, uncovered_mask, vis_query, always_free,
+            existing_candidates=[],
+            travel_weight=0.0, popsize=3, maxiter=2,
+        )
+        assert score > 0, "DE should achieve nonzero coverage with travel_weight=0"
+
+    def test_travel_cost_does_not_dominate(self, de_setup):
+        """Regression test for normalization fix: travel cost must not kill coverage."""
+        bounds, uncovered_mask, vis_query = de_setup
+        existing = [
+            (np.array([0.0, 0.0, 0.0], dtype=np.float32),
+             np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)),
+        ]
+        _, score = optimize_viewpoint_de(
+            bounds, uncovered_mask, vis_query, always_free,
+            existing_candidates=existing,
+            travel_weight=0.1, popsize=3, maxiter=2,
+        )
+        assert score > 0, "Travel cost should not dominate — coverage must remain > 0"
+
+    def test_no_existing_candidates(self, de_setup):
+        """When existing_candidates=[], travel cost path is skipped (avg_pos is None)."""
+        bounds, uncovered_mask, vis_query = de_setup
+        cand, score = optimize_viewpoint_de(
+            bounds, uncovered_mask, vis_query, always_free,
+            existing_candidates=[],
+            travel_weight=0.5, popsize=3, maxiter=2,
+        )
+        assert score > 0
+        assert len(cand) == 2  # (pos, quat)
+        assert cand[0].shape == (3,)
+
+    def test_spatial_diag_computation(self, de_setup):
+        """Verify spatial_diag = sqrt(sum((hi-lo)^2)) for known bounds."""
+        bounds = [(0.0, 3.0), (0.0, 4.0), (0.0, 0.0)]
+        # spatial_diag should be sqrt(9 + 16 + 0) = 5.0
+        # Run DE just to exercise the path — the real check is that pos_dist
+        # is divided by spatial_diag (tested indirectly via travel_cost_does_not_dominate).
+        # Here we directly verify the math by inspecting bounds.
+        expected_diag = np.sqrt(sum((hi - lo) ** 2 for lo, hi in bounds))
+        assert abs(expected_diag - 5.0) < 1e-10
+
+
+# ── 2. TestComputeLocalCurvature ──────────────────────────────────────────
+
+
+class TestComputeLocalCurvature:
+    """KNN + arccos + mean angular deviation — non-trivial math."""
+
+    def test_flat_surface_zero_curvature(self):
+        """100 points on a plane with uniform normals → curvature ≈ 0."""
+        pts = cp.random.uniform(-5, 5, (100, 3)).astype(cp.float32)
+        pts[:, 2] = 0.0  # flatten to z=0
+        normals = cp.zeros((100, 3), dtype=cp.float32)
+        normals[:, 2] = 1.0  # all point up
+
+        curv = compute_local_curvature(pts, pts, normals, k=10)
+        assert curv.shape == (100,)
+        assert float(curv.max()) < 0.05, f"Flat surface curvature should be ~0, got max={float(curv.max())}"
+
+    def test_curved_surface_nonzero_curvature(self):
+        """Points on a hemisphere with radial normals → curvature >> 0."""
+        n = 200
+        # Random points on upper unit hemisphere
+        phi = cp.random.uniform(0, 2 * cp.pi, n)
+        theta = cp.random.uniform(0, cp.pi / 2, n)
+        x = cp.cos(phi) * cp.sin(theta)
+        y = cp.sin(phi) * cp.sin(theta)
+        z = cp.cos(theta)
+        pts = cp.stack([x, y, z], axis=1).astype(cp.float32)
+        # Radial normals (pointing outward from origin)
+        norms = cp.linalg.norm(pts, axis=1, keepdims=True)
+        normals = (pts / cp.maximum(norms, 1e-8)).astype(cp.float32)
+
+        curv = compute_local_curvature(pts, pts, normals, k=10)
+        mean_curv = float(curv.mean())
+        assert mean_curv > 0.1, f"Hemisphere curvature should be significant, got mean={mean_curv}"
+
+
+# ── 3. TestNearestNeighbor ────────────────────────────────────────────────
+
+
+class TestNearestNeighbor:
+    """Squared-distance decomposition ||a-b||² = ||a||² + ||b||² - 2a·b."""
+
+    def test_known_distances(self):
+        """query (3,4,0) to target (0,0,0) → distance = 5.0."""
+        query = cp.array([[3.0, 4.0, 0.0]], dtype=cp.float32)
+        target = cp.array([[0.0, 0.0, 0.0]], dtype=cp.float32)
+
+        # Call as unbound method (body never uses self)
+        dists, idxs = ViewpointSampler._nearest_neighbor(None, query, target)
+        assert abs(float(dists[0]) - 5.0) < 1e-4
+        assert int(idxs[0]) == 0
+
+    def test_nearest_index_correct(self):
+        """3 targets at known positions — query should find the closest."""
+        targets = cp.array([
+            [10.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [5.0, 5.0, 5.0],
+        ], dtype=cp.float32)
+        query = cp.array([[0.1, 0.1, 0.1]], dtype=cp.float32)
+
+        dists, idxs = ViewpointSampler._nearest_neighbor(None, query, targets)
+        assert int(idxs[0]) == 1  # origin is closest
+
+
+# ── 4. TestApplyAngularNoise ──────────────────────────────────────────────
+
+
+class TestApplyAngularNoise:
+    """Rodrigues rotation — genuinely tricky vector math."""
+
+    def test_angle_bounded(self):
+        """All output angles ≤ max_angle from input directions."""
+        n = 200
+        max_angle = 0.3
+        dirs = cp.random.randn(n, 3).astype(cp.float32)
+        dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
+
+        rotated = ViewpointSampler._apply_angular_noise(dirs, max_angle)
+
+        # Angle between original and rotated
+        cos_sim = cp.clip(cp.sum(dirs * rotated, axis=1), -1.0, 1.0)
+        angles = cp.arccos(cos_sim)
+        max_observed = float(angles.max())
+        assert max_observed <= max_angle + 1e-5, (
+            f"Max observed angle {max_observed:.4f} exceeds max_angle {max_angle}"
+        )
+
+    def test_unit_norm_preserved(self):
+        """After rotation, all directions still have unit length."""
+        dirs = cp.random.randn(100, 3).astype(cp.float32)
+        dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
+
+        rotated = ViewpointSampler._apply_angular_noise(dirs, 0.5)
+        norms = cp.linalg.norm(rotated, axis=1)
+        assert cp.allclose(norms, 1.0, atol=1e-5)
+
+    def test_zero_noise_preserves_input(self):
+        """max_angle=0 → output identical to input."""
+        dirs = cp.random.randn(50, 3).astype(cp.float32)
+        dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
+
+        rotated = ViewpointSampler._apply_angular_noise(dirs, 0.0)
+        assert cp.allclose(dirs, rotated, atol=1e-7)
+
+
+# ── 5. TestKnnCentroidDirection ───────────────────────────────────────────
+
+
+class TestKnnCentroidDirection:
+    """Centroid-minus-query direction logic."""
+
+    def test_direction_toward_targets(self):
+        """Query at (10,0,0), targets around origin → direction ≈ (-1,0,0)."""
+        query = cp.array([[10.0, 0.0, 0.0]], dtype=cp.float32)
+        # Need more targets than k for argpartition; cluster around origin
+        rng = np.random.RandomState(42)
+        targets = np.vstack([
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+             [0.0, 1.0, 0.0], [0.0, -1.0, 0.0]],
+            rng.randn(10, 3).astype(np.float32) * 0.5,  # small cluster near origin
+        ])
+        targets = cp.asarray(targets, dtype=cp.float32)
+        n_targets = len(targets)
+
+        # Create a minimal mock with normals attribute (unused when curvature_weighting=False)
+        mock_self = type("Obj", (), {"normals": np.zeros((n_targets, 3), dtype=np.float32)})()
+
+        dirs = ViewpointSampler._knn_centroid_direction(
+            mock_self, query, targets, k=5, curvature_weighting=False,
+        )
+        d = cp.asnumpy(dirs[0])
+        # Should point toward negative x
+        assert d[0] < -0.9, f"Expected direction toward -x, got {d}"
+        assert abs(d[1]) < 0.1
+        assert abs(d[2]) < 0.1

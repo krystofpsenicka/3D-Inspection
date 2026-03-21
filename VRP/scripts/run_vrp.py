@@ -60,6 +60,10 @@ def parse_args() -> argparse.Namespace:
                    help="Random seed for waypoint sampling.")
 
     # ── VRP solver ────────────────────────────────────────────────────
+    p.add_argument("--objective", choices=["makespan", "total_distance"],
+                   default="makespan",
+                   help="VRP objective: 'makespan' (min longest route) or "
+                        "'total_distance' (min sum of routes).")
     p.add_argument("--solver", choices=["auto", "cuopt", "ortools"],
                    default="auto",
                    help="VRP backend: 'auto' tries cuOpt then falls back to OR-Tools.")
@@ -71,6 +75,12 @@ def parse_args() -> argparse.Namespace:
                    help="cuOpt subprocess timeout (seconds).")
     p.add_argument("--rapids_python", type=str, default="",
                    help="Path to rapids_solver env Python (default: read from config).")
+    p.add_argument("--mip_time_limit", type=int, default=120,
+                   help="MIP solver time budget for makespan objective (seconds).")
+    p.add_argument("--mip_gap", type=float, default=0.05,
+                   help="MIP solver relative optimality gap (0.05 = 5%%).")
+    p.add_argument("--feedback_iterations", type=int, default=3,
+                   help="Max VRP ↔ path-planning feedback loop iterations.")
     # ── Solution persistence ──────────────────────────────────
     p.add_argument("--save_solution", type=str, default="vrp_solution.pkl",
                    metavar="PATH",
@@ -106,16 +116,20 @@ def main():
     from VRP.config import RAPIDS_PYTHON as DEFAULT_RAPIDS_PYTHON
 
     cfg = PipelineConfig(
-        num_robots         = args.num_robots,
-        solver_backend     = args.solver,
-        rapids_python      = args.rapids_python or DEFAULT_RAPIDS_PYTHON,
-        service_time       = args.service_time,
-        gpu_timeout        = args.gpu_timeout,
-        ortools_time_limit = args.ortools_time_limit,
-        waypoint_source    = waypoint_source,
-        n_random_waypoints = n_random,
-        random_seed        = args.random_seed,
-        save_solution_path = args.save_solution,
+        num_robots          = args.num_robots,
+        solver_backend      = args.solver,
+        objective           = args.objective,
+        rapids_python       = args.rapids_python or DEFAULT_RAPIDS_PYTHON,
+        service_time        = args.service_time,
+        gpu_timeout         = args.gpu_timeout,
+        ortools_time_limit  = args.ortools_time_limit,
+        mip_time_limit      = args.mip_time_limit,
+        mip_gap             = args.mip_gap,
+        feedback_iterations = args.feedback_iterations,
+        waypoint_source     = waypoint_source,
+        n_random_waypoints  = n_random,
+        random_seed         = args.random_seed,
+        save_solution_path  = args.save_solution,
     )
 
     # ── Run ───────────────────────────────────────────────────────────

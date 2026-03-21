@@ -29,6 +29,8 @@ import numpy as np
 
 from ..config import (
     CUOPT_SERVICE_TIME,
+    MIP_GAP,
+    MIP_TIME_LIMIT,
     RAPIDS_PYTHON,
     VRP_ROOT as VRP_DIR,
 )
@@ -48,16 +50,21 @@ class VRPResult:
         List of per-vehicle waypoint index lists (0-based, excluding depot).
     total_cost:
         Sum of distances over all routes according to the distance matrix.
+    makespan:
+        Maximum per-vehicle route cost (longest route).
+    per_vehicle_costs:
+        Per-vehicle travel distances.
     solver:
-        Name of the solver that produced this solution (``"cuopt"`` or
-        ``"ortools"``).
+        Name of the solver that produced this solution.
     status:
         ``"success"`` or an error / fallback message.
     """
-    routes:     List[List[int]]
-    total_cost: float
-    solver:     str     = "unknown"
-    status:     str     = "success"
+    routes:            List[List[int]]
+    total_cost:        float
+    makespan:          float            = 0.0
+    per_vehicle_costs: List[float]      = field(default_factory=list)
+    solver:            str              = "unknown"
+    status:            str              = "success"
 
 
 # ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -159,6 +166,8 @@ class GPUSolver:
         if result.status == "success":
             per_v    = _per_vehicle_costs(result.routes, dist_matrix, depots)
             makespan = max(per_v) if per_v else 0.0
+            result.per_vehicle_costs = per_v
+            result.makespan = makespan
             logger.info("[GPUSolver] makespan=%.2f  per_vehicle=%s",
                         makespan, [f"{c:.1f}" for c in per_v])
         return result
@@ -369,9 +378,12 @@ class ORToolsSolver:
             routes.append(route)
 
         total_c = _compute_route_cost(routes, dist_matrix, depots)
-        logger.info("[ORToolsSolver] Solved. total_cost=%.2f  routes=%s",
-                    total_c, routes)
+        per_v = _per_vehicle_costs(routes, dist_matrix, depots)
+        makespan = max(per_v) if per_v else 0.0
+        logger.info("[ORToolsSolver] Solved. total_cost=%.2f  makespan=%.2f  "
+                    "routes=%s", total_c, makespan, routes)
         return VRPResult(routes=routes, total_cost=total_c,
+                         makespan=makespan, per_vehicle_costs=per_v,
                          solver="ortools", status="success")
 
 
@@ -381,12 +393,15 @@ def solve_vrp(
     dist_matrix:           np.ndarray,
     num_vehicles:          int,
     depot:                 Union[int, List[int]] = 0,
+    objective:             str = "makespan",
     backend:               str = "auto",
     rapids_python:         str = RAPIDS_PYTHON,
     service_time:          float = CUOPT_SERVICE_TIME,
     time_limit:            int = 60,
     gpu_timeout:           int = 300,
     span_cost_coefficient: int = 100,
+    mip_time_limit:        int = MIP_TIME_LIMIT,
+    mip_gap:               float = MIP_GAP,
 ) -> VRPResult:
     """Unified entry-point for VRP solving.
 
@@ -399,6 +414,9 @@ def solve_vrp(
     depot:
         Single depot index (int) for all robots, or a per-vehicle
         list of depot indices (length = num_vehicles).
+    objective:
+        ``"makespan"`` – minimise the longest route (MIP formulation).
+        ``"total_distance"`` – minimise sum of all routes (existing solvers).
     backend:
         ``"auto"`` – try cuOpt, fall back to OR-Tools on failure.
         ``"cuopt"`` – use cuOpt only.
@@ -407,8 +425,86 @@ def solve_vrp(
         Forwarded to :class:`GPUSolver`.
     time_limit:
         Seconds forwarded to :class:`ORToolsSolver`.
+    mip_time_limit, mip_gap:
+        Forwarded to the MIP makespan solvers.
     """
-    use_gpu    = backend in ("auto", "cuopt")
+    use_gpu     = backend in ("auto", "cuopt")
+    use_ortools = backend in ("auto", "ortools")
+
+    # ── Makespan objective → MIP solvers ─────────────────────────────
+    if objective == "makespan":
+        from .mip_makespan_solver import MIPMakespanCPU, MIPMakespanGPU
+
+        # Get warm-start from a total-distance solve (fast heuristic)
+        warm_start_routes = None
+        td_result = _quick_total_distance_solve(
+            dist_matrix, num_vehicles, depot,
+            backend=backend, rapids_python=rapids_python,
+            service_time=service_time, time_limit=min(time_limit, 30),
+            gpu_timeout=min(gpu_timeout, 60),
+            span_cost_coefficient=span_cost_coefficient,
+        )
+        if td_result.status == "success":
+            warm_start_routes = td_result.routes
+            logger.info("[solve_vrp] Warm-start from %s: makespan=%.2f",
+                        td_result.solver, td_result.makespan)
+
+        if use_gpu:
+            gpu_mip = MIPMakespanGPU(
+                rapids_python=rapids_python,
+                time_limit=mip_time_limit,
+                mip_gap=mip_gap,
+                timeout=gpu_timeout,
+            )
+            result = gpu_mip.solve(dist_matrix, num_vehicles, depot,
+                                   warm_start_routes=warm_start_routes)
+            if result.status == "success":
+                return result
+            logger.warning("[solve_vrp] cuOpt MIP failed (%s), falling back "
+                           "to OR-Tools MIP.", result.status)
+
+        if use_ortools:
+            cpu_mip = MIPMakespanCPU(
+                time_limit=mip_time_limit,
+                mip_gap=mip_gap,
+            )
+            result = cpu_mip.solve(dist_matrix, num_vehicles, depot,
+                                   warm_start_routes=warm_start_routes)
+            if result.status == "success":
+                return result
+
+            # Last resort: return the warm-start total-distance solution
+            if td_result.status == "success":
+                logger.warning("[solve_vrp] MIP solver failed; using "
+                               "total-distance warm-start solution.")
+                return td_result
+
+        return VRPResult(routes=[], total_cost=float("inf"),
+                         solver="none", status="mip_failed")
+
+    # ── Total-distance objective → existing routing solvers ──────────
+    return _quick_total_distance_solve(
+        dist_matrix, num_vehicles, depot,
+        backend=backend, rapids_python=rapids_python,
+        service_time=service_time, time_limit=time_limit,
+        gpu_timeout=gpu_timeout,
+        span_cost_coefficient=span_cost_coefficient,
+    )
+
+
+def _quick_total_distance_solve(
+    dist_matrix: np.ndarray,
+    num_vehicles: int,
+    depot: Union[int, List[int]],
+    backend: str = "auto",
+    rapids_python: str = RAPIDS_PYTHON,
+    service_time: float = CUOPT_SERVICE_TIME,
+    time_limit: int = 60,
+    gpu_timeout: int = 300,
+    span_cost_coefficient: int = 100,
+) -> VRPResult:
+    """Total-distance VRP solve using existing GPUSolver / ORToolsSolver."""
+    use_gpu     = backend in ("auto", "cuopt")
     use_ortools = backend in ("auto", "ortools")
 
     if use_gpu:

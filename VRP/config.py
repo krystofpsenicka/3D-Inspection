@@ -108,6 +108,16 @@ CAMERA_OFFSET_UP      = 0.05   # metres – camera is this far above body centre
 # ── AUV dynamics ──────────────────────────────────────────────────────────────
 AUV_CRUISE_SPEED = 2.0          # m/s nominal cruise speed
 AUV_MAX_ACCEL    = 1.5          # m/s² (for future trapezoidal profile)
+
+# ── MIP makespan solver ──────────────────────────────────────────────────────
+VRP_OBJECTIVE     = "makespan"    # "makespan" or "total_distance"
+MIP_TIME_LIMIT    = 120           # seconds – wall-clock limit for MIP solver
+MIP_GAP           = 0.05          # relative optimality gap (5 %)
+
+# ── VRP ↔ path-planning feedback loop ────────────────────────────────────────
+VRP_FEEDBACK_ITERATIONS = 3       # max re-solve iterations
+VRP_FEEDBACK_THRESHOLD  = 0.20    # accept if actual makespan within 20 % of VRP estimate
+
 # ── Isaac Sim replay ───────────────────────────────────────────────────────────
 WAIT_STEPS_PER_WAYPOINT = 25   # sim steps to hold at each waypoint
 STEPS_PER_WAYPOINT      = 64   # estimated motion steps per waypoint leg (for traffic-light timing)

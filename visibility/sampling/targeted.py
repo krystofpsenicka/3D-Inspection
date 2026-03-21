@@ -76,8 +76,11 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
         ], dtype=np.float64)
         avg_rotvec = all_rotvec.mean(axis=0)
 
+    spatial_diag = np.sqrt(sum((hi - lo)**2 for lo, hi in feasible_bounds))
+
     def objective(X):
-        """Vectorized objective: X is (N, 6) population matrix."""
+        """Vectorized objective: X is (N_params, S) from scipy; transpose to (S, N_params)."""
+        X = X.T
         N = X.shape[0]
         positions = X[:, :3].astype(np.float32)
         theta, phi, roll = X[:, 3], X[:, 4], X[:, 5]
@@ -118,13 +121,13 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
             # Travel cost: distance from this candidate to avg pose
             travel_cost = 0.0
             if avg_pos is not None and travel_weight > 0:
-                pos_dist = float(np.linalg.norm(positions[orig_i] - avg_pos))
+                pos_dist = float(np.linalg.norm(positions[orig_i] - avg_pos)) / spatial_diag
                 cand_rotvec = R.from_quat([
                     free_cands[j][1][1], free_cands[j][1][2],
                     free_cands[j][1][3], free_cands[j][1][0]
                 ]).as_rotvec()
-                angle_dist = float(np.linalg.norm(cand_rotvec - avg_rotvec))
-                travel_cost = pos_dist + angle_dist
+                angle_dist = float(np.linalg.norm(cand_rotvec - avg_rotvec)) / np.pi
+                travel_cost = 0.8 * pos_dist + 0.2 * angle_dist
 
             # Normalize coverage by n_uncovered so both terms are ~O(1)
             f_obs = newly_covered / max(n_uncovered, 1)

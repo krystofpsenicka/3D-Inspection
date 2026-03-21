@@ -26,8 +26,13 @@ from ..config import (
     ASSETS_PATH,
     CONFIGS_PATH,
     CUOPT_SERVICE_TIME,
+    MIP_GAP,
+    MIP_TIME_LIMIT,
     RAPIDS_PYTHON,
     ROBOT_RADIUS,
+    VRP_FEEDBACK_ITERATIONS,
+    VRP_FEEDBACK_THRESHOLD,
+    VRP_OBJECTIVE,
 )
 from ..core.gpu_distance_matrix import build_route_path_cache, compute_distance_matrix
 from ..core.occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
@@ -103,10 +108,15 @@ class PipelineConfig:
     """All user-facing settings for one VRP planning run."""
     num_robots:           int            = 2
     solver_backend:       str            = "auto"      # "auto" | "cuopt" | "ortools"
+    objective:            str            = VRP_OBJECTIVE  # "makespan" | "total_distance"
     rapids_python:        str            = RAPIDS_PYTHON
     service_time:         float          = CUOPT_SERVICE_TIME
     gpu_timeout:          int            = 300
     ortools_time_limit:   int            = 60
+    mip_time_limit:       int            = MIP_TIME_LIMIT
+    mip_gap:              float          = MIP_GAP
+    feedback_iterations:  int            = VRP_FEEDBACK_ITERATIONS
+    feedback_threshold:   float          = VRP_FEEDBACK_THRESHOLD
     waypoint_source:      str            = "random"    # path or "random"
     n_random_waypoints:   int            = 5
     random_seed:          int            = 42
@@ -209,43 +219,7 @@ class VRPPipeline:
         logger.info("      Distance matrix computed.  max_dist=%.2fm",
                     float(np.max(dist_matrix[np.isfinite(dist_matrix)])))
 
-        # ── Stage 4: VRP solve ───────────────────────────────────────────────
-        logger.info("[4/5] Solving VRP (%s) …", cfg.solver_backend)
-        vrp_result: VRPResult = solve_vrp(
-            dist_matrix   = dist_matrix,
-            num_vehicles  = cfg.num_robots,
-            depot         = home_indices,
-            backend       = cfg.solver_backend,
-            rapids_python = cfg.rapids_python,
-            service_time  = cfg.service_time,
-            time_limit    = cfg.ortools_time_limit,
-            gpu_timeout   = cfg.gpu_timeout,
-        )
-        logger.info("      VRP status=%s  total_cost=%.2f  solver=%s",
-                    vrp_result.status, vrp_result.total_cost, vrp_result.solver)
-        logger.info("      Routes (pre-home): %s", vrp_result.routes)
-
-        if not any(vrp_result.routes):
-            logger.error("VRP produced empty routes – aborting.")
-            raise RuntimeError(f"VRP failed: {vrp_result.status}")
-
-        # Wrap each route with the robot's own home node as start and end.
-        routes = [
-            [home_indices[i]] + list(r) + [home_indices[i]]
-            for i, r in enumerate(vrp_result.routes)
-        ]
-        logger.info("      Routes (with homes): %s", routes)
-
-        # Build A* sub-waypoint cache for every segment actually used by the
-        # routes.  These intermediate XYZ points are injected between VRP nodes
-        # in the executor so each cuRobo call only needs to plan a short hop.
-        logger.info("      Building route path cache (A* sub-waypoints) …")
-        path_cache = build_route_path_cache(og, waypoints_world[:, :3], routes)
-
-        # ── Stage 5: Trajectory execution (A* path interpolation) ──────────
-        logger.info("[5/5] Generating trajectories from A* paths …")
-
-        # All robots start at their individual grid positions.
+        # ── Build start configs (shared across feedback iterations) ────
         start_configs: List[np.ndarray] = []
         for i in range(cfg.num_robots):
             s    = list(default_cfg)
@@ -255,19 +229,109 @@ class VRPPipeline:
             s[2] = float(xyz[2])
             start_configs.append(np.array(s, dtype=np.float32))
 
-        executor = RouteExecutor(
-            start_configs = start_configs,
-            joint_names   = j_names,
-            og            = og,
-        )
-        exec_result: ExecutionResult = executor.execute(
-            routes          = routes,
-            waypoints_world = waypoints_world,
-            path_cache      = path_cache,
-        )
+        # ── Stage 4+5: VRP solve ↔ path planning feedback loop ──────────
+        current_dist = dist_matrix.copy()
+        max_iters = max(1, cfg.feedback_iterations)
+        exec_result = None
+
+        for iteration in range(max_iters):
+            # ── Stage 4: VRP solve ───────────────────────────────────
+            logger.info("[4/5] Solving VRP (%s, objective=%s, iter=%d/%d) …",
+                        cfg.solver_backend, cfg.objective,
+                        iteration + 1, max_iters)
+            vrp_result: VRPResult = solve_vrp(
+                dist_matrix    = current_dist,
+                num_vehicles   = cfg.num_robots,
+                depot          = home_indices,
+                objective      = cfg.objective,
+                backend        = cfg.solver_backend,
+                rapids_python  = cfg.rapids_python,
+                service_time   = cfg.service_time,
+                time_limit     = cfg.ortools_time_limit,
+                gpu_timeout    = cfg.gpu_timeout,
+                mip_time_limit = cfg.mip_time_limit,
+                mip_gap        = cfg.mip_gap,
+            )
+            logger.info("      VRP status=%s  total_cost=%.2f  makespan=%.2f  "
+                        "solver=%s",
+                        vrp_result.status, vrp_result.total_cost,
+                        vrp_result.makespan, vrp_result.solver)
+            logger.info("      Routes (pre-home): %s", vrp_result.routes)
+
+            if not any(vrp_result.routes):
+                logger.error("VRP produced empty routes – aborting.")
+                raise RuntimeError(f"VRP failed: {vrp_result.status}")
+
+            # Wrap each route with the robot's own home node as start/end.
+            routes = [
+                [home_indices[i]] + list(r) + [home_indices[i]]
+                for i, r in enumerate(vrp_result.routes)
+            ]
+            logger.info("      Routes (with homes): %s", routes)
+
+            # Build A* sub-waypoint cache for every segment used by routes.
+            logger.info("      Building route path cache (A* sub-waypoints) …")
+            path_cache = build_route_path_cache(
+                og, waypoints_world[:, :3], routes,
+            )
+
+            # ── Stage 5: Trajectory execution ────────────────────────
+            logger.info("[5/5] Generating trajectories (iter=%d/%d) …",
+                        iteration + 1, max_iters)
+
+            executor = RouteExecutor(
+                start_configs = start_configs,
+                joint_names   = j_names,
+                og            = og,
+            )
+            exec_result = executor.execute(
+                routes          = routes,
+                waypoints_world = waypoints_world,
+                path_cache      = path_cache,
+            )
+
+            # ── Check feedback convergence ───────────────────────────
+            vrp_makespan = vrp_result.makespan
+            actual_makespan = exec_result.actual_makespan
+
+            if vrp_makespan < 1e-6:
+                logger.info("      VRP makespan near zero; skipping feedback.")
+                break
+
+            ratio = abs(actual_makespan - vrp_makespan) / vrp_makespan
+            logger.info("      Feedback: VRP makespan=%.1f  actual=%.1f  "
+                        "ratio=%.2f  threshold=%.2f",
+                        vrp_makespan, actual_makespan, ratio,
+                        cfg.feedback_threshold)
+
+            if ratio <= cfg.feedback_threshold:
+                logger.info("      Feedback converged (within %.0f%%).",
+                            cfg.feedback_threshold * 100)
+                break
+
+            if iteration < max_iters - 1:
+                # Update distance matrix with actual travel times where
+                # the actual cost significantly exceeds the estimate.
+                logger.info("      Updating distance matrix for re-solve …")
+                updated = 0
+                for v, route in enumerate(routes):
+                    for leg in range(1, len(route)):
+                        a, b = route[leg - 1], route[leg]
+                        est = float(current_dist[a, b])
+                        # Estimate actual leg cost from trajectory
+                        # (proportional share of vehicle's total time)
+                        v_total = exec_result.actual_per_vehicle_times[v]
+                        n_legs = max(1, len(route) - 1)
+                        actual_leg = v_total / n_legs
+                        if actual_leg > est * (1 + cfg.feedback_threshold):
+                            current_dist[a, b] = actual_leg
+                            current_dist[b, a] = actual_leg
+                            updated += 1
+                logger.info("      Updated %d distance matrix entries.", updated)
 
         logger.info("=" * 60)
-        logger.info("Pipeline complete.  Fail counts: %s", exec_result.fail_counts)
+        logger.info("Pipeline complete.  Fail counts: %s  Actual makespan: %.1f s",
+                    exec_result.fail_counts, exec_result.actual_makespan)
         logger.info("=" * 60)
 
         # ── Optional: save solution for later Isaac Sim replay ────────

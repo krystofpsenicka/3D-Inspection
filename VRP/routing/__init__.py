@@ -2,6 +2,7 @@
 
 from .route_executor import ExecutionResult, RouteExecutor
 from .space_time_astar import (
+    PlanningStats,
     ReservationTable,
     downsample_occupancy_grid,
     plan_robot_route_st,

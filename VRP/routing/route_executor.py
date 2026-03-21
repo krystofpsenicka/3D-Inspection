@@ -73,13 +73,23 @@ class ExecutionResult:
         List of joint name strings.
     fail_counts:
         Per-robot count of completely failed waypoints.
+    actual_makespan:
+        Actual makespan from path planning (seconds).
+    actual_per_vehicle_times:
+        Per-vehicle travel times from path planning (seconds).
     """
-    all_traj_positions:  List[List[np.ndarray]]
-    all_traj_velocities: List[List[np.ndarray]]
-    all_waypoints:       List[List[List[float]]]
-    initial_positions:   List[np.ndarray]
-    joint_names:         List[str]
-    fail_counts:         List[int]
+    all_traj_positions:       List[List[np.ndarray]]
+    all_traj_velocities:      List[List[np.ndarray]]
+    all_waypoints:            List[List[List[float]]]
+    initial_positions:        List[np.ndarray]
+    joint_names:              List[str]
+    fail_counts:              List[int]
+    actual_makespan:          float       = 0.0
+    actual_per_vehicle_times: List[float] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.actual_per_vehicle_times is None:
+            self.actual_per_vehicle_times = []
 
 
 # ─── Executor ────────────────────────────────────────────────────────────────
@@ -126,18 +136,22 @@ class RouteExecutor:
     ):
         """Plan all robots sequentially in given priority order.
 
-        Returns (robot_world_paths, robot_coarse_times, robot_wp_schedules, makespan).
+        Returns (robot_world_paths, robot_coarse_times, robot_wp_schedules,
+                 makespan, per_robot_stats).
         """
+        from .space_time_astar import PlanningStats
+
         n_robots = self.num_robots
         reservation = ReservationTable(coarse_grid.shape, T_max, half_v)
 
         robot_world_paths: List[Optional[np.ndarray]] = [None] * n_robots
         robot_coarse_times: List[Optional[np.ndarray]] = [None] * n_robots
         robot_wp_schedules: List[Optional[list]] = [None] * n_robots
+        per_robot_stats: List[PlanningStats] = [PlanningStats() for _ in range(n_robots)]
 
         for priority, robot_idx in enumerate(priority_order):
             route = routes[robot_idx]
-            world_xyz, coarse_t, wp_schedule = plan_robot_route_st(
+            world_xyz, coarse_t, wp_schedule, stats = plan_robot_route_st(
                 coarse_grid, coarse_origin, coarse_res,
                 reservation, route, waypoints_world,
                 path_cache=path_cache,
@@ -149,6 +163,7 @@ class RouteExecutor:
             robot_world_paths[robot_idx] = world_xyz
             robot_coarse_times[robot_idx] = coarse_t
             robot_wp_schedules[robot_idx] = wp_schedule
+            per_robot_stats[robot_idx] = stats
 
         # Compute makespan (max final time across robots)
         makespan = 0.0
@@ -157,7 +172,8 @@ class RouteExecutor:
             if ct is not None and len(ct) > 0:
                 makespan = max(makespan, float(ct[-1]) * SPACE_TIME_DT)
 
-        return robot_world_paths, robot_coarse_times, robot_wp_schedules, makespan
+        return (robot_world_paths, robot_coarse_times, robot_wp_schedules,
+                makespan, per_robot_stats)
 
     # ──────────────────────────────────────────────────────────────────
 
@@ -167,7 +183,7 @@ class RouteExecutor:
         waypoints_world: np.ndarray,
         path_cache: Optional[dict] = None,
         dwell_s: float = SPACE_TIME_DWELL_S,
-        n_priority_trials: int = 5,
+        n_priority_trials: int = 20,
     ) -> ExecutionResult:
         """Build collision-free trajectories via Priority-Based Sequential
         Planning and return an :class:`ExecutionResult`.
@@ -175,8 +191,9 @@ class RouteExecutor:
         Parameters
         ----------
         n_priority_trials : int
-            Number of random priority orderings to try. The best (lowest
-            makespan) is kept. Set to 0 to use only the default ordering.
+            Total budget of priority orderings to try (including
+            deterministic ones).  The best (lowest makespan) is kept.
+            Set to 0 to use only the default ordering.
         """
         n_robots = self.num_robots
 
@@ -227,6 +244,7 @@ class RouteExecutor:
                     default_order, [f"{route_costs[i]:.1f}" for i in default_order])
 
         # ── 3. Try priority orderings, keep best makespan ─────────────
+        # Deterministic ordering 1: longest-first (default)
         best_result = self._plan_sequential(
             routes, waypoints_world, default_order, route_costs,
             coarse_grid, coarse_origin, coarse_res, T_max, half_v,
@@ -234,9 +252,58 @@ class RouteExecutor:
         )
         best_makespan = best_result[3]
         best_order = default_order
-        logger.info("[executor] Default order makespan: %.1f s", best_makespan)
+        best_stats = best_result[4]
+        logger.info("[executor] Default order (longest-first) makespan: %.1f s",
+                    best_makespan)
 
-        for trial in range(n_priority_trials):
+        trials_used = 1
+
+        # Deterministic ordering 2: shortest-first (reverse)
+        if n_priority_trials >= 2:
+            reverse_order = list(reversed(default_order))
+            trial_result = self._plan_sequential(
+                routes, waypoints_world, reverse_order, route_costs,
+                coarse_grid, coarse_origin, coarse_res, T_max, half_v,
+                path_cache, dwell_s,
+            )
+            trial_makespan = trial_result[3]
+            logger.info("[executor] Shortest-first order makespan: %.1f s",
+                        trial_makespan)
+            if trial_makespan < best_makespan:
+                best_result = trial_result
+                best_makespan = trial_makespan
+                best_order = reverse_order
+                best_stats = trial_result[4]
+            trials_used += 1
+
+        # Deterministic ordering 3: conflict-count (most-conflicted first)
+        # Based on stats from the first trial
+        if n_priority_trials >= 3:
+            conflict_scores = [
+                s.wait_steps + s.astar_failures * 100
+                for s in best_stats
+            ]
+            conflict_order = sorted(
+                range(n_robots), key=lambda i: -conflict_scores[i],
+            )
+            if conflict_order != default_order:
+                trial_result = self._plan_sequential(
+                    routes, waypoints_world, conflict_order, route_costs,
+                    coarse_grid, coarse_origin, coarse_res, T_max, half_v,
+                    path_cache, dwell_s,
+                )
+                trial_makespan = trial_result[3]
+                logger.info("[executor] Conflict-count order %s makespan: %.1f s",
+                            conflict_order, trial_makespan)
+                if trial_makespan < best_makespan:
+                    best_result = trial_result
+                    best_makespan = trial_makespan
+                    best_order = conflict_order
+                    best_stats = trial_result[4]
+            trials_used += 1
+
+        # Remaining budget: random permutations, with conflict-informed bias
+        for trial in range(trials_used, n_priority_trials):
             random_order = list(np.random.permutation(n_robots))
             trial_result = self._plan_sequential(
                 routes, waypoints_world, random_order, route_costs,
@@ -250,11 +317,13 @@ class RouteExecutor:
                 best_result = trial_result
                 best_makespan = trial_makespan
                 best_order = random_order
+                best_stats = trial_result[4]
 
-        logger.info("[executor] Best priority order: %s  makespan=%.1f s",
-                    best_order, best_makespan)
+        logger.info("[executor] Best priority order: %s  makespan=%.1f s "
+                    "(%d trials)", best_order, best_makespan, n_priority_trials)
 
-        robot_world_paths, robot_coarse_times, robot_wp_schedules, _ = best_result
+        (robot_world_paths, robot_coarse_times, robot_wp_schedules,
+         _, _per_robot_stats) = best_result
 
         for robot_idx in best_order:
             w_xyz = robot_world_paths[robot_idx]
@@ -357,13 +426,25 @@ class RouteExecutor:
                         i, og_collisions, len(all_traj_positions[i]),
                     )
 
+        # Compute actual per-vehicle travel times from trajectory lengths
+        actual_per_vehicle = []
+        for i in range(n_robots):
+            n_steps = len(all_traj_positions[i])
+            actual_per_vehicle.append(n_steps * TRAJ_DT)
+        actual_makespan = max(actual_per_vehicle) if actual_per_vehicle else 0.0
+        logger.info("[executor] Actual makespan: %.1f s  per_vehicle: %s",
+                    actual_makespan,
+                    [f"{t:.1f}" for t in actual_per_vehicle])
+
         return ExecutionResult(
-            all_traj_positions  = all_traj_positions,
-            all_traj_velocities = all_traj_velocities,
-            all_waypoints       = all_waypoints,
-            initial_positions   = initial_positions,
-            joint_names         = self.joint_names,
-            fail_counts         = fail_counts,
+            all_traj_positions       = all_traj_positions,
+            all_traj_velocities      = all_traj_velocities,
+            all_waypoints            = all_waypoints,
+            initial_positions        = initial_positions,
+            joint_names              = self.joint_names,
+            fail_counts              = fail_counts,
+            actual_makespan          = actual_makespan,
+            actual_per_vehicle_times = actual_per_vehicle,
         )
 
 
