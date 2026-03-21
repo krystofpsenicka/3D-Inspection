@@ -13,6 +13,8 @@ class GreedyOptimizer:
     """
     Implements a standard greedy set-cover optimization.
     Works with any VisibilityQuery implementation.
+
+    Uses NumPy boolean masks for coverage tracking (fast on large point sets).
     """
 
     def __init__(self, visibility_query: VisibilityQuery):
@@ -37,33 +39,37 @@ class GreedyOptimizer:
         else:
             initial_visibility_map, vis_comp_time = self.query.compute_visibility_for_all_candidates(candidates)
 
-        uncovered = set(range(self.num_points))
+        # Build per-candidate boolean visibility masks for fast scoring
+        n_cand = len(candidates)
+        vis_masks = [None] * n_cand
+        for idx in initial_visibility_map:
+            mask = np.zeros(self.num_points, dtype=np.bool_)
+            vis_idx = initial_visibility_map[idx]
+            if len(vis_idx) > 0:
+                mask[vis_idx] = True
+            vis_masks[idx] = mask
+
+        uncovered = np.ones(self.num_points, dtype=np.bool_)
         selected_viewpoints: List[ViewpointResult] = []
-        remaining_candidate_indices = set(initial_visibility_map.keys())
-        target_uncovered_count = int((1.0 - target_coverage) * self.num_points)
+        remaining = set(initial_visibility_map.keys())
+        target_covered = int(target_coverage * self.num_points)
 
         optimization_start_time = get_time()
 
-        while len(uncovered) > target_uncovered_count and len(selected_viewpoints) < max_viewpoints:
+        while int(uncovered.sum()) > (self.num_points - target_covered) and len(selected_viewpoints) < max_viewpoints:
 
-            if not remaining_candidate_indices:
+            if not remaining:
                 logger.info("  [GreedyOptimizer] No more candidates to check. Breaking.")
                 break
 
             best_candidate_idx = -1
-            best_newly_covered = set()
             best_score = 0
 
-            for candidate_idx in remaining_candidate_indices:
-                visible_indices = initial_visibility_map[candidate_idx]
-
-                newly_covered = set(visible_indices) & uncovered
-                score = len(newly_covered)
-
+            for candidate_idx in remaining:
+                score = int(np.count_nonzero(vis_masks[candidate_idx] & uncovered))
                 if score > best_score:
                     best_score = score
                     best_candidate_idx = candidate_idx
-                    best_newly_covered = newly_covered
 
             if best_candidate_idx == -1 or best_score == 0:
                 logger.info("  [GreedyOptimizer] No candidate provides new coverage. Stopping.")
@@ -71,25 +77,30 @@ class GreedyOptimizer:
 
             best_vp, best_orient = candidates[best_candidate_idx]
 
-            uncovered -= best_newly_covered
-            coverage = 1.0 - len(uncovered) / self.num_points
+            uncovered &= ~vis_masks[best_candidate_idx]
+            total_covered = self.num_points - int(uncovered.sum())
+            coverage = total_covered / self.num_points
 
+            # Store the *full* visibility set (all points visible from this
+            # viewpoint), not just the incremental contribution.
+            full_visible = initial_visibility_map[best_candidate_idx]
             selected_viewpoints.append(ViewpointResult(
                 position=np.asarray(best_vp),
                 orientation=np.asarray(best_orient),
-                visible_indices=np.array(list(best_newly_covered)),
-                coverage_score=best_score / self.num_points,
+                visible_indices=np.asarray(full_visible),
+                coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,
             ))
 
-            remaining_candidate_indices.remove(best_candidate_idx)
+            remaining.discard(best_candidate_idx)
 
             logger.info("  [GreedyOptimizer] Selected VP %d: +%d points, Total coverage=%.1f%%",
                         len(selected_viewpoints), best_score, coverage * 100)
 
         optimization_time = get_time() - optimization_start_time
         total_time = get_time() - start_time
-        coverage = 1.0 - len(uncovered) / self.num_points
+        total_covered = self.num_points - int(uncovered.sum())
+        coverage = total_covered / self.num_points
         redundancy = self.query.compute_redundancy(selected_viewpoints)
 
         return OptimizationResult(

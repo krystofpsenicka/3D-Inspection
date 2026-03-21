@@ -302,8 +302,8 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 5 – Greedy set cover at target coverage
     # ══════════════════════════════════════════════════════════════════════
-    from visibility.optimizers.greedy import GreedyOptimizer
-    optimizer = GreedyOptimizer(raycast_query)
+    from visibility.optimizers.lazy_greedy import LazyGreedyOptimizer
+    optimizer = LazyGreedyOptimizer(raycast_query)
 
     if args.resample_fraction > 0:
         # Sampler handles initial sampling + targeted resampling
@@ -411,8 +411,16 @@ def main() -> None:
 
     def _pick_distmatrix_og(fine_og, max_free: int):
         """Return the finest downsampled OG with ≤ max_free free voxels."""
-        cg, co, cr = fine_og.grid, fine_og.origin, fine_og.resolution
-        for factor in range(1, 32):
+        # Check if the original grid already fits under budget
+        free_count = int((~fine_og.grid).sum())
+        logger.info(
+            "  Dist-matrix OG candidate: factor=1 res=%.2fm grid=%s free=%d",
+            fine_og.resolution, fine_og.grid.shape, free_count,
+        )
+        if free_count <= max_free:
+            return fine_og, 1, free_count
+        # Otherwise search for the coarsest factor that fits
+        for factor in range(2, 32):
             target_res = fine_og.resolution * factor
             cg, co, cr = downsample_occupancy_grid(
                 fine_og.grid, fine_og.origin, fine_og.resolution, target_res

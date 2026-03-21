@@ -1,4 +1,8 @@
 """
+DEPRECATED: This module is superseded by the Space-Time A* reservation table
+in route_executor.py / space_time_astar.py, which provides collision avoidance
+by construction during priority-based sequential planning.
+
 VRP Planner – Traffic-Light Collision Avoidance
 
 Detects spatio-temporal conflicts between vehicle routes and resolves them

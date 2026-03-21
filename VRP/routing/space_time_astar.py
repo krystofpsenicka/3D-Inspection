@@ -92,9 +92,12 @@ def _robot_xyz_from_waypoint(wp7: np.ndarray) -> np.ndarray:
     # Rotate +X by quaternion to get camera forward direction
     fx = 1.0 - 2.0 * (qy * qy + qz * qz)
     fy = 2.0 * (qx * qy + qw * qz)
-    # Robot body is CAMERA_OFFSET_FORWARD metres *behind* the camera along fwd
-    xyz[0] -= CAMERA_OFFSET_FORWARD * fx
-    xyz[1] -= CAMERA_OFFSET_FORWARD * fy
+    # Robot body only yaws (stays level); normalise (fx, fy) to get the
+    # pure yaw direction so the offset magnitude is independent of camera pitch.
+    xy_norm = math.sqrt(fx * fx + fy * fy)
+    if xy_norm > 1e-9:
+        xyz[0] -= CAMERA_OFFSET_FORWARD * (fx / xy_norm)
+        xyz[1] -= CAMERA_OFFSET_FORWARD * (fy / xy_norm)
     xyz[2] -= CAMERA_OFFSET_UP
     return xyz
 

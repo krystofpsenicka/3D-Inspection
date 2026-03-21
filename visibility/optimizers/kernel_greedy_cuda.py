@@ -118,17 +118,18 @@ class KernelGreedyOptimizerCuda:
             uncovered &= ~V[best]
             candidate_mask[best] = False
 
-            newly_covered_indices = cp.where(newly_covered_mask)[0].get()
             total_covered = self.num_points - int(cp.sum(uncovered))
             coverage = total_covered / self.num_points
 
             exp_vp, best_orient, _ = expanded_entries[best]
 
+            # Store the *full* visibility set, not just the incremental contribution
+            full_visible_indices = cp.where(V[best])[0].get()
             selected_viewpoints.append(ViewpointResult(
                 position=exp_vp,
                 orientation=np.asarray(best_orient),
-                visible_indices=newly_covered_indices,
-                coverage_score=best_score / self.num_points,
+                visible_indices=full_visible_indices,
+                coverage_score=len(full_visible_indices) / self.num_points,
                 computation_time=0.0,
             ))
 

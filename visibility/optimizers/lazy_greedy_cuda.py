@@ -115,16 +115,17 @@ class LazyGreedyOptimizerCuda:
             # Mark all remaining as stale (coverage changed)
             stale[:] = True
 
-            newly_covered_indices = cp.where(newly_covered_mask)[0].get()
             total_covered = self.num_points - int(cp.sum(uncovered))
             coverage = total_covered / self.num_points
 
             best_vp, best_orient = candidates[best]
+            # Store the *full* visibility set, not just the incremental contribution
+            full_visible_indices = cp.where(V[best])[0].get()
             selected_viewpoints.append(ViewpointResult(
                 position=np.asarray(best_vp),
                 orientation=np.asarray(best_orient),
-                visible_indices=newly_covered_indices,
-                coverage_score=int(best_gain) / self.num_points,
+                visible_indices=full_visible_indices,
+                coverage_score=len(full_visible_indices) / self.num_points,
                 computation_time=0.0,
             ))
 

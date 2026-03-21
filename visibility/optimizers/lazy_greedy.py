@@ -4,6 +4,8 @@ Lazy Greedy Set-Cover Optimizer (Minoux 1978).
 Produces the exact same solution as the standard greedy optimizer but with
 90-99% fewer visibility evaluations.  Uses a max-heap approach: compute initial
 gains, pop top, re-evaluate, select if still best, otherwise push back.
+
+Uses NumPy boolean masks for coverage tracking (fast on large point sets).
 """
 
 from __future__ import annotations
@@ -58,20 +60,22 @@ class LazyGreedyOptimizer:
             )
         n_cand = len(candidates)
 
-        # Convert to sets for fast intersection
-        vis_sets: List[set] = [
-            set(vis_map[i]) for i in range(n_cand)
-        ]
+        # Build per-candidate boolean visibility masks for fast scoring
+        vis_masks: List[np.ndarray] = [np.zeros(0)] * n_cand
+        for i in range(n_cand):
+            mask = np.zeros(self.num_points, dtype=np.bool_)
+            vis_idx = vis_map[i]
+            if len(vis_idx) > 0:
+                mask[vis_idx] = True
+            vis_masks[i] = mask
 
         # Initialise the max-heap with (negative gain, candidate index, generation)
-        # Generation tracks whether the score is current; a candidate is only
-        # valid if its generation equals the global generation counter.
-        uncovered = set(range(self.num_points))
+        uncovered = np.ones(self.num_points, dtype=np.bool_)
         target_uncovered = int((1.0 - target_coverage) * self.num_points)
 
         heap: list = []
         for i in range(n_cand):
-            gain = len(vis_sets[i] & uncovered)
+            gain = int(np.count_nonzero(vis_masks[i] & uncovered))
             heapq.heappush(heap, (-gain, i, 0))
 
         selected_viewpoints: List[ViewpointResult] = []
@@ -80,7 +84,7 @@ class LazyGreedyOptimizer:
         optimization_start = get_time()
 
         while (
-            len(uncovered) > target_uncovered
+            int(uncovered.sum()) > target_uncovered
             and len(selected_viewpoints) < max_viewpoints
             and heap
         ):
@@ -94,7 +98,7 @@ class LazyGreedyOptimizer:
                     break
                 # Re-evaluate
                 evaluations += 1
-                fresh_gain = len(vis_sets[idx] & uncovered)
+                fresh_gain = int(np.count_nonzero(vis_masks[idx] & uncovered))
                 heapq.heappush(heap, (-fresh_gain, idx, generation))
             else:
                 break
@@ -103,28 +107,32 @@ class LazyGreedyOptimizer:
                 logger.info("  [LazyGreedy] No candidate provides new coverage.")
                 break
 
-            newly_covered = vis_sets[best_idx] & uncovered
-            uncovered -= newly_covered
-            coverage = 1.0 - len(uncovered) / self.num_points
+            uncovered &= ~vis_masks[best_idx]
+            total_covered = self.num_points - int(uncovered.sum())
+            coverage = total_covered / self.num_points
 
             best_vp, best_orient = candidates[best_idx]
+            # Store the *full* visibility set (all points visible from this
+            # viewpoint), not just the incremental contribution.
+            full_visible = vis_map[best_idx]
             selected_viewpoints.append(ViewpointResult(
                 position=np.asarray(best_vp),
                 orientation=np.asarray(best_orient),
-                visible_indices=np.array(list(newly_covered)),
-                coverage_score=best_gain / self.num_points,
+                visible_indices=np.asarray(full_visible),
+                coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,
             ))
 
-            # Remove from future consideration
-            vis_sets[best_idx] = set()
+            # Invalidate this candidate's mask so it can't be re-selected
+            vis_masks[best_idx] = np.zeros(self.num_points, dtype=np.bool_)
 
             logger.info("  [LazyGreedy] VP %d: +%d pts, coverage=%.1f%%",
                         len(selected_viewpoints), best_gain, coverage * 100)
 
         optimization_time = get_time() - optimization_start
         total_time = get_time() - start_time
-        coverage = 1.0 - len(uncovered) / self.num_points
+        total_covered = self.num_points - int(uncovered.sum())
+        coverage = total_covered / self.num_points
         redundancy = self.query.compute_redundancy(selected_viewpoints)
 
         total_evals = evaluations + n_cand  # initial + lazy re-evals

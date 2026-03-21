@@ -1,3 +1,8 @@
+# DEPRECATED: This module is a stale copy.
+# The canonical implementation is visibility/sampling/base.py which includes
+# curvature weighting, targeted resampling, and sample_with_resampling().
+# Use: from visibility.sampling import ViewpointSampler
+
 import logging
 import time
 from math import ceil

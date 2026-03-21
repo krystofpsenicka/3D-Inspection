@@ -19,19 +19,16 @@ MESH_POSE = [0, 0, 1.5, 0.0, 1.0, 0.0, 0.0]
 # Target length (metres) of the ship along its longest axis.
 # The mesh is uniformly scaled at load time so that
 # mesh.extents.max() == MESH_TARGET_LENGTH.
-MESH_TARGET_LENGTH = 40.0
+MESH_TARGET_LENGTH = 50.0
 
 # ── Occupancy grid ─────────────────────────────────────────────────────────────
 VOXEL_RESOLUTION = 0.10        # metres per voxel edge
-# ESDF voxel resolution (metres). Defaults to VOXEL_RESOLUTION.
-ESDF_VOXEL_RESOLUTION = VOXEL_RESOLUTION
 ROBOT_RADIUS     = 0.35        # collision sphere radius (brov.yml)
 # Inflate occupancy by this many voxels on each side
 INFLATION_VOXELS = int(ROBOT_RADIUS / VOXEL_RESOLUTION) + 1   # ≥ 4
 
-# ── Robot physical / planning constants (ported from run_multi_auv_waypoints.py) ─
+# ── Robot physical constants ──────────────────────────────────────────────────
 BROV_CUBOID_DIMS   = [0.7, 0.5, 0.35]
-TRAJOPT_HORIZON    = 64
 
 # Static obstacles – empty dict; callers iterate over it, so no-op.
 STATIC_OBSTACLES = {}
@@ -65,11 +62,6 @@ ORTOOLS_TIME_LIMIT_S = 30
 ORTOOLS_FIRST_SOLUTION = "PARALLEL_CHEAPEST_INSERTION"
 ORTOOLS_LOCAL_SEARCH   = "GUIDED_LOCAL_SEARCH"
 
-# ── Traffic-light conflict resolution ─────────────────────────────────────────
-# Width of the bounding corridor around a path segment (metres)
-TRAFFIC_CORRIDOR_WIDTH = ROBOT_RADIUS * 2.5   # 0.875 m
-# Maximum wait-steps to inject before giving up and re-solving VRP
-TRAFFIC_MAX_WAIT_STEPS = 200
 # ── Space-Time A* collision avoidance ──────────────────────────────────────
 # Coarse spatial resolution for the 4-D reservation table (metres).
 # Chosen so the dense 4-D array fits comfortably in RAM (~80 MB).
@@ -118,6 +110,3 @@ MIP_GAP           = 0.05          # relative optimality gap (5 %)
 VRP_FEEDBACK_ITERATIONS = 3       # max re-solve iterations
 VRP_FEEDBACK_THRESHOLD  = 0.20    # accept if actual makespan within 20 % of VRP estimate
 
-# ── Isaac Sim replay ───────────────────────────────────────────────────────────
-WAIT_STEPS_PER_WAYPOINT = 25   # sim steps to hold at each waypoint
-STEPS_PER_WAYPOINT      = 64   # estimated motion steps per waypoint leg (for traffic-light timing)

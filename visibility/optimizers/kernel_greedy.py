@@ -104,11 +104,13 @@ class KernelGreedyOptimizer:
             uncovered -= best_expanded_set
             coverage = 1.0 - len(uncovered) / self.num_points
 
+            # Store the *full* visibility set, not just the incremental contribution
+            full_visible = initial_visibility_map[best_candidate_idx]
             selected_viewpoints.append(ViewpointResult(
                 position=np.asarray(best_vp),
                 orientation=np.asarray(best_orient),
-                visible_indices=np.array(list(best_expanded_set)),
-                coverage_score=best_score / self.num_points,
+                visible_indices=np.asarray(full_visible),
+                coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,
             ))
 
