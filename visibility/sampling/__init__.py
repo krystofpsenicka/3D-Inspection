@@ -1,1 +1,1 @@
-from .base import ViewpointSampler  # noqa: F401
+from .base import ViewpointSampler

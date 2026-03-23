@@ -1,5 +1,5 @@
 """
-Shared mesh loading: load, uniform-scale, and pose-transform a mesh.
+Mesh loading: load, uniform-scale, and pose-transform a mesh.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def load_and_transform_mesh(
     mesh_path : str
         Path to ``.glb`` / ``.obj`` / ``.stl`` mesh file.
     target_length : float
-        Desired length (metres) along the mesh's longest axis.
+        Desired length (metres) of the mesh's longest axis.
     pose : list
         ``[x, y, z, qw, qx, qy, qz]`` world-frame pose.
 

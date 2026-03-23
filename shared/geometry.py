@@ -1,5 +1,5 @@
 """
-Shared geometry utilities.
+Geometry utils.
 """
 
 from __future__ import annotations
@@ -35,13 +35,13 @@ def direction_to_quaternion(direction: np.ndarray) -> np.ndarray:
 
 
 def direction_roll_to_quaternion(direction: np.ndarray, roll: float = 0.0) -> np.ndarray:
-    """Convert direction + roll angle (radians) to quaternion [qw,qx,qy,qz]."""
+    """Convert direction + roll (in radians) to quaternion [qw,qx,qy,qz]."""
     from scipy.spatial.transform import Rotation as R
 
     base_q = direction_to_quaternion(direction)  # [qw,qx,qy,qz]
     if abs(roll) < 1e-8:
         return base_q
-    # Roll about the local forward axis (+X)
+    # Roll about the local X axis
     roll_rot = R.from_rotvec(np.array([roll, 0.0, 0.0]))
     base_rot = R.from_quat([base_q[1], base_q[2], base_q[3], base_q[0]])  # scipy xyzw
     combined = base_rot * roll_rot  # apply roll in local frame
@@ -50,7 +50,7 @@ def direction_roll_to_quaternion(direction: np.ndarray, roll: float = 0.0) -> np
 
 
 def quaternion_to_forward(q_wxyz: np.ndarray) -> np.ndarray:
-    """Extract the forward direction (+X) from a [qw,qx,qy,qz] quaternion."""
+    """Extract forward direction (local X axis) from [qw,qx,qy,qz] quaternion."""
     from scipy.spatial.transform import Rotation as R
 
     rot = R.from_quat([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]])

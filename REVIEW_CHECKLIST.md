@@ -7,13 +7,13 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 ## Day 1: Shared Utilities + Visibility Core (~1,210 lines)
 
 ### Leaves (no internal imports)
-- [ ] 1. `shared/geometry.py` (57 lines) — pose transforms, quaternion helpers
-- [ ] 2. `shared/grid_utils.py` (25 lines) — grid indexing, neighbor queries
-- [ ] 3. `shared/mesh_loader.py` (60 lines) — trimesh I/O, normal estimation, inflation
-- [ ] 4. `shared/occupancy_grid.py` (257 lines) — ESDF computation, surface-only OG
-- [ ] 5. `shared/__init__.py` (1 line)
+- [ x ] 1. `shared/geometry.py` (57 lines) — pose transforms, quaternion helpers
+- [ x ] 2. `shared/grid_utils.py` (25 lines) — grid indexing, neighbor queries
+- [ x ] 3. `shared/mesh_loader.py` (60 lines) — trimesh I/O, normal estimation, inflation
+- [ x ] 4. `shared/occupancy_grid.py` (257 lines) — ESDF computation, surface-only OG
+- [ x ] 5. `shared/__init__.py` (1 line)
 - [ ] 6. `visibility/core/constants.py` (54 lines) — magic numbers, default params
-- [ ] 7. `visibility/core/utils.py` (11 lines) — small helpers
+- [ x ] 7. `visibility/core/utils.py` (11 lines) — small helpers
 
 ### Tests for shared
 - [ ] 8. `tests/conftest.py` (35 lines) — shared fixtures

@@ -1,13 +1,9 @@
 """
-Shared Occupancy Grid
-=====================
+Occupancy Grid
+==============
 
-Core ``OccupancyGrid`` dataclass and pure-numpy utilities that are used by
-both the VRP planner and the visibility/sampling pipeline.
-
-Moved here from ``VRP/occupancy_grid.py`` and ``VRP/space_time_astar.py``
-so that non-VRP code (e.g. viewpoint sampling) can use them without pulling
-in VRP-specific configuration.
+``OccupancyGrid`` dataclass and numpy utilities that are used by
+the VRP planner and the visibility/sampling pipeline.
 """
 
 from __future__ import annotations
@@ -32,14 +28,14 @@ class OccupancyGrid:
     origin : np.ndarray (3,)
         World position of voxel (0, 0, 0).
     resolution : float
-        Metres per voxel edge.
+        Voxel edge length (metres).
     raw_grid : np.ndarray | None
-        Pre-inflation obstacle grid (mesh + cuboids, no dilation).
-        Used by the ESDF builder so cuRobo collision spheres are not
+        Pre-inflation obstacle grid (mesh + obstacles, no dilation).
+        Used by the ESDF builder so collision spheres are not
         double-counted with the inflation radius.
     mesh_scale : float | None
         Uniform scale factor applied to the mesh so its longest axis
-        equals ``MESH_TARGET_LENGTH``.  Needed by visualisation so the
+        equals ``MESH_TARGET_LENGTH``. Needed by visualisation so the
         rendered mesh matches the occupancy grid.
     """
 
@@ -50,10 +46,10 @@ class OccupancyGrid:
     filled_raw_grid: Optional[np.ndarray] = None
     mesh_scale: Optional[float] = None
 
-    # ── Coordinate transforms ─────────────────────────────────────────────────
+    # ── Coordinate transforms ───────────────────────────────────────────────
 
     def world_to_voxel(self, world_xyz: np.ndarray) -> np.ndarray:
-        """Convert world-frame ``(..., 3)`` coords → integer voxel indices.
+        """Convert world-frame ``(..., 3)`` coords -> integer voxel indices.
 
         Returned indices are *not* clipped; callers should use
         ``is_valid_voxel`` before indexing into the grid.
@@ -63,7 +59,7 @@ class OccupancyGrid:
         ).astype(int)
 
     def voxel_to_world(self, voxel_ijk: np.ndarray) -> np.ndarray:
-        """Convert integer voxel indices ``(..., 3)`` → world-frame centre (m)."""
+        """Convert integer voxel indices ``(..., 3)`` -> world-frame."""
         return voxel_ijk.astype(float) * self.resolution + self.origin + self.resolution * 0.5
 
     def is_valid_voxel(self, ijk: np.ndarray) -> bool:
@@ -81,7 +77,7 @@ class OccupancyGrid:
         return not bool(self.grid[tuple(ijk)])
 
     def is_free_world_batch(self, world_xyz: np.ndarray) -> np.ndarray:
-        """Check (N, 3) world positions → (N,) bool. Out-of-bounds → False."""
+        """Check (N, 3) world positions -> (N,) bool. Out of bounds -> False."""
         ijk = self.world_to_voxel(world_xyz)
         shape = np.array(self.grid.shape)
         in_bounds = np.all(ijk >= 0, axis=1) & np.all(ijk < shape, axis=1)
@@ -91,7 +87,7 @@ class OccupancyGrid:
         return result
 
     def world_to_flat_index(self, world_xyz: np.ndarray) -> int:
-        """Return the flat (C-order) grid index for a world-frame point."""
+        """Return the flat grid index for a world-frame point."""
         ijk = self.world_to_voxel(world_xyz)
         return int(np.ravel_multi_index(tuple(ijk), self.grid.shape))
 
@@ -120,13 +116,9 @@ class OccupancyGrid:
         """Return ``(n, 3)`` random world-frame points inside free voxels."""
         if rng is None:
             rng = np.random.RandomState()
-        free_ijk = np.argwhere(~self.grid)           # (F, 3)
-        if len(free_ijk) < n:
-            raise ValueError(
-                f"Grid has only {len(free_ijk)} free voxels; requested {n}."
-            )
-        chosen = free_ijk[rng.choice(len(free_ijk), n, replace=False)]
-        # Random sub-voxel offset for variety
+        free_ijk = np.argwhere(~self.grid) # (free_count, 3)
+        chosen = free_ijk[rng.choice(len(free_ijk), n, replace=True)]
+        # Random sub-voxel offset
         offsets = rng.uniform(0.0, self.resolution, size=(n, 3))
         return chosen.astype(float) * self.resolution + self.origin + offsets
 
@@ -171,10 +163,6 @@ class OccupancyGrid:
                 filled_raw_grid=filled,
                 mesh_scale=meta.get("mesh_scale"),
             )
-        # Backward compat: try pickle
-        import pickle
-        with open(path, "rb") as f:
-            return pickle.load(f)
 
 
 # ── Grid inflation ────────────────────────────────────────────────────────────
@@ -186,23 +174,18 @@ def inflate_grid(grid: np.ndarray, inflation_voxels: int) -> np.ndarray:
     This expands every obstacle by the robot's collision radius so that
     path planners can treat the robot as a point.
 
-    Tries CuPy (GPU) first for speed; falls back to scipy on CPU.
+    Using CuPy (GPU) for speed.
     """
     r = inflation_voxels
     coords = np.mgrid[-r:r+1, -r:r+1, -r:r+1]
     se = (coords[0]**2 + coords[1]**2 + coords[2]**2) <= r**2
 
-    try:
-        import cupy as cp
-        from cupyx.scipy.ndimage import binary_dilation as gpu_dilation
-        grid_gpu = cp.asarray(grid)
-        se_gpu = cp.asarray(se)
-        result = gpu_dilation(grid_gpu, structure=se_gpu)
-        return cp.asnumpy(result)
-    except (ImportError, Exception) as exc:
-        logger.debug("GPU inflate_grid unavailable (%s), using scipy.", exc)
-        from scipy.ndimage import binary_dilation
-        return binary_dilation(grid, structure=se)
+    import cupy as cp
+    from cupyx.scipy.ndimage import binary_dilation as gpu_dilation
+    grid_gpu = cp.asarray(grid)
+    se_gpu = cp.asarray(se)
+    result = gpu_dilation(grid_gpu, structure=se_gpu)
+    return cp.asnumpy(result)
 
 
 # ── Grid down-sampling ───────────────────────────────────────────────────────
@@ -216,9 +199,9 @@ def downsample_occupancy_grid(
     """Down-sample an occupancy grid.
 
     A coarse voxel is **occupied** if **any** of its constituent fine
-    voxels is occupied (conservative -- no false free-space).
+    voxels is occupied (no false free-space).
 
-    Fully vectorised with ``np.pad`` + ``reshape`` + ``any``.
+    Vectorised with ``np.pad`` + ``reshape`` + ``any``.
 
     Returns ``(coarse_grid, coarse_origin, coarse_res)``.
     """
@@ -251,7 +234,7 @@ def downsample_occupancy_grid(
     coarse_origin = fine_origin.copy()
     actual_res = fine_res * factor
     logger.info(
-        "[downsample] Grid: %s → %s  (factor=%d, coarse_res=%.2fm)",
+        "[downsample] Grid: %s -> %s  (factor=%d, coarse_res=%.2fm)",
         fine_grid.shape, coarse.shape, factor, actual_res,
     )
     return coarse, coarse_origin, actual_res

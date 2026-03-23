@@ -1,4 +1,4 @@
-"""Shared constants for the visibility package."""
+"""Constants for the visibility package."""
 
 import numpy as np
 

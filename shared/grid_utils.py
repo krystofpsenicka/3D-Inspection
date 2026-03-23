@@ -1,5 +1,5 @@
 """
-Shared 3-D voxel grid utilities used by both VRP and visibility packages.
+3-D voxel grid utilities used by VRP and visibility packages.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from typing import List, Tuple
 
 import numpy as np
 
-# 26-connected spatial offsets (excludes the identity (0,0,0))
+# 26-connected spatial offsets (without (0,0,0))
 OFFSETS_26: List[Tuple[int, int, int]] = [
     (di, dj, dk)
     for di in (-1, 0, 1)
