@@ -37,7 +37,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from shared.grid_utils import OFFSETS_26 as _OFFSETS_26, WEIGHTS_26 as _WEIGHTS_26, snap_to_free as _snap_to_free
+from shared.grid_utils import OFFSETS_26 as _OFFSETS_26, WEIGHTS_26 as _WEIGHTS_26
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +126,6 @@ def compute_distance_matrix_cpu(
     waypoints_ijk = np.floor(
         (waypoints_world - origin) / resolution
     ).astype(int)
-
-    # Snap waypoints that are in occupied voxels to nearest free
-    waypoints_ijk = _snap_to_free(grid, waypoints_ijk)
 
     total_pairs = N * (N - 1) // 2
     done = 0
@@ -247,9 +244,7 @@ def _cuGraph_distance_matrix_main():
             G.number_of_nodes(), G.number_of_edges(),
         )
 
-        # ── Snap waypoints to free node IDs ───────────────────────────────
         wp_ijk  = np.floor((waypoints - origin) / resolution).astype(int)
-        wp_ijk  = _snap_to_free(grid, wp_ijk)
         wp_flat_ids = np.ravel_multi_index(
             (wp_ijk[:, 0], wp_ijk[:, 1], wp_ijk[:, 2]), grid.shape
         )
@@ -418,8 +413,6 @@ def extract_astar_path(
 
     start_ijk = np.floor((start_world - origin) / resolution).astype(int)
     goal_ijk  = np.floor((goal_world  - origin) / resolution).astype(int)
-    start_ijk = _snap_to_free(grid, start_ijk.reshape(1, 3))[0]
-    goal_ijk  = _snap_to_free(grid, goal_ijk.reshape(1,  3))[0]
 
     import heapq
 

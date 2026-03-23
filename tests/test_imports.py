@@ -23,10 +23,9 @@ def test_visibility_import():
 
 def test_shared_import():
     from shared.occupancy_grid import OccupancyGrid
-    from shared.grid_utils import snap_to_free, OFFSETS_26
+    from shared.grid_utils import OFFSETS_26
     from shared.geometry import direction_to_quaternion
     assert OccupancyGrid is not None
-    assert snap_to_free is not None
     assert OFFSETS_26 is not None
     assert direction_to_quaternion is not None
 

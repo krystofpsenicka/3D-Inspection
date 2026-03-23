@@ -208,12 +208,6 @@ def coarse_to_world(ijk: np.ndarray, origin: np.ndarray, res: float) -> np.ndarr
     return np.asarray(ijk, dtype=np.float64) * res + origin + res * 0.5
 
 
-def _snap_coarse_to_free(grid: np.ndarray, ijk: np.ndarray) -> np.ndarray:
-    """BFS-snap each voxel index to the nearest free coarse voxel."""
-    from shared.grid_utils import snap_to_free
-    return snap_to_free(grid, ijk)
-
-
 # ── Space-Time A* ────────────────────────────────────────────────────────────
 
 def space_time_astar(
@@ -497,8 +491,6 @@ def plan_robot_route_st(
         # Clip to grid bounds
         for d, mx in enumerate(coarse_grid.shape):
             leg_ijk[:, d] = np.clip(leg_ijk[:, d], 0, mx - 1)
-        # Snap occupied voxels to nearest free
-        leg_ijk = _snap_coarse_to_free(coarse_grid, leg_ijk)
 
         # Sub-sample: keep every Kth waypoint to reduce the number of
         # Space-Time A* calls (each hop is short enough to plan quickly)
@@ -537,18 +529,10 @@ def plan_robot_route_st(
                 stats.astar_failures += 1
                 logger.warning(
                     "  [route] ST-A* failed hop %d→%d (leg %d→%d, t=%d). "
-                    "Using straight-line fallback.",
+                    "Skipping hop.",
                     hop - 1, hop, prev_node, curr_node, t_cursor,
                 )
-                n = max(1, int(np.linalg.norm(g_ijk - s_ijk)))
-                fb_ijk = np.stack([
-                    np.linspace(int(s_ijk[d]), int(g_ijk[d]), n + 1).astype(np.intp)
-                    for d in range(3)
-                ], axis=1)
-                # Snap any occupied voxels to nearest free
-                fb_ijk = _snap_coarse_to_free(coarse_grid, fb_ijk)
-                fb_t = np.arange(t_cursor, t_cursor + len(fb_ijk), dtype=np.intp)
-                result = (fb_ijk, fb_t)
+                continue
 
             seg_ijk, seg_t = result
             # Skip first point (duplicate) unless this is the very first
