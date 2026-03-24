@@ -79,13 +79,11 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
     for-loops with scatter-min and parallel visibility kernels.
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
+    def __init__(self, target_points: np.ndarray,
                  normals: np.ndarray, frustum_params: FrustumParams,
                  epsilon_deg: Optional[float] = None,
-                 frustum_method: str = "bruteforce",
                  hyperparams: Optional[EpsilonHyperparams] = None):
-        super().__init__(mesh, target_points, normals, frustum_params,
-                         frustum_method=frustum_method)
+        super().__init__(target_points, normals, frustum_params)
         self.hp = hyperparams or EpsilonHyperparams()
 
         if epsilon_deg is not None:
@@ -101,21 +99,43 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             logger.info("Estimated δ (sampling density): %.6f", self.delta)
 
     def _estimate_delta(self):
-        """Estimate sampling density δ (Lemma 6.1): aggregation of k-neighbor distances."""
+        """Estimate sampling density δ (Lemma 6.1): GPU brute-force k-NN."""
         sample_size = min(1000, self.num_points)
         if sample_size == 0:
             return 0.1
 
-        sample_indices = np.random.choice(self.num_points, sample_size, replace=False)
+        k = self.hp.delta_k
         agg_func = DELTA_AGG_FUNCS[self.hp.delta_agg]
 
-        distances = []
-        for idx in sample_indices:
-            dists, _ = self.kdtree.query(self.target_points[idx], k=self.hp.delta_k)
-            if len(dists) > 1:
-                distances.append(agg_func(dists[1:]))
+        sample_indices = cp.random.choice(self.num_points, sample_size, replace=False)
+        sample_points = self.gpu_points[sample_indices]  # (S, 3)
 
-        return agg_func(distances) if distances else 0.1
+        # Precompute squared norms of all target points
+        all_sq = cp.sum(self.gpu_points ** 2, axis=1)  # (N,)
+
+        chunk_size = 100
+        per_point_agg = []
+
+        for start in range(0, sample_size, chunk_size):
+            chunk = sample_points[start:start + chunk_size]  # (C, 3)
+            # ||a-b||^2 = ||a||^2 + ||b||^2 - 2*a.b
+            chunk_sq = cp.sum(chunk ** 2, axis=1, keepdims=True)  # (C, 1)
+            dot = chunk @ self.gpu_points.T  # (C, N)
+            sq_dists = chunk_sq + all_sq[None, :] - 2.0 * dot  # (C, N)
+            sq_dists = cp.maximum(sq_dists, 0.0)
+
+            # Find k+1 smallest distances per row (including self ~0)
+            kp1 = min(k + 1, sq_dists.shape[1])
+            topk_sq = cp.partition(sq_dists, kp1 - 1, axis=1)[:, :kp1]
+            topk_sq_sorted = cp.sort(topk_sq, axis=1)
+            knn_dists = cp.sqrt(topk_sq_sorted[:, 1:])  # (C, k) exclude self
+
+            knn_cpu = knn_dists.get()
+            for row in knn_cpu:
+                if len(row) > 0:
+                    per_point_agg.append(agg_func(row))
+
+        return float(agg_func(per_point_agg)) if per_point_agg else 0.1
 
     def _compute_epsilon_gpu(self, distances_gpu, front_facing_gpu):
         """Compute per-viewpoint ε = 2·arctan(δ/(4γ)) where γ = aggregated viewing distance."""

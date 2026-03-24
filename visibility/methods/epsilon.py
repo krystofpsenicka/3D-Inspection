@@ -21,11 +21,11 @@ class EpsilonVisibilityQuery(VisibilityQuery):
     2. Epsilon-based occlusion via radial partitioning (Algorithm 5.1).
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
+    def __init__(self, target_points: np.ndarray,
                  normals: np.ndarray, frustum_params: FrustumParams,
                  epsilon_deg: Optional[float] = None,
                  hyperparams: Optional[EpsilonHyperparams] = None):
-        super().__init__(mesh, target_points, normals, frustum_params)
+        super().__init__(target_points, normals, frustum_params)
         self.hp = hyperparams or EpsilonHyperparams()
 
         self.pcd = o3d.geometry.PointCloud()
@@ -43,50 +43,6 @@ class EpsilonVisibilityQuery(VisibilityQuery):
             self.fixed_epsilon = None
             self.delta = self._estimate_delta()
             logger.info("Estimated δ (sampling density): %.6f", self.delta)
-
-    def visualize_normals(self, normal_scale=20.0):
-        """Visualizes the mesh, the target points, and their computed normals."""
-        logger.info("Visualizing Normals")
-
-        mesh_vis = o3d.geometry.TriangleMesh(self.mesh)
-        mesh_vis.paint_uniform_color([0.8, 0.8, 0.8])
-        mesh_vis.compute_vertex_normals()
-
-        pcd_vis = o3d.geometry.PointCloud(self.pcd)
-        pcd_vis.paint_uniform_color([1.0, 0.0, 0.0])
-
-        points = np.asarray(pcd_vis.points)
-        normals = np.asarray(pcd_vis.normals)
-
-        normal_endpoints = points + (normals * normal_scale)
-        normal_vertices = np.concatenate((points, normal_endpoints), axis=0)
-
-        indices = np.arange(len(points))
-        normal_lines_indices = np.vstack((indices, indices + len(points))).T
-
-        normal_lines = o3d.geometry.LineSet(
-            points=o3d.utility.Vector3dVector(normal_vertices),
-            lines=o3d.utility.Vector2iVector(normal_lines_indices)
-        )
-        normal_lines.colors = o3d.utility.Vector3dVector(
-            [[0, 0, 0] for _ in range(len(normal_lines_indices))]
-        )
-
-        geometries = [mesh_vis, pcd_vis, normal_lines]
-
-        vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name="Approximate Star-Shaped Initialization",
-                          width=1600, height=900)
-
-        render_option = vis.get_render_option()
-        render_option.point_size = 4.0
-        render_option.mesh_show_back_face = True
-
-        for geom in geometries:
-            vis.add_geometry(geom)
-
-        vis.run()
-        vis.destroy_window()
 
     def _estimate_delta(self):
         """Estimate sampling density δ (Lemma 6.1): aggregation of k-neighbor distances."""

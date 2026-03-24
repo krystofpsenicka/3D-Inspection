@@ -20,7 +20,7 @@ class RaycastingVisibilityQuery(VisibilityQuery):
 
     def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
                  normals: np.ndarray, frustum_params: FrustumParams):
-        super().__init__(mesh, target_points, normals, frustum_params)
+        super().__init__(target_points, normals, frustum_params)
 
         self.scene = o3d.t.geometry.RaycastingScene()
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))

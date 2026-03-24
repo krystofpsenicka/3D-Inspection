@@ -1,8 +1,8 @@
 import logging
 import numpy as np
+import cupy as cp
 import torch
 import open3d as o3d
-from numpy.linalg import norm
 from time import time as get_time
 from typing import Tuple
 
@@ -21,10 +21,8 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
     """
 
     def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
-                 normals: np.ndarray, frustum_params: FrustumParams,
-                 frustum_method: str = "bruteforce"):
-        super().__init__(mesh, target_points, normals, frustum_params,
-                         frustum_method=frustum_method)
+                 normals: np.ndarray, frustum_params: FrustumParams):
+        super().__init__(target_points, normals, frustum_params)
 
         from triro.ray.ray_optix import RayMeshIntersector
 
@@ -47,27 +45,32 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         if len(candidate_indices) == 0:
             return np.array([]), get_time() - start
 
-        candidate_points = self.target_points[candidate_indices]
         num_candidates = len(candidate_indices)
 
-        # Build ray origins and directions (float64 for precision parity with CPU)
-        origins_np = np.tile(viewpoint, (num_candidates, 1))
-        vectors = candidate_points - origins_np
-        distances = np.linalg.norm(vectors, axis=1)
-        ray_dirs_np = vectors / (distances[:, np.newaxis] + NORM_EPS)
+        # Build rays on GPU
+        candidate_indices_gpu = cp.asarray(candidate_indices)
+        candidate_points_gpu = self.gpu_points[candidate_indices_gpu]  # (C, 3) float64
 
-        # Convert to PyTorch CUDA tensors (float32 required by OptiX)
-        origins_torch = torch.from_numpy(origins_np.astype(np.float32)).cuda()
-        ray_dirs_torch = torch.from_numpy(ray_dirs_np.astype(np.float32)).cuda()
+        vp_gpu = cp.asarray(viewpoint, dtype=cp.float64)
+        origins_gpu = cp.tile(vp_gpu, (num_candidates, 1))
+        vectors_gpu = candidate_points_gpu - origins_gpu
+        distances_gpu = cp.linalg.norm(vectors_gpu, axis=1)
+        ray_dirs_gpu = vectors_gpu / (distances_gpu[:, cp.newaxis] + NORM_EPS)
+
+        # CuPy -> torch (float32 required by OptiX)
+        origins_torch = torch.as_tensor(origins_gpu.astype(cp.float32), device='cuda')
+        ray_dirs_torch = torch.as_tensor(ray_dirs_gpu.astype(cp.float32), device='cuda')
 
         # Cast rays via Triro
         hit, _, _, location, _ = self.intersector.intersects_closest(
             origins_torch, ray_dirs_torch
         )
 
-        # Compute t_hit for rays that hit
+        # Compute t_hit for rays that hit — bring to CPU for comparison
         hit_np = hit.cpu().numpy()
         location_np = location.cpu().numpy()
+        distances_np = distances_gpu.get()
+        origins_np = origins_gpu.get()
 
         is_visible = np.ones(num_candidates, dtype=bool)
 
@@ -76,7 +79,7 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
             hit_locations = location_np[hit_mask]
             hit_origins = origins_np[hit_mask]
             t_hit = np.linalg.norm(hit_locations - hit_origins, axis=1)
-            hit_distances = distances[hit_mask]
+            hit_distances = distances_np[hit_mask]
             is_visible[hit_mask] = (t_hit >= hit_distances - RAYCAST_TOLERANCE)
 
         visible_indices = candidate_indices[is_visible]

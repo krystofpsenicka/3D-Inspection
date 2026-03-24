@@ -16,19 +16,16 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 - [ x ] 7. `visibility/core/utils.py` (11 lines) — small helpers
 
 ### Tests for shared
-- [ ] 8. `tests/conftest.py` (35 lines) — shared fixtures
-- [ ] 9. `tests/test_geometry.py` (46 lines)
-- [ ] 10. `tests/test_grid_utils.py` (40 lines)
-- [ ] 11. `tests/test_occupancy_grid.py` (206 lines)
+- [ x ] 8. `tests/conftest.py` (35 lines) — shared fixtures
+- [ x ] 11. `tests/test_occupancy_grid.py` (206 lines)
 - [ ] 12. `tests/test_imports.py` (41 lines) — smoke test for all imports
 
 ### Visibility core (types -> base -> base_cuda -> sampling engine)
-- [ ] 13. `visibility/core/types.py` (58 lines) — depends on constants.py
-- [ ] 14. `tests/test_types.py` (44 lines)
-- [ ] 15. `visibility/core/base.py` (136 lines) — CPU visibility base class
-- [ ] 16. `visibility/core/base_cuda.py` (126 lines) — GPU visibility base class
-- [ ] 17. `visibility/core/sampling.py` (~10 lines) — **DEPRECATED** (stale copy) skim header, likely delete
-- [ ] 18. `visibility/core/__init__.py` (5 lines)
+- [ x ] 13. `visibility/core/types.py` (58 lines) — depends on constants.py
+- [ x ] 15. `visibility/core/base.py` (136 lines) — CPU visibility base class
+- [ x ] 16. `visibility/core/base_cuda.py` (126 lines) — GPU visibility base class
+- [ x ] 17. `visibility/core/sampling.py` (~10 lines) — **DEPRECATED** (stale copy) skim header, likely delete
+- [ x ] 18. `visibility/core/__init__.py` (5 lines)
 
 ---
 

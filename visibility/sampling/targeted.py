@@ -107,7 +107,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
             q = direction_roll_to_quaternion(directions[i], roll[i])
             free_cands.append((positions[i], q))
 
-        vis_map, _ = visibility_query.compute_visibility_for_all_candidates(free_cands)
+        vis_map, _ = visibility_query.compute_visibility_batch(free_cands)
 
         # Score: -f_obs + travel_weight * f_trav
         for j, orig_i in enumerate(free_idx):
@@ -150,7 +150,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
         ], dtype=np.float32)
         q = direction_roll_to_quaternion(direction, roll_cb)
         cand = (pos, q)
-        test_vis, _ = visibility_query.compute_visibility_for_all_candidates([cand])
+        test_vis, _ = visibility_query.compute_visibility_batch([cand])
         visible = test_vis.get(0, np.array([], dtype=np.int64))
         if len(visible) > 0:
             new_cov = int(uncovered_mask_gpu[cp.asarray(visible)].sum())
@@ -179,7 +179,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
 
     # Recompute f_obs for the best to report raw coverage score
     best_cand = (best_pos, best_quat)
-    vis_map, _ = visibility_query.compute_visibility_for_all_candidates([best_cand])
+    vis_map, _ = visibility_query.compute_visibility_batch([best_cand])
     visible = vis_map.get(0, np.array([], dtype=np.int64))
     if len(visible) > 0:
         best_score = int(uncovered_mask_gpu[cp.asarray(visible)].sum())

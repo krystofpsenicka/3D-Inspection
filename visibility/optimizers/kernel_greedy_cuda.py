@@ -5,7 +5,7 @@ from time import time as get_time
 from typing import List, Tuple
 
 from ..core.types import ViewpointResult, OptimizationResult
-from ..core.base import VisibilityQuery
+from ..core.base import VisibilityQueryBase
 from ..core.constants import NORM_EPS, KERNEL_N_SAMPLES, KERNEL_RADIUS
 from shared.geometry import direction_roll_to_quaternion
 
@@ -19,7 +19,7 @@ class KernelGreedyOptimizerCuda:
     to each, then runs a GPU greedy loop on the expanded visibility matrix.
     """
 
-    def __init__(self, visibility_query: VisibilityQuery):
+    def __init__(self, visibility_query: VisibilityQueryBase):
         self.query = visibility_query
         self.num_points = visibility_query.num_points
         logger.info("[KernelGreedyOptimizerCuda] Initialized with %s.", type(visibility_query).__name__)
@@ -67,7 +67,7 @@ class KernelGreedyOptimizerCuda:
             return OptimizationResult("KernelGreedyCuda_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0)
 
         # 1. Pre-compute initial visibility for all candidates
-        vis_map, vis_comp_time = self.query.compute_visibility_for_all_candidates(candidates)
+        vis_map, vis_comp_time = self.query.compute_visibility_batch(candidates)
 
         # 2. Apply _expand_gpu to each candidate
         n_cand = len(candidates)

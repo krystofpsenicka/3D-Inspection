@@ -5,7 +5,7 @@ from time import time as get_time
 from typing import List, Tuple
 
 from ..core.types import ViewpointResult, OptimizationResult
-from ..core.base import VisibilityQuery
+from ..core.base import VisibilityQueryBase
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class GreedyOptimizerCuda:
     iteration as a matrix-vector multiply + argmax.
     """
 
-    def __init__(self, visibility_query: VisibilityQuery):
+    def __init__(self, visibility_query: VisibilityQueryBase):
         self.query = visibility_query
         self.num_points = visibility_query.num_points
         logger.info("[GreedyOptimizerCuda] Initialized with %s.", type(visibility_query).__name__)
@@ -35,7 +35,7 @@ class GreedyOptimizerCuda:
 
         # Pre-compute visibility for all candidates
         initial_visibility_map, vis_comp_time = \
-            self.query.compute_visibility_for_all_candidates(candidates)
+            self.query.compute_visibility_batch(candidates)
 
         n_candidates = len(candidates)
 

@@ -689,7 +689,7 @@ class ViewpointSampler:
                 n_normal, curvature_weighting=curvature_weighting)
 
         # 2. Compute visibility for normal candidates
-        vis_map, _ = visibility_query.compute_visibility_for_all_candidates(candidates)
+        vis_map, _ = visibility_query.compute_visibility_batch(candidates)
 
         if n_targeted == 0:
             return candidates, vis_map
@@ -723,7 +723,7 @@ class ViewpointSampler:
             if not new_cands:
                 logger.info("[Resampling] No targeted candidates generated.")
                 return candidates, vis_map
-            new_vis, _ = visibility_query.compute_visibility_for_all_candidates(new_cands)
+            new_vis, _ = visibility_query.compute_visibility_batch(new_cands)
             offset = len(candidates)
             for k, v in new_vis.items():
                 vis_map[k + offset] = v
@@ -776,7 +776,7 @@ class ViewpointSampler:
                 break
 
             # Compute visibility for best candidate and merge
-            new_vis, _ = visibility_query.compute_visibility_for_all_candidates([best_cand])
+            new_vis, _ = visibility_query.compute_visibility_batch([best_cand])
             offset = len(candidates)
             for k, v in new_vis.items():
                 vis_map[k + offset] = v

@@ -140,9 +140,9 @@ def main():
 
     match args.method:
         case "epsilon":
-            pred_query = EpsilonVisibilityQuery(mesh, target_points, normals, frustum_params)
+            pred_query = EpsilonVisibilityQuery(target_points, normals, frustum_params)
         case "epsilon_cuda":
-            pred_query = EpsilonVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
+            pred_query = EpsilonVisibilityQueryCuda(target_points, normals, frustum_params)
         case _:
             raise ValueError(f"Unknown method: {args.method}")
 

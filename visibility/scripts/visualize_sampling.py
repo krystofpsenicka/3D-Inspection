@@ -136,7 +136,7 @@ def main():
         print(f"  Sampled {len(candidates)} valid viewpoints.")
 
         vis_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
-        visibility_map, vis_time = vis_query.compute_visibility_for_all_candidates(candidates)
+        visibility_map, vis_time = vis_query.compute_visibility_batch(candidates)
 
         print_coverage_summary(visibility_map, len(target_points), vis_time)
         visualizer.visualize_all_visibility_results(visibility_map, candidates)
@@ -163,7 +163,7 @@ def main():
         print(f"  Sampled {len(normal_candidates)} normal viewpoints.")
 
         vis_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
-        normal_vis_map, normal_time = vis_query.compute_visibility_for_all_candidates(
+        normal_vis_map, normal_time = vis_query.compute_visibility_batch(
             normal_candidates)
 
         normal_covered, normal_coverage = print_coverage_summary(
@@ -218,7 +218,7 @@ def main():
                     break
 
                 # Compute visibility and store separately for visualization
-                new_vis, _ = vis_query.compute_visibility_for_all_candidates([best_cand])
+                new_vis, _ = vis_query.compute_visibility_batch([best_cand])
                 targeted_vis_map[len(targeted_candidates)] = new_vis.get(
                     0, np.array([], dtype=np.int64))
                 targeted_candidates.append(best_cand)
@@ -251,7 +251,7 @@ def main():
 
             print(f"  Sampled {len(targeted_candidates)} targeted viewpoints.")
 
-            targeted_vis_map, _ = vis_query.compute_visibility_for_all_candidates(
+            targeted_vis_map, _ = vis_query.compute_visibility_batch(
                 targeted_candidates)
             targeted_vis_map = dict(targeted_vis_map)
 

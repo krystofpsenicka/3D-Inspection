@@ -14,7 +14,7 @@ from time import time as get_time
 from typing import List, Tuple
 
 from ..core.types import ViewpointResult, OptimizationResult
-from ..core.base import VisibilityQuery
+from ..core.base import VisibilityQueryBase
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class LazyGreedyOptimizerCuda:
     """GPU-accelerated lazy greedy set-cover optimizer."""
 
-    def __init__(self, visibility_query: VisibilityQuery):
+    def __init__(self, visibility_query: VisibilityQueryBase):
         self.query = visibility_query
         self.num_points = visibility_query.num_points
 
@@ -46,7 +46,7 @@ class LazyGreedyOptimizerCuda:
             vis_map = precomputed_visibility_map
             vis_comp_time = 0.0
         else:
-            vis_map, vis_comp_time = self.query.compute_visibility_for_all_candidates(
+            vis_map, vis_comp_time = self.query.compute_visibility_batch(
                 candidates
             )
         n_cand = len(candidates)

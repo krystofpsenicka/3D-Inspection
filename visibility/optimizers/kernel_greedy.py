@@ -4,7 +4,7 @@ from time import time as get_time
 from typing import List, Tuple
 
 from ..core.types import ViewpointResult, OptimizationResult
-from ..core.base import VisibilityQuery
+from ..core.base import VisibilityQueryBase
 from ..core.constants import NORM_EPS, KERNEL_N_SAMPLES, KERNEL_RADIUS
 from shared.geometry import direction_roll_to_quaternion
 
@@ -20,7 +20,7 @@ class KernelGreedyOptimizer:
     and pick the one with the most visible points before scoring.
     """
 
-    def __init__(self, visibility_query: VisibilityQuery):
+    def __init__(self, visibility_query: VisibilityQueryBase):
         self.query = visibility_query
         self.num_points = visibility_query.num_points
         logger.info("[KernelGreedyOptimizer] Initialized with %s.", type(visibility_query).__name__)
@@ -61,7 +61,7 @@ class KernelGreedyOptimizer:
         if self.num_points == 0 or not candidates:
             return OptimizationResult("KernelGreedy_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0)
 
-        initial_visibility_map, vis_comp_time = self.query.compute_visibility_for_all_candidates(candidates)
+        initial_visibility_map, vis_comp_time = self.query.compute_visibility_batch(candidates)
 
         uncovered = set(range(self.num_points))
         selected_viewpoints: List[ViewpointResult] = []

@@ -1,4 +1,4 @@
-"""Shared fixtures for the 3D-Inspection test suite."""
+"""Fixtures for the 3D-Inspection tests."""
 import numpy as np
 import pytest
 from shared.occupancy_grid import OccupancyGrid
@@ -21,7 +21,7 @@ def corridor_og():
     """10x10x10 grid with a wall at x=5 and a 1-voxel gap at (5,5,5).
     Used for A* pathfinding tests — forces a path through the gap."""
     grid = np.zeros((10, 10, 10), dtype=bool)
-    grid[5, :, :] = True       # solid wall at x=5
+    grid[5, :, :] = True       # wall at x=5
     grid[5, 5, 5] = False      # single gap
     return OccupancyGrid(
         grid=grid,

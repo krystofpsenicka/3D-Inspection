@@ -181,7 +181,7 @@ def run_comparison_pipeline():
 
     # Initialize Epsilon query (used by both optimizers)
     visibility_query_epsilon = EpsilonVisibilityQuery(
-        mesh=mesh, target_points=target_points,
+        target_points=target_points,
         normals=normals, frustum_params=frustum_params
     )
 

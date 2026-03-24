@@ -74,9 +74,9 @@ def main():
         case "raycast":
             query = RaycastingVisibilityQuery(mesh, target_points, normals, frustum_params)
         case "epsilon":
-            query = EpsilonVisibilityQuery(mesh, target_points, normals, frustum_params)
+            query = EpsilonVisibilityQuery(target_points, normals, frustum_params)
         case "epsilon_cuda":
-            query = EpsilonVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
+            query = EpsilonVisibilityQueryCuda(target_points, normals, frustum_params)
         case "raycast_cuda":
             query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
         case _:

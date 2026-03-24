@@ -9,7 +9,7 @@ from .constants import NORM_EPS
 
 def normalize_vector(v: np.ndarray) -> np.ndarray:
     """Normalizes a 3D vector, handling zero-norm case."""
-    n = norm(v)
+    n = norm(v) 
     if n < NORM_EPS:
         return np.zeros(3)
     return v / n

@@ -20,7 +20,7 @@ class MockVisibilityQuery:
         self.visible_indices = visible_indices
         self.num_points = num_points
 
-    def compute_visibility_for_all_candidates(self, candidates):
+    def compute_visibility_batch(self, candidates):
         return {i: self.visible_indices.copy() for i in range(len(candidates))}, 0.0
 
 

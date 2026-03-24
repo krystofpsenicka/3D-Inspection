@@ -2,7 +2,7 @@
 Benchmark GPU (CUDA) vs CPU visibility methods.
 
 Compares:
-  - Frustum culling: CPU KDTree vs GPU brute-force vs GPU KDTree-hybrid
+  - Frustum culling: CPU KDTree vs GPU brute-force
   - Visibility: CPU Epsilon vs GPU Epsilon, CPU Raycast vs GPU Raycast (OptiX)
   - Optimization: CPU Greedy vs GPU Greedy
 """
@@ -94,7 +94,7 @@ def benchmark_single_visibility(query, viewpoints, label):
     return avg_time, std_time
 
 
-def benchmark_frustum_culling(query_cpu, query_gpu_bf, query_gpu_kd, viewpoints):
+def benchmark_frustum_culling(query_cpu, query_gpu, viewpoints):
     """Compare frustum culling strategies."""
     print("\n" + "=" * 70)
     print("FRUSTUM CULLING BENCHMARK")
@@ -112,28 +112,16 @@ def benchmark_frustum_culling(query_cpu, query_gpu_bf, query_gpu_kd, viewpoints)
 
     # GPU brute-force
     for vp, orient in test_vps[:3]:
-        query_gpu_bf.points_in_frustum_bruteforce_gpu(vp, orient)
-    times_gpu_bf = []
+        query_gpu.points_in_frustum_gpu(vp, orient)
+    times_gpu = []
     for vp, orient in test_vps:
         t0 = get_time()
-        idx = query_gpu_bf.points_in_frustum_bruteforce_gpu(vp, orient)
-        times_gpu_bf.append(get_time() - t0)
-    print(f"  GPU Brute-force:   {np.mean(times_gpu_bf)*1000:.2f} ± {np.std(times_gpu_bf)*1000:.2f} ms")
+        idx = query_gpu.points_in_frustum_gpu(vp, orient)
+        times_gpu.append(get_time() - t0)
+    print(f"  GPU Brute-force:   {np.mean(times_gpu)*1000:.2f} ± {np.std(times_gpu)*1000:.2f} ms")
 
-    # GPU KDTree hybrid
-    for vp, orient in test_vps[:3]:
-        query_gpu_kd.points_in_frustum_kdtree_gpu(vp, orient)
-    times_gpu_kd = []
-    for vp, orient in test_vps:
-        t0 = get_time()
-        idx = query_gpu_kd.points_in_frustum_kdtree_gpu(vp, orient)
-        times_gpu_kd.append(get_time() - t0)
-    print(f"  GPU KDTree+GPU:    {np.mean(times_gpu_kd)*1000:.2f} ± {np.std(times_gpu_kd)*1000:.2f} ms")
-
-    speedup_bf = np.mean(times_cpu) / np.mean(times_gpu_bf)
-    speedup_kd = np.mean(times_cpu) / np.mean(times_gpu_kd)
-    print(f"  Speedup (brute-force): {speedup_bf:.1f}x")
-    print(f"  Speedup (KDTree+GPU):  {speedup_kd:.1f}x")
+    speedup = np.mean(times_cpu) / np.mean(times_gpu)
+    print(f"  Speedup: {speedup:.1f}x")
 
 
 def benchmark_visibility_methods(queries, viewpoints):
@@ -210,23 +198,15 @@ def main():
     print(f"  CPU Raycast init: {get_time()-t0:.2f}s")
 
     t0 = get_time()
-    q_epsilon_cpu = EpsilonVisibilityQuery(mesh, target_points, normals, frustum_params)
+    q_epsilon_cpu = EpsilonVisibilityQuery(target_points, normals, frustum_params)
     print(f"  CPU Epsilon init: {get_time()-t0:.2f}s")
 
-    # GPU Epsilon (two frustum strategies) — both compute per-viewpoint epsilon
+    # GPU Epsilon
     t0 = get_time()
-    q_epsilon_gpu_bf = EpsilonVisibilityQueryCuda(
-        mesh, target_points, normals, frustum_params,
-        frustum_method="bruteforce"
+    q_epsilon_gpu = EpsilonVisibilityQueryCuda(
+        target_points, normals, frustum_params,
     )
-    print(f"  GPU Epsilon (bruteforce) init: {get_time()-t0:.2f}s")
-
-    t0 = get_time()
-    q_epsilon_gpu_kd = EpsilonVisibilityQueryCuda(
-        mesh, target_points, normals, frustum_params,
-        frustum_method="kdtree"
-    )
-    print(f"  GPU Epsilon (kdtree) init: {get_time()-t0:.2f}s")
+    print(f"  GPU Epsilon init: {get_time()-t0:.2f}s")
 
     # GPU Raycast (if Triro available)
     q_raycast_gpu = None
@@ -242,13 +222,12 @@ def main():
     # =====================================================================
 
     # 1. Frustum culling
-    benchmark_frustum_culling(q_epsilon_cpu, q_epsilon_gpu_bf, q_epsilon_gpu_kd, candidates)
+    benchmark_frustum_culling(q_epsilon_cpu, q_epsilon_gpu, candidates)
 
     # 2. Visibility computation
     queries = [
         ("CPU Epsilon", q_epsilon_cpu),
-        ("GPU Epsilon (bruteforce)", q_epsilon_gpu_bf),
-        ("GPU Epsilon (kdtree)", q_epsilon_gpu_kd),
+        ("GPU Epsilon", q_epsilon_gpu),
         ("CPU Raycast", q_raycast_cpu),
     ]
     if q_raycast_gpu is not None:
@@ -259,9 +238,9 @@ def main():
     # 3. Optimization benchmark
     opt_configs = [
         ("CPU Epsilon + CPU Greedy",       GreedyOptimizer(q_epsilon_cpu)),
-        ("GPU Epsilon + GPU Greedy",       GreedyOptimizerCuda(q_epsilon_gpu_bf)),
+        ("GPU Epsilon + GPU Greedy",       GreedyOptimizerCuda(q_epsilon_gpu)),
         ("CPU Epsilon + KernelGreedy",     KernelGreedyOptimizer(q_epsilon_cpu)),
-        ("GPU Epsilon + KernelGreedy GPU", KernelGreedyOptimizerCuda(q_epsilon_gpu_bf)),
+        ("GPU Epsilon + KernelGreedy GPU", KernelGreedyOptimizerCuda(q_epsilon_gpu)),
         ("CPU Raycast + CPU Greedy",       GreedyOptimizer(q_raycast_cpu)),
     ]
     if q_raycast_gpu is not None:

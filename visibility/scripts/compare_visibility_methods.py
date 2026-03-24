@@ -223,7 +223,7 @@ def run_comparison_pipeline():
 
     start_time_eps_init = get_time()
     visibility_query_epsilon = EpsilonVisibilityQuery(
-        mesh=mesh, target_points=target_points,
+        target_points=target_points,
         normals=normals, frustum_params=frustum_params
     )
     eps_vis_init_time = get_time() - start_time_eps_init
