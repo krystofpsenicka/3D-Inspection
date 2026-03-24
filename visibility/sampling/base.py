@@ -640,7 +640,8 @@ class ViewpointSampler:
         uncovered_pts_gpu = self._target_points_gpu[cp.asarray(uncovered_indices)]
         sigma = TARGETED_PROXIMITY_SIGMA_FACTOR * coarse_res
         prox_w = compute_proximity_weights(
-            centers_gpu, uncovered_pts_gpu, sigma, self._nearest_neighbor)
+            centers_gpu, uncovered_pts_gpu, sigma,
+            n_total_target=len(self._target_points_gpu))
 
         # 3. Blend: cached weights × proximity
         blended = base_weights_gpu * prox_w

@@ -18,7 +18,6 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 ### Tests for shared
 - [ x ] 8. `tests/conftest.py` (35 lines) — shared fixtures
 - [ x ] 11. `tests/test_occupancy_grid.py` (206 lines)
-- [ ] 12. `tests/test_imports.py` (41 lines) — smoke test for all imports
 
 ### Visibility core (types -> base -> base_cuda -> sampling engine)
 - [ x ] 13. `visibility/core/types.py` (58 lines) — depends on constants.py
@@ -32,10 +31,10 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 ## Day 2: Visibility Sampling + Methods + Optimizers + Viz (~3,520 lines)
 
 ### Sampling
-- [ ] 19. `visibility/sampling/curvature.py` (57 lines) — depends on constants.py
-- [ ] 20. `visibility/sampling/targeted.py` (189 lines) — depends on constants.py
+- [ x ] 19. `visibility/sampling/curvature.py` (57 lines) — depends on constants.py
+- [ x ] 20. `visibility/sampling/targeted.py` (189 lines) — depends on constants.py
 - [ ] 21. `visibility/sampling/base.py` (788 lines) — main GPU viewpoint sampler
-- [ ] 22. `visibility/sampling/__init__.py` (1 line)
+- [ x ] 22. `visibility/sampling/__init__.py` (1 line)
 - [ ] 23. `tests/test_sampling.py` (228 lines)
 
 ### Visibility methods (CPU then GPU for each)

@@ -1,4 +1,4 @@
-"""GPU-accelerated local curvature estimation via KNN normal deviation."""
+"""GPU-accelerated local curvature approximation using KNN normal deviation."""
 
 import cupy as cp
 
@@ -14,26 +14,29 @@ def compute_local_curvature(query_gpu, targets_gpu, normals_gpu,
     normal.  High deviation = high curvature / geometric complexity.
 
     Args:
-        query_gpu:   (N, 3) CuPy array — positions to evaluate curvature at.
+        query_gpu:   (N, 3) CuPy array — positions to evaluate curvature.
         targets_gpu: (M, 3) CuPy array — surface points.
         normals_gpu: (M, 3) CuPy array — surface normals.
         k:           number of nearest neighbours.
 
     Returns:
-        (N,) CuPy float32 array — curvature proxy values (radians).
+        (N,) CuPy float32 array — curvature proxy values.
     """
     n_query = len(query_gpu)
     n_target = len(targets_gpu)
     k = min(k, n_target)
 
-    targets_sq = cp.sum(targets_gpu ** 2, axis=1)  # (M,)
+    targets_sq = cp.sum(targets_gpu ** 2, axis=1)
     curvature = cp.empty(n_query, dtype=cp.float32)
 
     for start in range(0, n_query, GPU_NN_CHUNK_SIZE):
         end = min(start + GPU_NN_CHUNK_SIZE, n_query)
         q = query_gpu[start:end]  # (chunk, 3)
+
+        # Squared euclidean distance: ||q - t||^2 = ||q||^2 + ||t||^2 - 2 * q @ t^T
         q_sq = cp.sum(q ** 2, axis=1, keepdims=True)  # (chunk, 1)
         dist_sq = q_sq + targets_sq[cp.newaxis, :] - 2.0 * q @ targets_gpu.T
+        # Numerical issues can cause small negative values; clamp to zero.
         cp.maximum(dist_sq, 0.0, out=dist_sq)
 
         # K nearest indices: (chunk, k)

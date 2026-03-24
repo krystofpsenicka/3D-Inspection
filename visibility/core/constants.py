@@ -26,6 +26,7 @@ CURVATURE_POSITION_WEIGHT = 5.0
 
 # Targeted resampling
 TARGETED_PROXIMITY_SIGMA_FACTOR = 2.0
+PROXIMITY_KNN_FRACTION = 0.01
 RESAMPLE_FRACTION = 0.25
 
 # Optimal resampling (Differential Evolution)

@@ -5,25 +5,55 @@ import logging
 import numpy as np
 import cupy as cp
 
-from ..core.constants import DE_POPSIZE, DE_MAXITER, DE_TRAVEL_WEIGHT
+from ..core.constants import (DE_POPSIZE, DE_MAXITER, DE_TRAVEL_WEIGHT,
+                              GPU_NN_CHUNK_SIZE, PROXIMITY_KNN_FRACTION)
 
 logger = logging.getLogger(__name__)
 
 
-def compute_proximity_weights(feasible_gpu, uncovered_gpu, sigma, nn_func):
-    """Exponential proximity weighting toward nearest uncovered point.
+def compute_proximity_weights(feasible_gpu, uncovered_gpu, sigma,
+                              n_total_target,
+                              k_fraction=PROXIMITY_KNN_FRACTION):
+    """KNN proximity weighting toward uncovered surface regions.
+
+    For each feasible viewpoint, finds the K nearest uncovered points and
+    sums their exponential proximity contributions.
 
     Args:
-        feasible_gpu:  (N, 3) CuPy array — feasible viewpoint positions.
-        uncovered_gpu: (U, 3) CuPy array — uncovered surface points.
-        sigma:         length scale for exponential decay.
-        nn_func:       callable(query, targets) → (distances, indices).
+        feasible_gpu:   (N, 3) CuPy array — feasible viewpoint positions.
+        uncovered_gpu:  (U, 3) CuPy array — uncovered surface points.
+        sigma:          length scale for exponential decay.
+        n_total_target: total number of surface points (for stable K).
+        k_fraction:     fraction of total points to use as K.
 
     Returns:
         (N,) CuPy float32 — proximity weights (higher = closer to uncovered).
     """
-    dists, _ = nn_func(feasible_gpu, uncovered_gpu)
-    return cp.exp(-dists / sigma)
+    n_query = len(feasible_gpu)
+    n_uncovered = len(uncovered_gpu)
+    k = max(1, int(k_fraction * n_total_target))
+    k = min(k, n_uncovered)
+
+    uncovered_sq = cp.sum(uncovered_gpu ** 2, axis=1)  # (U,)
+    weights = cp.empty(n_query, dtype=cp.float32)
+
+    for start in range(0, n_query, GPU_NN_CHUNK_SIZE):
+        end = min(start + GPU_NN_CHUNK_SIZE, n_query)
+        q = feasible_gpu[start:end]  # (chunk, 3)
+        q_sq = cp.sum(q ** 2, axis=1, keepdims=True)  # (chunk, 1)
+        # Squared Euclidean distance: ||q - u||^2 = ||q||^2 + ||u||^2 - 2 q.u
+        dist_sq = q_sq + uncovered_sq[cp.newaxis, :] - 2.0 * q @ uncovered_gpu.T
+        cp.maximum(dist_sq, 0.0, out=dist_sq)
+
+        # K nearest uncovered indices
+        knn_idx = cp.argpartition(dist_sq, k, axis=1)[:, :k]  # (chunk, k)
+        knn_dist = cp.sqrt(
+            dist_sq[cp.arange(len(q))[:, cp.newaxis], knn_idx])  # (chunk, k)
+
+        # Sum of exponential proximity contributions
+        weights[start:end] = cp.sum(cp.exp(-knn_dist / sigma), axis=1)
+
+    return weights
 
 
 def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
@@ -32,12 +62,12 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
                           travel_weight=DE_TRAVEL_WEIGHT,
                           popsize=DE_POPSIZE, maxiter=DE_MAXITER,
                           verbose=False):
-    """Find the viewpoint maximizing coverage of uncovered points via DE.
+    """Find the viewpoint maximizing coverage of uncovered points using Differential Evolution.
 
     Objective (following Glorieux et al. 2020):
       minimize  -f_obs + travel_weight * f_trav
     where:
-      f_obs  = |visible intersect uncovered|  (coverage of uncovered points)
+      f_obs  = |visible & uncovered|  (coverage of uncovered points)
       f_trav = ||pose - avg_pose||    (distance to mean pose of existing VPs)
 
     Args:
@@ -46,7 +76,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
         visibility_query: for batch visibility computation
         is_free_fn: callable(positions_gpu) -> CuPy bool array
         existing_candidates: list of (pos, quat) already selected
-        travel_weight: weight of travel cost relative to coverage
+        travel_weight: weight of travel cost in objective
 
     Returns:
         (best_candidate, best_score) where candidate = (pos, quat)
@@ -79,7 +109,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
     spatial_diag = np.sqrt(sum((hi - lo)**2 for lo, hi in feasible_bounds))
 
     def objective(X):
-        """Vectorized objective: X is (N_params, S) from scipy; transpose to (S, N_params)."""
+        """Vectorized objective."""
         X = X.T
         N = X.shape[0]
         positions = X[:, :3].astype(np.float32)
@@ -97,7 +127,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
         free_mask = cp.asnumpy(is_free_fn(pos_gpu))
         free_idx = np.where(free_mask)[0]
 
-        scores = np.full(N, 1e6)  # penalty for infeasible
+        scores = np.full(N, 1e6)  # penalty for infeasibility
         if len(free_idx) == 0:
             return scores
 
@@ -127,7 +157,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
                     free_cands[j][1][3], free_cands[j][1][0]
                 ]).as_rotvec()
                 angle_dist = float(np.linalg.norm(cand_rotvec - avg_rotvec)) / np.pi
-                travel_cost = 0.8 * pos_dist + 0.2 * angle_dist
+                travel_cost = 0.9 * pos_dist + 0.1 * angle_dist
 
             # Normalize coverage by n_uncovered so both terms are ~O(1)
             f_obs = newly_covered / max(n_uncovered, 1)
@@ -150,7 +180,7 @@ def optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
         ], dtype=np.float32)
         q = direction_roll_to_quaternion(direction, roll_cb)
         cand = (pos, q)
-        test_vis, _ = visibility_query.compute_visibility_batch([cand])
+        test_vis, _ = visibility_query.compute_visibility(cand)
         visible = test_vis.get(0, np.array([], dtype=np.int64))
         if len(visible) > 0:
             new_cov = int(uncovered_mask_gpu[cp.asarray(visible)].sum())
