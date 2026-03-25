@@ -1,1 +1,1 @@
-from .base import ViewpointSampler
+from .samplers import ViewpointSamplerBase, UniformViewpointSampler, TargetedViewpointSampler, DEViewpointSampler

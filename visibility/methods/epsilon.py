@@ -7,7 +7,10 @@ from typing import Tuple, Optional
 
 from ..core.types import FrustumParams, EpsilonHyperparams
 from ..core.base import VisibilityQuery
-from ..core.constants import NORM_EPS, DELTA_AGG_FUNCS, GAMMA_AGG_FUNCS
+from ..core.constants import (
+    NORM_EPS, DELTA_AGG_FUNCS, GAMMA_AGG_FUNCS,
+    DELTA_DEFAULT, DELTA_SAMPLE_SIZE, GAMMA_FALLBACK_DIVISOR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,28 +19,22 @@ class EpsilonVisibilityQuery(VisibilityQuery):
     """
     Epsilon-visibility based on Lien's paper.
 
-    Implements:
-    1. Epsilon estimation (Lemma 6.1).
-    2. Epsilon-based occlusion via radial partitioning (Algorithm 5.1).
+    Implements epsilon-based occlusion via radial partitioning (Algorithm 5.1).
     """
 
     def __init__(self, target_points: np.ndarray,
                  normals: np.ndarray, frustum_params: FrustumParams,
                  epsilon_deg: Optional[float] = None,
-                 hyperparams: Optional[EpsilonHyperparams] = None):
+                 hyperparams: EpsilonHyperparams = EpsilonHyperparams()):
         super().__init__(target_points, normals, frustum_params)
-        self.hp = hyperparams or EpsilonHyperparams()
-
-        self.pcd = o3d.geometry.PointCloud()
-        self.pcd.points = o3d.utility.Vector3dVector(target_points)
-        self.pcd.normals = o3d.utility.Vector3dVector(normals)
+        self.hp = hyperparams
 
         if epsilon_deg is not None:
             logger.info("Using provided epsilon: %s degrees", epsilon_deg)
             self.fixed_epsilon = np.deg2rad(epsilon_deg)
             self.delta = None
             logger.info("Using Epsilon (radians): %.6f (%.3f degrees)",
-                        self.fixed_epsilon, np.rad2deg(self.fixed_epsilon))
+                        self.fixed_epsilon, epsilon_deg))
         else:
             logger.info("Epsilon not provided, estimating δ from point set...")
             self.fixed_epsilon = None
@@ -45,10 +42,10 @@ class EpsilonVisibilityQuery(VisibilityQuery):
             logger.info("Estimated δ (sampling density): %.6f", self.delta)
 
     def _estimate_delta(self):
-        """Estimate sampling density δ (Lemma 6.1): aggregation of k-neighbor distances."""
-        sample_size = min(1000, self.num_points)
+        """Estimate sampling density δ: aggregation of k-neighbor distances."""
+        sample_size = min(DELTA_SAMPLE_SIZE, self.num_points)
         if sample_size == 0:
-            return 0.1
+            return DELTA_DEFAULT
 
         sample_indices = np.random.choice(self.num_points, sample_size, replace=False)
         agg_func = DELTA_AGG_FUNCS[self.hp.delta_agg]
@@ -59,21 +56,21 @@ class EpsilonVisibilityQuery(VisibilityQuery):
             if len(dists) > 1:
                 distances.append(agg_func(dists[1:]))
 
-        return agg_func(distances) if distances else 0.1
+        return agg_func(distances) if distances else DELTA_DEFAULT
 
     def _compute_epsilon(self, distances, front_facing):
-        """Compute per-viewpoint ε = 2·arctan(δ/(4γ)) where γ = aggregated viewing distance."""
+        """Compute per-viewpoint ε = 2·arctan(δ/(4γ)) where γ = characteristic viewing distance."""
         front_distances = distances[front_facing]
         gamma_func = GAMMA_AGG_FUNCS[self.hp.gamma_method]
         if len(front_distances) == 0:
-            gamma = self.frustum_params.far / 4.0
+            gamma = self.frustum_params.far / GAMMA_FALLBACK_DIVISOR
         else:
             gamma = float(gamma_func(front_distances))
         gamma = max(gamma, 1e-6)
         return 2.0 * np.arctan(self.delta / (4.0 * gamma)) * self.hp.epsilon_scale
 
     def compute_visibility(self, viewpoint, orientation):
-        """Compute epsilon-visible region using back-face and occlusion checks."""
+        """Compute epsilon-visible points using back-face and occlusion checks."""
         start = get_time()
 
         frustum_indices = self.points_in_frustum_with_kdtree(viewpoint, orientation)
@@ -123,18 +120,21 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         if epsilon < 1e-6:
             epsilon = 1e-6
 
-        relative = points - viewpoint
-        distances = norm(relative, axis=1)
+        relative_vectors = points - viewpoint
+        distances = norm(relative_vectors, axis=1)
 
-        # Spherical binning
-        num_bins_theta = max(1, int(np.ceil(2 * np.pi / epsilon)))
-        num_bins_phi = max(1, int(np.ceil(np.pi / epsilon)))
+        # Spherical binning — scoped to frustum culled target points angular extents
+        theta = np.arctan2(relative_vectors[:, 1], relative_vectors[:, 0])
+        phi = np.arcsin(np.clip(relative_vectors[:, 2] / (distances + NORM_EPS), -1, 1))
 
-        theta = np.arctan2(relative[:, 1], relative[:, 0])
-        phi = np.arcsin(np.clip(relative[:, 2] / (distances + NORM_EPS), -1, 1))
+        theta_min, theta_max = float(theta.min()), float(theta.max())
+        phi_min, phi_max = float(phi.min()), float(phi.max())
 
-        theta_bins = ((theta + np.pi) / (2 * np.pi) * num_bins_theta).astype(int) % num_bins_theta
-        phi_bins = ((phi + np.pi / 2) / np.pi * num_bins_phi).astype(int) % num_bins_phi
+        num_bins_theta = max(1, int(np.ceil((theta_max - theta_min + epsilon) / epsilon)))
+        num_bins_phi = max(1, int(np.ceil((phi_max - phi_min + epsilon) / epsilon)))
+
+        theta_bins = np.clip(((theta - theta_min) / epsilon).astype(int), 0, num_bins_theta - 1)
+        phi_bins = np.clip(((phi - phi_min) / epsilon).astype(int), 0, num_bins_phi - 1)
 
         occluder_bins = {}
 

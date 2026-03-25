@@ -1,5 +1,6 @@
 """Constants for the visibility package."""
 
+import cupy as cp
 import numpy as np
 
 # Numerical stability
@@ -34,12 +35,24 @@ DE_POPSIZE = 15       # scipy multiplier (actual pop = DE_POPSIZE * n_dims = 90)
 DE_MAXITER = 20       # max generations per DE run
 DE_TRAVEL_WEIGHT = 0.1  # weight of travel cost vs coverage in DE objective
 
+# Epsilon-visibility estimation
+DELTA_DEFAULT = 0.1           # fallback sampling density when estimation fails
+DELTA_SAMPLE_SIZE = 1000      # max points sampled for delta estimation
+GAMMA_FALLBACK_DIVISOR = 4.0  # gamma = frustum_far / this when no front-facing points
+
 # Epsilon-visibility aggregation functions
 DELTA_AGG_FUNCS = {
     "max": np.max,
     "p99": lambda x: np.percentile(x, 99),
     "p95": lambda x: np.percentile(x, 95),
     "p90": lambda x: np.percentile(x, 90),
+}
+
+DELTA_AGG_FUNCS_CP = {
+    "max": cp.max,
+    "p99": lambda x, **kw: cp.percentile(x, 99, **kw),
+    "p95": lambda x, **kw: cp.percentile(x, 95, **kw),
+    "p90": lambda x, **kw: cp.percentile(x, 90, **kw),
 }
 
 GAMMA_AGG_FUNCS = {
@@ -52,4 +65,16 @@ GAMMA_AGG_FUNCS = {
     "p60": lambda x: np.percentile(x, 60),
     "p75": lambda x: np.percentile(x, 75),
     "p90": lambda x: np.percentile(x, 90),
+}
+
+GAMMA_AGG_FUNCS_CP = {
+    "median": cp.median,
+    "mean": cp.mean,
+    "p10": lambda x: float(cp.percentile(x, 10)),
+    "p25": lambda x: float(cp.percentile(x, 25)),
+    "p30": lambda x: float(cp.percentile(x, 30)),
+    "p40": lambda x: float(cp.percentile(x, 40)),
+    "p60": lambda x: float(cp.percentile(x, 60)),
+    "p75": lambda x: float(cp.percentile(x, 75)),
+    "p90": lambda x: float(cp.percentile(x, 90)),
 }

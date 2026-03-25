@@ -2,7 +2,7 @@
 
 import cupy as cp
 
-from ..core.constants import NORM_EPS, GPU_NN_CHUNK_SIZE, CURVATURE_KNN_K
+from ...core.constants import NORM_EPS, GPU_NN_CHUNK_SIZE, CURVATURE_KNN_K
 
 
 def compute_local_curvature(query_gpu, targets_gpu, normals_gpu,

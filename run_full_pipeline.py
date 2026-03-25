@@ -266,9 +266,9 @@ def main() -> None:
         logger.info("  Targeted resampling: ENABLED (fraction=%.2f, strategy=%s)",
                     args.resample_fraction, args.resampling_strategy)
 
-    from visibility.sampling import ViewpointSampler
+    from visibility.sampling import UniformViewpointSampler, TargetedViewpointSampler, DEViewpointSampler
 
-    sampler = ViewpointSampler(
+    sampler = TargetedViewpointSampler(
         mesh=o3d_mesh,
         target_points=target_points,
         normals=normals,
@@ -306,17 +306,56 @@ def main() -> None:
     optimizer = LazyGreedyOptimizer(raycast_query)
 
     if args.resample_fraction > 0:
-        # Sampler handles initial sampling + targeted resampling
-        logger.info("[3–5/9] Sampling + resampling + greedy (%d candidates, %.0f%% targeted) …",
-                    args.num_candidates, args.resample_fraction * 100)
-        candidates, vis_map = sampler.sample_with_resampling(
-            num_candidates=args.num_candidates,
-            visibility_query=raycast_query,
-            target_coverage=args.target_coverage,
-            curvature_weighting=args.curvature_weighting,
-            resample_fraction=args.resample_fraction,
-            strategy=args.resampling_strategy,
-        )
+        import cupy as _cp
+
+        n_targeted = int(args.num_candidates * args.resample_fraction)
+        n_uniform = args.num_candidates - n_targeted
+
+        # Phase 1: uniform sampling
+        logger.info("[3–5/9] Sampling %d uniform + %d targeted (%s) …",
+                    n_uniform, n_targeted, args.resampling_strategy)
+        candidates = sampler.sample(
+            n_uniform, side="outside",
+            curvature_weighting=args.curvature_weighting)
+        vis_map, _ = raycast_query.compute_visibility_batch(candidates)
+
+        # Phase 2: identify uncovered points
+        covered = set()
+        for vis_indices in vis_map.values():
+            covered.update(vis_indices.tolist())
+        uncovered = np.array(sorted(set(range(raycast_query.num_points)) - covered))
+
+        if len(uncovered) > 0 and n_targeted > 0:
+            if args.resampling_strategy == "optimal":
+                # DE-based iterative optimization
+                de_sampler = DEViewpointSampler(
+                    mesh=o3d_mesh, target_points=target_points,
+                    normals=normals, frustum_far=args.frustum_far,
+                    collision_radius=_vrp_cfg.ROBOT_RADIUS,
+                    occupancy_grid=sampling_og,
+                )
+                uncovered_mask = _cp.zeros(raycast_query.num_points, dtype=_cp.bool_)
+                uncovered_mask[_cp.asarray(uncovered)] = True
+                de_cands = de_sampler.sample_de(
+                    n_targeted, uncovered_mask, raycast_query,
+                    existing_candidates=candidates)
+                new_vis, _ = raycast_query.compute_visibility_batch(de_cands)
+                offset = len(candidates)
+                for k, v in new_vis.items():
+                    vis_map[k + offset] = v
+                candidates.extend(de_cands)
+            else:
+                # Random targeted sampling
+                targeted_cands = sampler.sample_targeted(
+                    uncovered, n_targeted, side="outside",
+                    curvature_weighting=args.curvature_weighting)
+                if targeted_cands:
+                    new_vis, _ = raycast_query.compute_visibility_batch(targeted_cands)
+                    offset = len(candidates)
+                    for k, v in new_vis.items():
+                        vis_map[k + offset] = v
+                    candidates.extend(targeted_cands)
+
         logger.info("  Total candidates after resampling: %d", len(candidates))
         opt_result: OptimizationResult = optimizer.optimize(
             candidates=candidates,
@@ -326,8 +365,9 @@ def main() -> None:
         )
     else:
         # Original flow: sample → greedy computes visibility internally
-        candidates = sampler.sample_outside_mesh(
+        candidates = sampler.sample(
             num_candidates=args.num_candidates,
+            side="outside",
             curvature_weighting=args.curvature_weighting,
         )
         logger.info("  Generated %d candidates.", len(candidates))

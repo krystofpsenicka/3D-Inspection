@@ -17,7 +17,7 @@ import cupy as cp
 import open3d as o3d
 
 from visibility.core import FrustumParams, orient_normals_outward
-from visibility.sampling import ViewpointSampler
+from visibility.sampling import TargetedViewpointSampler, DEViewpointSampler
 from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
 from visibility.visualization import Visualizer
 
@@ -90,7 +90,7 @@ def main():
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
     # --- Build sampler and get feasible data ---
-    sampler = ViewpointSampler(
+    sampler = TargetedViewpointSampler(
         mesh, target_points, normals, frustum_params.far,
         collision_radius=args.collision_radius,
     )
@@ -120,14 +120,10 @@ def main():
         # --- Normal / Curvature: sample and show all VPs (Window 2) ---
         print(f"\nSampling {args.num_viewpoints} viewpoints from {args.side} "
               f"(mode={args.mode})...")
-        if args.side == "outside":
-            candidates = sampler.sample_outside_mesh(
-                num_candidates=args.num_viewpoints,
-                curvature_weighting=curvature_weighting)
-        else:
-            candidates = sampler.sample_inside_mesh(
-                num_candidates=args.num_viewpoints,
-                curvature_weighting=curvature_weighting)
+        candidates = sampler.sample(
+            num_candidates=args.num_viewpoints,
+            side=args.side,
+            curvature_weighting=curvature_weighting)
 
         if not candidates:
             print("No valid viewpoints sampled — skipping visibility visualization.")
@@ -151,10 +147,7 @@ def main():
 
         # Phase 1: sample normal candidates
         print(f"  Sampling {n_normal} normal viewpoints from {args.side}...")
-        if args.side == "outside":
-            normal_candidates = sampler.sample_outside_mesh(num_candidates=n_normal)
-        else:
-            normal_candidates = sampler.sample_inside_mesh(num_candidates=n_normal)
+        normal_candidates = sampler.sample(num_candidates=n_normal, side=args.side)
 
         if not normal_candidates:
             print("No valid normal viewpoints sampled — aborting.")
@@ -180,62 +173,29 @@ def main():
             return
 
         if args.resampling_strategy == "optimal":
-            from visibility.sampling.targeted import optimize_viewpoint_de
+            # Build uncovered mask for DE
+            uncovered_mask = cp.zeros(len(target_points), dtype=cp.bool_)
+            uncovered_mask[cp.asarray(uncovered_indices)] = True
 
-            # Get feasible bounds from sampler's cached data
-            cache_attr = f"_feasible_{args.side}"
-            centers_gpu, _, _ = getattr(sampler, cache_attr)
-            centers = cp.asnumpy(centers_gpu)
-            feasible_bounds = list(zip(centers.min(axis=0).tolist(),
-                                       centers.max(axis=0).tolist()))
-
-            targeted_candidates = []
-            targeted_vis_map = {}
-            # Track combined coverage across normal + targeted
-            all_existing = list(normal_candidates)
-            combined_vis = dict(normal_vis_map)
-
-            for round_i in range(n_targeted):
-                # Build uncovered mask
-                covered_mask = cp.zeros(len(target_points), dtype=cp.bool_)
-                for vis_indices in combined_vis.values():
-                    if len(vis_indices) > 0:
-                        covered_mask[cp.asarray(vis_indices)] = True
-                uncovered_mask = ~covered_mask
-                coverage = float(covered_mask.sum()) / len(target_points)
-
-                n_uncov = int(uncovered_mask.sum())
-                print(f"\n  [DE Round {round_i+1}/{n_targeted}] "
-                      f"Coverage={coverage*100:.1f}%, {n_uncov} uncovered — running DE...")
-
-                best_cand, score = optimize_viewpoint_de(
-                    feasible_bounds, uncovered_mask, vis_query,
-                    sampler._is_free, existing_candidates=all_existing,
-                    verbose=True)
-
-                if score == 0:
-                    print(f"  DE found no useful viewpoint — stopping.")
-                    break
-
-                # Compute visibility and store separately for visualization
-                new_vis, _ = vis_query.compute_visibility_batch([best_cand])
-                targeted_vis_map[len(targeted_candidates)] = new_vis.get(
-                    0, np.array([], dtype=np.int64))
-                targeted_candidates.append(best_cand)
-
-                # Merge into combined tracking
-                offset = len(all_existing)
-                combined_vis[offset] = new_vis.get(0, np.array([], dtype=np.int64))
-                all_existing.append(best_cand)
-
-                print(f"  [DE Round {round_i+1}/{n_targeted}] "
-                      f"Found VP covering {score} uncovered pts.")
+            de_sampler = DEViewpointSampler(
+                mesh, target_points, normals, frustum_params.far,
+                collision_radius=args.collision_radius,
+            )
+            targeted_candidates = de_sampler.sample_de(
+                n_targeted, uncovered_mask, vis_query,
+                existing_candidates=normal_candidates,
+                side=args.side, verbose=True)
 
             if not targeted_candidates:
                 print("  No valid targeted viewpoints found via DE.")
                 visualizer.visualize_all_visibility_results(
                     normal_vis_map, normal_candidates)
                 return
+
+            targeted_vis_map = {}
+            targeted_vis_all, _ = vis_query.compute_visibility_batch(targeted_candidates)
+            for k, v in targeted_vis_all.items():
+                targeted_vis_map[k] = v
 
         else:
             # Random proximity-weighted targeted sampling

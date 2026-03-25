@@ -8,27 +8,17 @@ from typing import Optional
 
 from ..core.types import FrustumParams, EpsilonHyperparams
 from ..core.base_cuda import VisibilityQueryCuda
-from ..core.constants import NORM_EPS, CUDA_BLOCK_SIZE, DELTA_AGG_FUNCS
+from ..core.constants import (
+    NORM_EPS, CUDA_BLOCK_SIZE, DELTA_AGG_FUNCS_CP, GAMMA_AGG_FUNCS_CP,
+    DELTA_DEFAULT, DELTA_SAMPLE_SIZE, GAMMA_FALLBACK_DIVISOR,
+)
 
 logger = logging.getLogger(__name__)
-
-_GAMMA_AGG_FUNCS_CP = {
-    "median": cp.median,
-    "mean": cp.mean,
-    "p10": lambda x: float(cp.percentile(x, 10)),
-    "p25": lambda x: float(cp.percentile(x, 25)),
-    "p30": lambda x: float(cp.percentile(x, 30)),
-    "p40": lambda x: float(cp.percentile(x, 40)),
-    "p60": lambda x: float(cp.percentile(x, 60)),
-    "p75": lambda x: float(cp.percentile(x, 75)),
-    "p90": lambda x: float(cp.percentile(x, 90)),
-}
-
 
 # CUDA kernel for scatter-min of occluder distances into angular bins.
 # Uses the int-reinterpret trick: positive floats preserve ordering when
 # viewed as unsigned ints, so atomicMin on the int representation gives
-# the correct minimum float value.
+# the minimum float.
 _SCATTER_MIN_KERNEL = cp.RawKernel(r'''
 extern "C" __global__
 void scatter_min_occluders(
@@ -91,7 +81,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             self.fixed_epsilon = np.deg2rad(epsilon_deg)
             self.delta = None
             logger.info("Using Epsilon (radians): %.6f (%.3f degrees)",
-                        self.fixed_epsilon, np.rad2deg(self.fixed_epsilon))
+                        self.fixed_epsilon, epsilon_deg)
         else:
             logger.info("Epsilon not provided, estimating δ from point set...")
             self.fixed_epsilon = None
@@ -100,49 +90,40 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
 
     def _estimate_delta(self):
         """Estimate sampling density δ (Lemma 6.1): GPU brute-force k-NN."""
-        sample_size = min(1000, self.num_points)
+        sample_size = min(DELTA_SAMPLE_SIZE, self.num_points)
         if sample_size == 0:
-            return 0.1
+            return DELTA_DEFAULT
 
         k = self.hp.delta_k
-        agg_func = DELTA_AGG_FUNCS[self.hp.delta_agg]
+        agg_func = DELTA_AGG_FUNCS_CP[self.hp.delta_agg]
 
         sample_indices = cp.random.choice(self.num_points, sample_size, replace=False)
         sample_points = self.gpu_points[sample_indices]  # (S, 3)
 
-        # Precompute squared norms of all target points
+        # Squared-distance matrix: (S, N)
         all_sq = cp.sum(self.gpu_points ** 2, axis=1)  # (N,)
+        sample_sq = cp.sum(sample_points ** 2, axis=1, keepdims=True)  # (S, 1)
+        # Compute pairwise squared distances: ||p - q||^2 = ||p||^2 + ||q||^2 - 2p·q
+        sq_dists = sample_sq + all_sq[None, :] - 2.0 * sample_points @ self.gpu_points.T
+        cp.maximum(sq_dists, 0.0, out=sq_dists)
 
-        chunk_size = 100
-        per_point_agg = []
+        # Exclude self-distances by setting them to +INF
+        sq_dists[cp.arange(sample_size), sample_indices] = cp.inf
+        k = min(k, sq_dists.shape[1] - 1)
+        # Get k smallest distances for each sample point
+        topk_sq = cp.partition(sq_dists, k - 1, axis=1)[:, :k]
+        knn_dists = cp.sqrt(topk_sq)  # (S, k)
 
-        for start in range(0, sample_size, chunk_size):
-            chunk = sample_points[start:start + chunk_size]  # (C, 3)
-            # ||a-b||^2 = ||a||^2 + ||b||^2 - 2*a.b
-            chunk_sq = cp.sum(chunk ** 2, axis=1, keepdims=True)  # (C, 1)
-            dot = chunk @ self.gpu_points.T  # (C, N)
-            sq_dists = chunk_sq + all_sq[None, :] - 2.0 * dot  # (C, N)
-            sq_dists = cp.maximum(sq_dists, 0.0)
-
-            # Find k+1 smallest distances per row (including self ~0)
-            kp1 = min(k + 1, sq_dists.shape[1])
-            topk_sq = cp.partition(sq_dists, kp1 - 1, axis=1)[:, :kp1]
-            topk_sq_sorted = cp.sort(topk_sq, axis=1)
-            knn_dists = cp.sqrt(topk_sq_sorted[:, 1:])  # (C, k) exclude self
-
-            knn_cpu = knn_dists.get()
-            for row in knn_cpu:
-                if len(row) > 0:
-                    per_point_agg.append(agg_func(row))
-
-        return float(agg_func(per_point_agg)) if per_point_agg else 0.1
+        # Row-wise then global aggregation
+        row_agg = agg_func(knn_dists, axis=1)  # (S,)
+        return float(agg_func(row_agg))
 
     def _compute_epsilon_gpu(self, distances_gpu, front_facing_gpu):
         """Compute per-viewpoint ε = 2·arctan(δ/(4γ)) where γ = aggregated viewing distance."""
         front_distances = distances_gpu[front_facing_gpu]
-        gamma_func = _GAMMA_AGG_FUNCS_CP[self.hp.gamma_method]
+        gamma_func = GAMMA_AGG_FUNCS_CP[self.hp.gamma_method]
         if len(front_distances) == 0:
-            gamma = self.frustum_params.far / 4.0
+            gamma = self.frustum_params.far / GAMMA_FALLBACK_DIVISOR
         else:
             gamma = float(gamma_func(front_distances))
         gamma = max(gamma, 1e-6)
@@ -205,15 +186,18 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         relative = points_gpu - viewpoint_gpu
         distances = cp.linalg.norm(relative, axis=1)
 
-        # Spherical binning
-        num_bins_theta = max(1, int(np.ceil(2 * np.pi / epsilon)))
-        num_bins_phi = max(1, int(np.ceil(np.pi / epsilon)))
-
+        # Spherical binning — scoped to frustum culled target points angular extents
         theta = cp.arctan2(relative[:, 1], relative[:, 0])
         phi = cp.arcsin(cp.clip(relative[:, 2] / (distances + NORM_EPS), -1, 1))
 
-        theta_bins = ((theta + np.pi) / (2 * np.pi) * num_bins_theta).astype(cp.int32) % num_bins_theta
-        phi_bins = ((phi + np.pi / 2) / np.pi * num_bins_phi).astype(cp.int32) % num_bins_phi
+        theta_min, theta_max = float(theta.min()), float(theta.max())
+        phi_min, phi_max = float(phi.min()), float(phi.max())
+
+        num_bins_theta = max(1, int(np.ceil((theta_max - theta_min + epsilon) / epsilon)))
+        num_bins_phi = max(1, int(np.ceil((phi_max - phi_min + epsilon) / epsilon)))
+
+        theta_bins = cp.clip(((theta - theta_min) / epsilon).astype(cp.int32), 0, num_bins_theta - 1)
+        phi_bins = cp.clip(((phi - phi_min) / epsilon).astype(cp.int32), 0, num_bins_phi - 1)
 
         num_bins = num_bins_theta * num_bins_phi
 

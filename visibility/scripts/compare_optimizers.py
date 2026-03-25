@@ -10,7 +10,7 @@ from typing import Dict, Any
 import matplotlib.pyplot as plt
 
 from visibility.core.types import FrustumParams, OptimizationResult
-from visibility.sampling import ViewpointSampler
+from visibility.sampling import UniformViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.optimizers.greedy import GreedyOptimizer
@@ -174,10 +174,10 @@ def run_comparison_pipeline():
     )
 
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
-    candidates = sampler.sample_outside_mesh(num_candidates=NUM_CANDIDATE_VPs)
+    candidates = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
 
     # Initialize Epsilon query (used by both optimizers)
     visibility_query_epsilon = EpsilonVisibilityQuery(

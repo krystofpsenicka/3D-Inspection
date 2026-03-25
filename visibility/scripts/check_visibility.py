@@ -11,7 +11,7 @@ import open3d as o3d
 from time import time as get_time
 
 from visibility.core import FrustumParams, orient_normals_outward
-from visibility.sampling import ViewpointSampler
+from visibility.sampling import UniformViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
@@ -63,11 +63,8 @@ def main():
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
     # --- Viewpoints ---
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    if args.side == "outside":
-        viewpoints = sampler.sample_outside_mesh(num_candidates=args.num_viewpoints)
-    else:
-        viewpoints = sampler.sample_inside_mesh(num_candidates=args.num_viewpoints)
+    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    viewpoints = sampler.sample(num_candidates=args.num_viewpoints, side=args.side)
         
     # --- Query ---
     match args.method:

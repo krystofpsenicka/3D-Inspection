@@ -38,11 +38,11 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 - [ ] 23. `tests/test_sampling.py` (228 lines)
 
 ### Visibility methods (CPU then GPU for each)
-- [ ] 24. `visibility/methods/raycast.py` (62 lines) — CPU raycast
-- [ ] 25. `visibility/methods/raycast_cuda.py` (85 lines) — GPU raycast
-- [ ] 26. `visibility/methods/epsilon.py` (202 lines) — CPU epsilon
-- [ ] 27. `visibility/methods/epsilon_cuda.py` (239 lines) — GPU epsilon
-- [ ] 28. `visibility/methods/__init__.py` (4 lines)
+- [ x ] 24. `visibility/methods/raycast.py` (62 lines) — CPU raycast
+- [ x ] 25. `visibility/methods/raycast_cuda.py` (85 lines) — GPU raycast
+- [ x ] 26. `visibility/methods/epsilon.py` (202 lines) — CPU epsilon
+- [ x ] 27. `visibility/methods/epsilon_cuda.py` (239 lines) — GPU epsilon
+- [ x ] 28. `visibility/methods/__init__.py` (4 lines)
 
 ### Optimizers (read CPU/GPU pairs together)
 - [ ] 29. `visibility/optimizers/greedy.py` (117 lines) — CPU greedy set-cover

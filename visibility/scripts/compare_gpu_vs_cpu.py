@@ -14,7 +14,7 @@ from time import time as get_time
 from typing import List, Tuple
 
 from visibility.core.types import FrustumParams
-from visibility.sampling import ViewpointSampler
+from visibility.sampling import UniformViewpointSampler
 from visibility.core import orient_normals_outward
 
 # CPU methods
@@ -184,8 +184,8 @@ def main():
           f"mesh with {len(np.asarray(mesh.triangles))} triangles")
 
     # Generate candidate viewpoints
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    candidates = sampler.sample_outside_mesh(num_candidates=NUM_CANDIDATE_VPs)
+    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    candidates = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
 
     # =====================================================================
     # Initialize queries

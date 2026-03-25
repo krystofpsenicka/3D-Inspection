@@ -12,7 +12,7 @@ from time import time as get_time
 
 from visibility.core import FrustumParams, orient_normals_outward, get_frustum_basis_from_quaternion
 from shared.geometry import quaternion_to_forward
-from visibility.sampling import ViewpointSampler
+from visibility.sampling import UniformViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
@@ -132,8 +132,8 @@ def main():
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
     # --- Viewpoints ---
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    viewpoints = sampler.sample_outside_mesh(num_candidates=args.num_viewpoints)
+    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    viewpoints = sampler.sample(num_candidates=args.num_viewpoints, side="outside")
 
     # --- Instantiate both queries ---
     gt_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)

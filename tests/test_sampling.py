@@ -5,9 +5,8 @@ import pytest
 
 cp = pytest.importorskip("cupy")
 
-from visibility.sampling.base import ViewpointSampler
-from visibility.sampling.curvature import compute_local_curvature
-from visibility.sampling.targeted import optimize_viewpoint_de
+from visibility.sampling.utils.curvature import compute_local_curvature
+from visibility.sampling.utils.direction import apply_angular_noise, knn_centroid_direction
 
 
 class TestComputeLocalCurvature:
@@ -53,7 +52,7 @@ class TestApplyAngularNoise:
         dirs = cp.random.randn(n, 3).astype(cp.float32)
         dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
 
-        rotated = ViewpointSampler._apply_angular_noise(dirs, max_angle)
+        rotated = apply_angular_noise(dirs, max_angle)
 
         # Angle between original and rotated
         cos_sim = cp.clip(cp.sum(dirs * rotated, axis=1), -1.0, 1.0)
@@ -68,7 +67,7 @@ class TestApplyAngularNoise:
         dirs = cp.random.randn(100, 3).astype(cp.float32)
         dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
 
-        rotated = ViewpointSampler._apply_angular_noise(dirs, 0.5)
+        rotated = apply_angular_noise(dirs, 0.5)
         norms = cp.linalg.norm(rotated, axis=1)
         assert cp.allclose(norms, 1.0, atol=1e-5)
 
@@ -77,7 +76,7 @@ class TestApplyAngularNoise:
         dirs = cp.random.randn(50, 3).astype(cp.float32)
         dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
 
-        rotated = ViewpointSampler._apply_angular_noise(dirs, 0.0)
+        rotated = apply_angular_noise(dirs, 0.0)
         assert cp.allclose(dirs, rotated, atol=1e-7)
 
 
@@ -95,14 +94,8 @@ class TestKnnCentroidDirection:
             rng.randn(10, 3).astype(np.float32) * 0.5,  # small cluster near origin
         ])
         targets = cp.asarray(targets, dtype=cp.float32)
-        n_targets = len(targets)
 
-        # Create a minimal mock with normals attribute (unused when curvature_weighting=False)
-        mock_self = type("Obj", (), {"normals": np.zeros((n_targets, 3), dtype=np.float32)})()
-
-        dirs = ViewpointSampler._knn_centroid_direction(
-            mock_self, query, targets, k=5, curvature_weighting=False,
-        )
+        dirs = knn_centroid_direction(query, targets, k=5)
         d = cp.asnumpy(dirs[0])
         # Should point toward negative x
         assert d[0] < -0.9, f"Expected direction toward -x, got {d}"

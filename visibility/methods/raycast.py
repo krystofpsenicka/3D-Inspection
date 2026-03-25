@@ -14,8 +14,7 @@ logger = logging.getLogger(__name__)
 
 class RaycastingVisibilityQuery(VisibilityQuery):
     """
-    Implements ground-truth visibility using Open3D's RaycastingScene (BVH).
-    This method checks for line-of-sight occlusion between a viewpoint and target points.
+    Implements ground-truth visibility using Open3D's RaycastingScene.
     """
 
     def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
@@ -24,12 +23,12 @@ class RaycastingVisibilityQuery(VisibilityQuery):
 
         self.scene = o3d.t.geometry.RaycastingScene()
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-        logger.info("[RaycastingQuery] Initialized O3D RaycastingScene (BVH) for occlusion checks.")
+        logger.info("[RaycastingQuery] Initialized O3D RaycastingScene for occlusion checks.")
 
     def compute_visibility(self, viewpoint: np.ndarray, orientation: np.ndarray) -> Tuple[np.ndarray, float]:
         """
-        Checks visibility using the RaycastingScene: a ray is cast from the
-        viewpoint to each target point. If the ray hits the mesh *before* it
+        Checks visibility using the RaycastingScene: we cast a ray from the
+        viewpoint to each target point. If the ray hits anything *before* it
         hits the target point, the target is occluded.
         """
         start = get_time()

@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Tuple
 import matplotlib.pyplot as plt
 
 from visibility.core.types import FrustumParams, ViewpointResult, OptimizationResult
-from visibility.sampling import ViewpointSampler
+from visibility.sampling import UniformViewpointSampler
 from visibility.core import orient_normals_outward
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
@@ -209,10 +209,10 @@ def run_comparison_pipeline():
     )
 
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
-    sampler = ViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
-    candidates = sampler.sample_outside_mesh(num_candidates=NUM_CANDIDATE_VPs)
+    candidates = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
 
     start_time_rc_init = get_time()
     visibility_query_raycast = RaycastingVisibilityQuery(
