@@ -17,20 +17,13 @@ from ..core.constants import (
 
 logger = logging.getLogger(__name__)
 
-try:
-    import cupy as cp
-    _CUPY_AVAILABLE = True
-except ImportError:
-    _CUPY_AVAILABLE = False
-
-
 class ViewpointSampler:
     """
     Generates candidate viewpoints for 3D inspection (GPU-only).
 
-    Requires an occupancy grid and CuPy.  Uses the occupancy grid to
-    identify collision-free voxels, then samples with distance² weighting
-    and sub-voxel jitter.  A precomputed EDT-based SDF grid provides O(1)
+    Requires an occupancy grid to identify collision-free voxels, 
+    then samples with distance² weighting and sub-voxel jitter.  
+    A precomputed EDT-based SDF grid provides O(1)
     signed-distance lookups on GPU.
     """
 
@@ -70,12 +63,6 @@ class ViewpointSampler:
         self.scene = o3d.t.geometry.RaycastingScene()
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
         logger.info("[ViewpointSampler] Created O3D RaycastingScene.")
-
-        # ── GPU setup ─────────────────────────────────────────────────────
-        if not _CUPY_AVAILABLE:
-            raise RuntimeError(
-                "ViewpointSampler requires CuPy for GPU-accelerated sampling."
-            )
 
         # Auto-build OG when none provided
         if occupancy_grid is None:
