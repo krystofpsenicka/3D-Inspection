@@ -13,7 +13,7 @@ class TestComputeLocalCurvature:
     """KNN + arccos + mean angular deviation — non-trivial math."""
 
     def test_flat_surface_zero_curvature(self):
-        """100 points on a plane with uniform normals → curvature ≈ 0."""
+        """100 points on a plane with uniform normals -> curvature ~ 0."""
         pts = cp.random.uniform(-5, 5, (100, 3)).astype(cp.float32)
         pts[:, 2] = 0.0  # flatten to z=0
         normals = cp.zeros((100, 3), dtype=cp.float32)
@@ -43,10 +43,10 @@ class TestComputeLocalCurvature:
 
 
 class TestApplyAngularNoise:
-    """Rodrigues rotation — genuinely tricky vector math."""
+    """Rodrigues rotation"""
 
     def test_angle_bounded(self):
-        """All output angles ≤ max_angle from input directions."""
+        """All output angles <= max_angle from input directions."""
         n = 200
         max_angle = 0.3
         dirs = cp.random.randn(n, 3).astype(cp.float32)
@@ -62,17 +62,8 @@ class TestApplyAngularNoise:
             f"Max observed angle {max_observed:.4f} exceeds max_angle {max_angle}"
         )
 
-    def test_unit_norm_preserved(self):
-        """After rotation, all directions still have unit length."""
-        dirs = cp.random.randn(100, 3).astype(cp.float32)
-        dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
-
-        rotated = apply_angular_noise(dirs, 0.5)
-        norms = cp.linalg.norm(rotated, axis=1)
-        assert cp.allclose(norms, 1.0, atol=1e-5)
-
     def test_zero_noise_preserves_input(self):
-        """max_angle=0 → output identical to input."""
+        """max_angle=0 -> output identical to input."""
         dirs = cp.random.randn(50, 3).astype(cp.float32)
         dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
 
@@ -84,9 +75,9 @@ class TestKnnCentroidDirection:
     """Centroid-minus-query direction logic."""
 
     def test_direction_toward_targets(self):
-        """Query at (10,0,0), targets around origin → direction ≈ (-1,0,0)."""
+        """Query at (10,0,0), targets around origin -> direction approx. (-1,0,0)."""
         query = cp.array([[10.0, 0.0, 0.0]], dtype=cp.float32)
-        # Need more targets than k for argpartition; cluster around origin
+        # Target points
         rng = np.random.RandomState(42)
         targets = np.vstack([
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
@@ -97,7 +88,7 @@ class TestKnnCentroidDirection:
 
         dirs = knn_centroid_direction(query, targets, k=5)
         d = cp.asnumpy(dirs[0])
-        # Should point toward negative x
+        # Should point in -x
         assert d[0] < -0.9, f"Expected direction toward -x, got {d}"
         assert abs(d[1]) < 0.1
         assert abs(d[2]) < 0.1

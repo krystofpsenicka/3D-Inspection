@@ -86,7 +86,7 @@ class GreedyOptimizer:
             full_visible = initial_visibility_map[best_candidate_idx]
             selected_viewpoints.append(ViewpointResult(
                 position=np.asarray(best_vp),
-                orientation=np.asarray(best_orient),
+                orientation=best_orient,
                 visible_indices=np.asarray(full_visible),
                 coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,

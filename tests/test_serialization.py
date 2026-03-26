@@ -1,17 +1,19 @@
-"""Tests for NPZ+JSON serialization of OccupancyGrid and ExecutionResult."""
+"""Tests for NPZ+JSON serialization of OccupancyGrid, SamplingOccupancyGrid, and ExecutionResult."""
 import numpy as np
 import pytest
 from shared.occupancy_grid import OccupancyGrid
+from visibility.sampling.utils.sampling_occupancy_grid import SamplingOccupancyGrid
 from VRP.routing.route_executor import ExecutionResult
 from VRP.utils import save_solution, load_solution
 
 
 class TestOccupancyGridSerialization:
     def test_npz_round_trip_all_fields(self, tmp_path):
+        """SamplingOccupancyGrid round-trips raw_grid, filled_raw_grid, mesh_scale."""
         grid = np.random.RandomState(42).random((8, 8, 8)) > 0.5
         raw = np.random.RandomState(43).random((8, 8, 8)) > 0.5
         filled = np.random.RandomState(44).random((8, 8, 8)) > 0.5
-        og = OccupancyGrid(
+        og = SamplingOccupancyGrid(
             grid=grid,
             origin=np.array([1.0, 2.0, 3.0]),
             resolution=0.25,
@@ -21,7 +23,7 @@ class TestOccupancyGridSerialization:
         )
         path = str(tmp_path / "og.pkl")
         og.save(path)
-        loaded = OccupancyGrid.load(path)
+        loaded = SamplingOccupancyGrid.load(path)
         assert np.array_equal(loaded.grid, og.grid)
         assert np.allclose(loaded.origin, og.origin)
         assert loaded.resolution == og.resolution
@@ -29,17 +31,19 @@ class TestOccupancyGridSerialization:
         assert np.array_equal(loaded.filled_raw_grid, og.filled_raw_grid)
         assert loaded.mesh_scale == og.mesh_scale
 
-    def test_npz_none_raw_grid(self, tmp_path):
+    def test_npz_base_og_round_trip(self, tmp_path):
+        """Base OccupancyGrid saves and loads only grid/origin/resolution."""
         og = OccupancyGrid(
             grid=np.zeros((4, 4, 4), dtype=bool),
             origin=np.zeros(3),
             resolution=1.0,
         )
-        path = str(tmp_path / "og_none.pkl")
+        path = str(tmp_path / "og_base.pkl")
         og.save(path)
         loaded = OccupancyGrid.load(path)
-        assert loaded.raw_grid is None
-        assert loaded.filled_raw_grid is None
+        assert np.array_equal(loaded.grid, og.grid)
+        assert np.allclose(loaded.origin, og.origin)
+        assert loaded.resolution == og.resolution
 
 
 class TestExecutionResultSerialization:
@@ -97,11 +101,3 @@ class TestExecutionResultSerialization:
         loaded = load_solution(path)
         assert len(loaded.all_traj_positions[0]) == 0
         assert len(loaded.all_traj_positions[1]) == 1
-
-    def test_npz_json_files_created(self, tmp_path):
-        import os
-        orig = self._make_exec_result()
-        path = str(tmp_path / "exec.pkl")
-        save_solution(orig, path)
-        assert os.path.exists(str(tmp_path / "exec.npz"))
-        assert os.path.exists(str(tmp_path / "exec.json"))

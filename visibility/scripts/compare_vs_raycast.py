@@ -10,8 +10,7 @@ import numpy as np
 import open3d as o3d
 from time import time as get_time
 
-from visibility.core import FrustumParams, orient_normals_outward, get_frustum_basis_from_quaternion
-from shared.geometry import quaternion_to_forward
+from visibility.core import FrustumParams, orient_normals_outward, get_frustum_basis_from_rotation
 from visibility.sampling import UniformViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
@@ -73,7 +72,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
         geometries.append(sphere)
 
     pos, orientation = viewpoints[vp_index]
-    forward = quaternion_to_forward(orientation)
+    forward = orientation.as_matrix()[:, 0]
     arrow_length = frustum_params.far * 0.2
     arrow_end = pos + forward * arrow_length
     arrow = o3d.geometry.LineSet()
@@ -85,7 +84,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
     # Build frustum lineset without constructing a full Visualizer
     half_angle = frustum_params.fov_y / 2.0
     far_half = frustum_params.far * np.tan(half_angle)
-    _, right, up = get_frustum_basis_from_quaternion(orientation)
+    _, right, up = get_frustum_basis_from_rotation(orientation)
     far_center = pos + forward * frustum_params.far
     r, u = right * far_half, up * far_half
     f_corners = [pos, far_center + r + u, far_center - r + u,

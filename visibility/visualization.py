@@ -6,8 +6,7 @@ import PIL.Image
 from typing import Dict, Tuple
 
 from .core.types import FrustumParams, OptimizationResult
-from .core.base import get_frustum_basis, get_frustum_basis_from_quaternion
-from shared.geometry import quaternion_to_forward
+from .core.base import get_frustum_basis, get_frustum_basis_from_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,7 @@ class Visualizer:
 
         index_to_visualize = candidate_index % len(visibility_map)
         selected_vp_pos = np.asarray(candidates[index_to_visualize][0])
-        selected_vp_orient = np.asarray(candidates[index_to_visualize][1])
+        selected_vp_orient = candidates[index_to_visualize][1]
         visible_indices = visibility_map[index_to_visualize]
 
         geometries = []
@@ -101,7 +100,7 @@ class Visualizer:
             geometries.append(vp_sphere)
 
         arrow_length = self.frustum_params.far * 0.2
-        forward = quaternion_to_forward(selected_vp_orient)
+        forward = selected_vp_orient.as_matrix()[:, 0]
         arrow_end = selected_vp_pos + forward * arrow_length
 
         arrow_points = np.array([selected_vp_pos, arrow_end])
@@ -164,7 +163,7 @@ class Visualizer:
 
         for i in range(num_vps):
             pos = np.asarray(candidates[i][0])
-            orientation = np.asarray(candidates[i][1])
+            orientation = candidates[i][1]
             visible_indices = visibility_map[i]
             color = list(vp_colors[i % len(vp_colors)])
 
@@ -182,7 +181,7 @@ class Visualizer:
 
             # Direction arrow
             arrow_length = 0.5
-            forward = quaternion_to_forward(orientation)
+            forward = orientation.as_matrix()[:, 0]
             arrow_end = pos + forward * arrow_length
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
@@ -258,7 +257,7 @@ class Visualizer:
                 geometries.append(visible_pcd)
 
             arrow_length = 0.5
-            forward = quaternion_to_forward(vp.orientation)
+            forward = vp.orientation.as_matrix()[:, 0]
             arrow_end = vp.position + forward * arrow_length
             arrow_points = np.array([vp.position, arrow_end])
             arrow_lines = np.array([[0, 1]])
@@ -380,7 +379,7 @@ class Visualizer:
             geometries.append(frustum)
 
             arrow_length = 0.5
-            forward = quaternion_to_forward(vp.orientation)
+            forward = vp.orientation.as_matrix()[:, 0]
             arrow_end = vp.position + forward * arrow_length
             arrow_points = np.array([vp.position, arrow_end])
             arrow_lines = np.array([[0, 1]])
@@ -415,7 +414,7 @@ class Visualizer:
 
         index_to_visualize = candidate_index % len(visibility_map)
         selected_vp_pos = np.asarray(candidates[index_to_visualize][0])
-        selected_vp_orient = np.asarray(candidates[index_to_visualize][1])
+        selected_vp_orient = candidates[index_to_visualize][1]
         visible_triangle_indices = visibility_map[index_to_visualize]
 
         geometries = []
@@ -448,7 +447,7 @@ class Visualizer:
             geometries.append(vp_sphere)
 
         arrow_length = self.frustum_params.far * 0.2
-        forward = quaternion_to_forward(selected_vp_orient)
+        forward = selected_vp_orient.as_matrix()[:, 0]
         arrow_end = selected_vp_pos + forward * arrow_length
 
         arrow_points = np.array([selected_vp_pos, arrow_end])
@@ -548,7 +547,7 @@ class Visualizer:
 
         for i in range(n_normal):
             pos = np.asarray(normal_candidates[i][0])
-            orientation = np.asarray(normal_candidates[i][1])
+            orientation = normal_candidates[i][1]
             color = list(raw_blues[i][:3])
 
             vp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.15)
@@ -561,7 +560,7 @@ class Visualizer:
             frustum.paint_uniform_color(color)
             geometries.append(frustum)
 
-            forward = quaternion_to_forward(orientation)
+            forward = orientation.as_matrix()[:, 0]
             arrow_end = pos + forward * 0.5
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
@@ -628,7 +627,7 @@ class Visualizer:
 
             # Current targeted candidate as large orange sphere with frustum + arrow
             cur_pos = np.asarray(targeted_candidates[t_idx][0])
-            cur_orient = np.asarray(targeted_candidates[t_idx][1])
+            cur_orient = targeted_candidates[t_idx][1]
 
             cur_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.2)
             cur_sphere.translate(cur_pos)
@@ -640,7 +639,7 @@ class Visualizer:
             frustum.paint_uniform_color(ORANGE)
             geometries.append(frustum)
 
-            forward = quaternion_to_forward(cur_orient)
+            forward = cur_orient.as_matrix()[:, 0]
             arrow_end = cur_pos + forward * 0.5
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([cur_pos, arrow_end]))
@@ -730,7 +729,7 @@ class Visualizer:
 
         for i, candidate in enumerate(all_candidates):
             pos = np.asarray(candidate[0])
-            orientation = np.asarray(candidate[1])
+            orientation = candidate[1]
             is_targeted = i >= n_normal
             base_color = ORANGE if is_targeted else BLUE
             vis_color = list(vp_colors[i % len(vp_colors)])
@@ -745,7 +744,7 @@ class Visualizer:
             frustum.paint_uniform_color(base_color)
             geometries.append(frustum)
 
-            forward = quaternion_to_forward(orientation)
+            forward = orientation.as_matrix()[:, 0]
             arrow_end = pos + forward * 0.5
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
@@ -781,7 +780,7 @@ class Visualizer:
         half_angle_rad = (params.fov_y / 2.0)
         far_half_size = params.far * np.tan(half_angle_rad)
 
-        forward, right, up = get_frustum_basis_from_quaternion(orientation)
+        forward, right, up = get_frustum_basis_from_rotation(orientation)
 
         far_center = viewpoint + forward * params.far
 

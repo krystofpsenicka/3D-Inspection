@@ -6,26 +6,32 @@ from typing import List, Tuple
 import cupy as cp
 import numpy as np
 
+from shared.grid_utils import downsample_occupancy_grid
+from shared.occupancy_grid import OccupancyGrid
+
 from ...core.constants import (
     NORM_EPS, DEFAULT_MAX_DIR_NOISE_RAD, CURVATURE_POSITION_WEIGHT,
 )
+from scipy.spatial.transform import Rotation
+
 from .direction import knn_centroid_direction, apply_angular_noise
+from shared.geometry import directions_rolls_to_rotmats
 
 logger = logging.getLogger(__name__)
 
 
-def build_free_space(occupancy_grid, sdf_grid_gpu, og_origin_gpu, og_resolution,
-                     target_points_gpu, normals, free_space_resolution,
-                     side: str, min_dist: float, max_dist: float,
-                     curvature_weighting: bool = False,
-                     sdf_lookup_fn=None):
-    """Build feasible positions using EDT-SDF grid lookup on GPU.
+def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray,
+                         target_points_gpu: cp.ndarray, normals: np.ndarray, free_space_resolution: float,
+                         side: str, min_dist: float, max_dist: float,
+                         curvature_weighting: bool = False):
+    """Build feasible sampling positions using EDT-SDF grid lookup on GPU.
+
+    Downsamples the occupancy grid to *free_space_resolution*, filters by 
+    signed distance, and returns weighted positions ready for sampling.
 
     Args:
         occupancy_grid:       OccupancyGrid object.
-        sdf_grid_gpu:         CuPy array — precomputed SDF grid.
-        og_origin_gpu:        CuPy float32 (3,) — grid origin.
-        og_resolution:        float — fine grid resolution.
+        sdf_grid_gpu:         CuPy array — precomputed SDF grid (fine res).
         target_points_gpu:    CuPy float32 (M, 3) — surface points.
         normals:              numpy (M, 3) — surface normals.
         free_space_resolution: float — coarse grid resolution.
@@ -33,13 +39,10 @@ def build_free_space(occupancy_grid, sdf_grid_gpu, og_origin_gpu, og_resolution,
         min_dist:             minimum SDF distance.
         max_dist:             maximum SDF distance.
         curvature_weighting:  bias weights toward high-curvature regions.
-        sdf_lookup_fn:        callable(positions_gpu) → CuPy SDF values.
 
     Returns:
         (feasible_centers_gpu, weights_gpu, coarse_resolution)
     """
-    from shared.occupancy_grid import downsample_occupancy_grid, OccupancyGrid as OG
-
     og = occupancy_grid
     coarse_res = free_space_resolution
 
@@ -47,38 +50,57 @@ def build_free_space(occupancy_grid, sdf_grid_gpu, og_origin_gpu, og_resolution,
     coarse_grid, coarse_origin, actual_res = downsample_occupancy_grid(
         og.grid, og.origin, og.resolution, coarse_res
     )
-    coarse_og = OG(grid=coarse_grid, origin=coarse_origin, resolution=actual_res)
 
-    # 2. Extract free voxel centers
+    # 2. Get free voxel indices
     free_ijk = np.argwhere(~coarse_grid)
     if len(free_ijk) == 0:
-        logger.warning("[ViewpointSampler] No free voxels in coarse grid.")
+        logger.warning("[build_sampling_space] No free voxels in coarse grid.")
         return cp.empty((0, 3), dtype=cp.float32), cp.empty(0, dtype=cp.float32), actual_res
 
-    free_centers = coarse_og.voxel_to_world(free_ijk)
-    logger.info("[ViewpointSampler] Coarse grid: %s, %d free voxels",
+    logger.info("[build_sampling_space] Coarse grid: %s, %d free voxels",
                 coarse_grid.shape, len(free_ijk))
 
-    # 3. Transfer to GPU and look up SDF
-    centers_gpu = cp.asarray(free_centers, dtype=cp.float32)
-    sdf = sdf_lookup_fn(centers_gpu)
+    # 3. Map coarse voxel indices -> fine SDF-grid indices (center of each coarse voxel)
+    factor = round(actual_res / og.resolution)
+    fine_ijk = free_ijk * factor + factor // 2
 
-    # 4. Filter by side AND distance range
+    # Bounds-check against SDF grid (padding in downsample can push edge voxels OOB)
+    sdf_shape = np.array(sdf_grid_gpu.shape)
+    in_bounds = np.all((fine_ijk >= 0) & (fine_ijk < sdf_shape), axis=1)
+    free_ijk = free_ijk[in_bounds]
+    fine_ijk = fine_ijk[in_bounds]
+
+    if len(fine_ijk) == 0:
+        logger.warning("[build_sampling_space] No in-bounds fine voxels after mapping.")
+        return cp.empty((0, 3), dtype=cp.float32), cp.empty(0, dtype=cp.float32), actual_res
+
+    # 4. Look up SDF via fine grid indices
+    fine_ijk_gpu = cp.asarray(fine_ijk, dtype=cp.int32)
+    sdf = sdf_grid_gpu[fine_ijk_gpu[:, 0], fine_ijk_gpu[:, 1], fine_ijk_gpu[:, 2]]
+
+    # 5. Filter by side AND distance range
     if side == "outside":
         mask = (sdf >= min_dist) & (sdf <= max_dist)
     else:  # inside
         mask = (sdf <= -min_dist) & (sdf >= -max_dist)
 
-    feasible_gpu = centers_gpu[mask]
+    mask_cpu = cp.asnumpy(mask)
+    feasible_ijk = free_ijk[mask_cpu]
     feasible_sdf = sdf[mask]
-    n_feasible = int(len(feasible_gpu))
-    logger.info("[ViewpointSampler] After SDF filter (%s): %d / %d positions",
-                side, n_feasible, len(free_centers))
+    n_feasible = len(feasible_ijk)
+    logger.info("[build_sampling_space] After SDF filter (%s): %d / %d positions",
+                side, n_feasible, len(free_ijk))
 
     if n_feasible == 0:
-        return feasible_gpu, cp.empty(0, dtype=cp.float32), actual_res
+        return cp.empty((0, 3), dtype=cp.float32), cp.empty(0, dtype=cp.float32), actual_res
 
-    # 5. Compute sampling weights: w = sdf² (footprint area ∝ d²)
+    # 6. Convert feasible coarse indices to world coordinates
+    #    (inline of voxel_to_world: ijk * res + origin + 0.5 * res)
+    feasible_centers = (feasible_ijk.astype(np.float32) * actual_res
+                        + coarse_origin + 0.5 * actual_res)
+    feasible_gpu = cp.asarray(feasible_centers, dtype=cp.float32)
+
+    # 7. Compute sampling weights: w = sdf² (footprint area ∝ d²)
     weights = feasible_sdf ** 2
 
     if curvature_weighting:
@@ -91,16 +113,16 @@ def build_free_space(occupancy_grid, sdf_grid_gpu, og_origin_gpu, og_resolution,
 
     weights = weights / weights.sum()
 
-    logger.info("[ViewpointSampler] %s free space: %d feasible positions "
+    logger.info("[build_sampling_space] %s free space: %d feasible positions "
                 "(coarse res %.2fm, curvature_weighting=%s)",
                 side.capitalize(), n_feasible, actual_res, curvature_weighting)
 
     return feasible_gpu, weights, actual_res
 
 
-def sample_from_free_space(centers_gpu, weights_gpu,
+def sample_from_free_space(centers_gpu: cp.ndarray, weights_gpu: cp.ndarray,
                            coarse_res: float, num_candidates: int,
-                           target_points_gpu, normals,
+                           target_points_gpu: cp.ndarray, normals: np.ndarray,
                            max_dir_noise_rad: float = DEFAULT_MAX_DIR_NOISE_RAD,
                            direction_targets_gpu=None,
                            curvature_weighting: bool = False,
@@ -108,22 +130,22 @@ def sample_from_free_space(centers_gpu, weights_gpu,
     """GPU-accelerated viewpoint sampling from feasible positions.
 
     Args:
-        centers_gpu:          (N, 3) CuPy array — feasible positions.
+        centers_gpu:          (N, 3) CuPy array — feasible positions (centers of feasible voxels).
         weights_gpu:          (N,) CuPy array — normalized sampling weights.
         coarse_res:           coarse grid resolution (for jitter).
         num_candidates:       number of candidates to generate.
         target_points_gpu:    (M, 3) CuPy array — surface points.
         normals:              numpy (M, 3) — surface normals.
-        max_dir_noise_rad:    angular noise for viewing directions.
-        direction_targets_gpu: optional (U, 3) CuPy — override direction targets.
+        max_dir_noise_rad:    maximum angular noise for viewing directions.
+        direction_targets_gpu: optional (U, 3) CuPy — override direction targets (uncovered points).
         curvature_weighting:  use curvature-weighted KNN direction.
 
     Returns:
-        List of (position, quaternion) tuples.
+        List of (position, Rotation) tuples.
     """
     n_feasible = int(len(centers_gpu))
     if n_feasible == 0:
-        logger.warning("[ViewpointSampler] No feasible positions — returning empty.")
+        logger.warning("[sample_from_free_space] No feasible positions — returning empty.")
         return []
 
     # 1. Weighted random sample on CPU (CuPy lacks weighted choice)
@@ -153,14 +175,15 @@ def sample_from_free_space(centers_gpu, weights_gpu,
     # 4. Angular noise via Rodrigues rotation (GPU)
     directions_gpu = apply_angular_noise(base_dirs, max_dir_noise_rad)
 
-    # 5. Transfer back to CPU and convert directions to quaternions
-    sampled_cpu = cp.asnumpy(sampled_gpu)
-    directions_cpu = cp.asnumpy(directions_gpu)
+    # 5. Random roll + GPU-vectorized rotation construction
+    rolls_gpu = cp.random.uniform(0, 2 * cp.pi, size=num_candidates, dtype=cp.float32)
+    rotmats_gpu = directions_rolls_to_rotmats(directions_gpu, rolls_gpu)
 
-    from shared.geometry import direction_roll_to_quaternion
-    orientations = np.array([direction_roll_to_quaternion(d) for d in directions_cpu])
+    sampled_cpu = cp.asnumpy(sampled_gpu)
+    rotmats_cpu = cp.asnumpy(rotmats_gpu)
+    orientations = Rotation.from_matrix(rotmats_cpu)  # batch — no loop
 
     candidates = list(zip(sampled_cpu, orientations))
-    logger.info("[ViewpointSampler] Generated %d candidates from free space (GPU).",
+    logger.info("[sample_from_free_space] Generated %d candidates from free space (GPU).",
                 len(candidates))
     return candidates

@@ -6,7 +6,9 @@ import cupy as cp
 import numpy as np
 from typing import List, Tuple
 
-from ...core.constants import DE_POPSIZE, DE_MAXITER, DE_TRAVEL_WEIGHT
+from ...core.constants import (
+    DE_POPSIZE, DE_MAXITER, DE_TRAVEL_WEIGHT, DEFAULT_K_COVERAGE,
+)
 from .base import ViewpointSamplerBase
 
 logger = logging.getLogger(__name__)
@@ -16,16 +18,17 @@ class DEViewpointSampler(ViewpointSamplerBase):
     """Iterative viewpoint optimization via Differential Evolution.
 
     Each round runs scipy's DE to find the single best viewpoint for
-    remaining uncovered surface points, then updates the uncovered mask.
+    under-covered surface points, then updates the coverage counts.
     Does not use distance/curvature weighting — DE directly optimizes
     a coverage + travel cost objective.
     """
 
-    def sample_de(self, n_rounds: int, uncovered_mask_gpu,
+    def sample_de(self, n_rounds: int, coverage_count_gpu,
                   visibility_query,
                   existing_candidates: list | None = None,
                   side: str = "outside",
                   target_coverage: float = 1.0,
+                  k_coverage: int = DEFAULT_K_COVERAGE,
                   travel_weight: float = DE_TRAVEL_WEIGHT,
                   popsize: int = DE_POPSIZE,
                   maxiter: int = DE_MAXITER,
@@ -34,16 +37,21 @@ class DEViewpointSampler(ViewpointSamplerBase):
         """Find optimal viewpoints via iterative Differential Evolution.
 
         Each round runs DE in 6D pose space (x, y, z, theta, phi, roll)
-        to find the viewpoint maximizing coverage of uncovered points
+        to find the viewpoint maximizing coverage of under-covered points
         while penalizing distance from existing viewpoints.
 
         Args:
             n_rounds:           max number of DE rounds (viewpoints to find).
-            uncovered_mask_gpu: (num_points,) CuPy bool — True for uncovered.
+            coverage_count_gpu: (num_points,) CuPy int32 — per-point coverage
+                                count.  Updated in-place as new viewpoints are
+                                found.
             visibility_query:   must implement ``compute_visibility_batch()``.
             existing_candidates: list of (pos, quat) already selected.
             side:               "outside" or "inside" — used for feasible bounds.
-            target_coverage:    stop early if this fraction is reached.
+            target_coverage:    stop early if this fraction of points reaches
+                                k-coverage.
+            k_coverage:         coverage-redundancy target — a point is
+                                considered covered when seen by >= k viewpoints.
             travel_weight:      weight of travel cost vs coverage in objective.
             popsize:            DE population size multiplier.
             maxiter:            max DE generations per round.
@@ -65,30 +73,24 @@ class DEViewpointSampler(ViewpointSamplerBase):
         all_candidates = list(existing_candidates)
         new_candidates = []
 
-        # Build a mutable visibility map for tracking coverage
-        vis_map = {}
-
         for round_i in range(n_rounds):
-            # Compute current coverage
-            covered_mask = cp.zeros(visibility_query.num_points, dtype=cp.bool_)
-            covered_mask |= ~uncovered_mask_gpu
-            for vis_indices in vis_map.values():
-                if len(vis_indices) > 0:
-                    covered_mask[cp.asarray(vis_indices)] = True
-            current_uncovered = ~covered_mask
-            union_coverage = float(covered_mask.sum()) / visibility_query.num_points
+            under_k_mask = coverage_count_gpu < k_coverage
+            n_under_k = int(under_k_mask.sum())
+            frac_k_covered = 1.0 - n_under_k / visibility_query.num_points
 
-            if union_coverage >= target_coverage:
-                logger.info("[DESampler] Coverage %.1f%% >= target -- done after %d rounds.",
-                            union_coverage * 100, round_i)
+            if frac_k_covered >= target_coverage:
+                logger.info("[DESampler] k=%d coverage %.1f%% >= target -- "
+                            "done after %d rounds.",
+                            k_coverage, frac_k_covered * 100, round_i)
                 break
 
-            logger.info("[DESampler %d/%d] Coverage=%.1f%%, %d uncovered -- running DE...",
-                        round_i + 1, n_rounds, union_coverage * 100,
-                        int(current_uncovered.sum()))
+            logger.info("[DESampler %d/%d] k=%d coverage=%.1f%%, "
+                        "%d under-covered -- running DE...",
+                        round_i + 1, n_rounds, k_coverage,
+                        frac_k_covered * 100, n_under_k)
 
             best_cand, score = _optimize_viewpoint_de(
-                feasible_bounds, current_uncovered, visibility_query,
+                feasible_bounds, under_k_mask, visibility_query,
                 self._is_free, existing_candidates=all_candidates,
                 travel_weight=travel_weight, popsize=popsize,
                 maxiter=maxiter, verbose=verbose)
@@ -97,37 +99,39 @@ class DEViewpointSampler(ViewpointSamplerBase):
                 logger.info("[DESampler] DE found no useful viewpoint -- stopping.")
                 break
 
-            # Compute visibility for best candidate and track it
+            # Compute visibility for best candidate and update counts
             new_vis, _ = visibility_query.compute_visibility_batch([best_cand])
-            for k, v in new_vis.items():
-                vis_map[len(new_candidates) + k] = v
+            for v in new_vis.values():
+                if len(v) > 0:
+                    coverage_count_gpu[cp.asarray(v)] += 1
 
             new_candidates.append(best_cand)
             all_candidates.append(best_cand)
 
-            logger.info("[DESampler %d/%d] DE found VP covering %d uncovered pts.",
+            logger.info("[DESampler %d/%d] DE found VP covering %d under-k pts.",
                         round_i + 1, n_rounds, score)
 
         return new_candidates
 
 
-def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
+def _optimize_viewpoint_de(feasible_bounds, under_k_mask_gpu,
                            visibility_query, is_free_fn,
                            existing_candidates,
                            travel_weight=DE_TRAVEL_WEIGHT,
                            popsize=DE_POPSIZE, maxiter=DE_MAXITER,
                            verbose=False):
-    """Find the viewpoint maximizing coverage of uncovered points using Differential Evolution.
+    """Find the viewpoint maximizing coverage of under-covered points using DE.
 
     Objective (following Glorieux et al. 2020):
       minimize  -f_obs + travel_weight * f_trav
     where:
-      f_obs  = |visible & uncovered|  (coverage of uncovered points)
-      f_trav = ||pose - avg_pose||    (distance to mean pose of existing VPs)
+      f_obs  = |visible & under_k|  (coverage of under-covered points)
+      f_trav = ||pose - avg_pose||  (distance to mean pose of existing VPs)
 
     Args:
         feasible_bounds: [(xmin,xmax), (ymin,ymax), (zmin,zmax)]
-        uncovered_mask_gpu: (num_points,) CuPy bool — True for uncovered
+        under_k_mask_gpu: (num_points,) CuPy bool — True for points with
+                          coverage count < k.
         visibility_query: for batch visibility computation
         is_free_fn: callable(positions_gpu) -> CuPy bool array
         existing_candidates: list of (pos, quat) already selected
@@ -135,11 +139,10 @@ def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
 
     Returns:
         (best_candidate, best_score) where candidate = (pos, quat)
-        and score = number of uncovered points newly covered.
+        and score = number of under-k points visible from best candidate.
     """
     from scipy.optimize import differential_evolution
-    from scipy.spatial.transform import Rotation as R
-    from shared.geometry import direction_roll_to_quaternion
+    from shared.geometry import direction_roll_to_rotation
 
     # 6D bounds: x, y, z, theta, phi, roll
     bounds = list(feasible_bounds) + [
@@ -149,15 +152,14 @@ def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
     ]
 
     # Precompute average pose of existing viewpoints for travel cost
-    n_uncovered = int(uncovered_mask_gpu.sum())
+    n_under_k = int(under_k_mask_gpu.sum())
     avg_pos = None
     avg_rotvec = None
     if existing_candidates:
         all_pos = np.array([c[0] for c in existing_candidates], dtype=np.float64)
         avg_pos = all_pos.mean(axis=0)
         all_rotvec = np.array([
-            R.from_quat([c[1][1], c[1][2], c[1][3], c[1][0]]).as_rotvec()
-            for c in existing_candidates
+            c[1].as_rotvec() for c in existing_candidates
         ], dtype=np.float64)
         avg_rotvec = all_rotvec.mean(axis=0)
 
@@ -186,11 +188,11 @@ def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
         if len(free_idx) == 0:
             return scores
 
-        # Build candidates as (pos, quaternion)
+        # Build candidates as (pos, Rotation)
         free_cands = []
         for i in free_idx:
-            q = direction_roll_to_quaternion(directions[i], roll[i])
-            free_cands.append((positions[i], q))
+            rot = direction_roll_to_rotation(directions[i], roll[i])
+            free_cands.append((positions[i], rot))
 
         vis_map, _ = visibility_query.compute_visibility_batch(free_cands)
 
@@ -199,7 +201,7 @@ def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
             visible = vis_map.get(j, np.array([], dtype=np.int64))
             if len(visible) > 0:
                 vis_gpu = cp.asarray(visible)
-                newly_covered = int(uncovered_mask_gpu[vis_gpu].sum())
+                newly_covered = int(under_k_mask_gpu[vis_gpu].sum())
             else:
                 newly_covered = 0
 
@@ -207,15 +209,12 @@ def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
             travel_cost = 0.0
             if avg_pos is not None and travel_weight > 0:
                 pos_dist = float(np.linalg.norm(positions[orig_i] - avg_pos)) / spatial_diag
-                cand_rotvec = R.from_quat([
-                    free_cands[j][1][1], free_cands[j][1][2],
-                    free_cands[j][1][3], free_cands[j][1][0]
-                ]).as_rotvec()
+                cand_rotvec = free_cands[j][1].as_rotvec()
                 angle_dist = float(np.linalg.norm(cand_rotvec - avg_rotvec)) / np.pi
                 travel_cost = 0.9 * pos_dist + 0.1 * angle_dist
 
-            # Normalize coverage by n_uncovered so both terms are ~O(1)
-            f_obs = newly_covered / max(n_uncovered, 1)
+            # Normalize coverage by n_under_k so both terms are ~O(1)
+            f_obs = newly_covered / max(n_under_k, 1)
             scores[orig_i] = -f_obs + travel_weight * travel_cost
 
         return scores
@@ -233,16 +232,16 @@ def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
             np.sin(theta_cb) * np.sin(phi_cb),
             np.cos(theta_cb),
         ], dtype=np.float32)
-        q = direction_roll_to_quaternion(direction, roll_cb)
-        cand = (pos, q)
+        rot = direction_roll_to_rotation(direction, roll_cb)
+        cand = (pos, rot)
         test_vis, _ = visibility_query.compute_visibility_batch([cand])
         visible = test_vis.get(0, np.array([], dtype=np.int64))
         if len(visible) > 0:
-            new_cov = int(uncovered_mask_gpu[cp.asarray(visible)].sum())
+            new_cov = int(under_k_mask_gpu[cp.asarray(visible)].sum())
         else:
             new_cov = 0
-        logger.info("  DE gen %d: best covers %d/%d uncovered pts (convergence=%.4f)",
-                    gen_counter[0], new_cov, n_uncovered, convergence)
+        logger.info("  DE gen %d: best covers %d/%d under-k pts (convergence=%.4f)",
+                    gen_counter[0], new_cov, n_under_k, convergence)
 
     result = differential_evolution(
         objective, bounds, vectorized=True,
@@ -260,14 +259,14 @@ def _optimize_viewpoint_de(feasible_bounds, uncovered_mask_gpu,
         np.sin(theta) * np.sin(phi),
         np.cos(theta),
     ], dtype=np.float32)
-    best_quat = direction_roll_to_quaternion(best_dir, roll)
+    best_rot = direction_roll_to_rotation(best_dir, roll)
 
     # Recompute f_obs for the best to report raw coverage score
-    best_cand = (best_pos, best_quat)
+    best_cand = (best_pos, best_rot)
     vis_map, _ = visibility_query.compute_visibility_batch([best_cand])
     visible = vis_map.get(0, np.array([], dtype=np.int64))
     if len(visible) > 0:
-        best_score = int(uncovered_mask_gpu[cp.asarray(visible)].sum())
+        best_score = int(under_k_mask_gpu[cp.asarray(visible)].sum())
     else:
         best_score = 0
 

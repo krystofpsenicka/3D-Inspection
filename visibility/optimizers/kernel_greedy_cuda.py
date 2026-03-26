@@ -7,7 +7,7 @@ from typing import List, Tuple
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQueryBase
 from ..core.constants import NORM_EPS, KERNEL_N_SAMPLES, KERNEL_RADIUS
-from shared.geometry import direction_roll_to_quaternion
+from shared.geometry import direction_roll_to_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class KernelGreedyOptimizerCuda:
         for sample in samples_cpu:
             direction = visible_centroid - sample
             direction /= (np.linalg.norm(direction) + NORM_EPS)
-            orientation = direction_roll_to_quaternion(direction)
+            orientation = direction_roll_to_rotation(direction)
             vis, _ = self.query.compute_visibility(sample, orientation)
             if len(vis) > len(best_vis):
                 best_vp = sample
@@ -75,7 +75,7 @@ class KernelGreedyOptimizerCuda:
         expanded_entries = []  # list of (expanded_vp, orientation, expanded_vis_indices)
         for i in range(n_cand):
             vp = np.asarray(candidates[i][0])
-            orientation = np.asarray(candidates[i][1])
+            orientation = candidates[i][1]
             initial_vis = vis_map[i]
             exp_vp, exp_vis = self._expand_gpu(vp, initial_vis)
             expanded_entries.append((exp_vp, orientation, exp_vis))
@@ -127,7 +127,7 @@ class KernelGreedyOptimizerCuda:
             full_visible_indices = cp.where(V[best])[0].get()
             selected_viewpoints.append(ViewpointResult(
                 position=exp_vp,
-                orientation=np.asarray(best_orient),
+                orientation=best_orient,
                 visible_indices=full_visible_indices,
                 coverage_score=len(full_visible_indices) / self.num_points,
                 computation_time=0.0,

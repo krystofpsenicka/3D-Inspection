@@ -1,11 +1,8 @@
 """Tests for OccupancyGrid, inflate_grid, and downsample_occupancy_grid."""
 import numpy as np
 import pytest
-from shared.occupancy_grid import (
-    OccupancyGrid,
-    inflate_grid,
-    downsample_occupancy_grid,
-)
+from shared.occupancy_grid import OccupancyGrid
+from shared.grid_utils import inflate_grid, downsample_occupancy_grid
 
 
 # ── Coordinate transforms ──────────────────────────────────────────────────

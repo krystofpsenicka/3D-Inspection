@@ -3,14 +3,13 @@
 Visualize ESDF voxel grid — 2D slices (matplotlib) or interactive 3D (Open3D).
 
 Usage — 2D slice:
-    python visualize_esdf.py                           # default Z=1.5
-    python visualize_esdf.py --z_slice 2.0
-    python visualize_esdf.py --z_slice 1.5 --axis 1   # Y-slice
+    python -m visibility.scripts.visualize_esdf
+    python -m visibility.scripts.visualize_esdf --z_slice 2.0
+    python -m visibility.scripts.visualize_esdf --z_slice 1.5 --axis 1
 
 Usage — 3D interactive:
-    python visualize_esdf.py --mode 3d
-    python visualize_esdf.py --mode 3d --esdf_band 2.0
-    python visualize_esdf.py --mode 3d --show_occupied --show_inflated
+    python -m visibility.scripts.visualize_esdf --mode 3d
+    python -m visibility.scripts.visualize_esdf --mode 3d --esdf_band 2.0
 
 Colour convention (both modes):
   Red     = inside obstacle  (positive ESDF)
@@ -31,20 +30,28 @@ import numpy as np
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_og_and_esdf():
-    """Build occupancy grid and compute ESDF.  Returns (og, raw, esdf_3d)."""
-    from occupancy_grid import build_occupancy_grid
-    from scipy.ndimage import distance_transform_edt
+    """Build sampling occupancy grid and compute ESDF.  Returns (og, raw, esdf_3d)."""
+    import open3d as o3d
+    from shared.mesh_loader import load_and_transform_mesh
+    from visibility.sampling.utils.sampling_grid_builder import (
+        build_sampling_occupancy_grid, build_sdf_grid,
+    )
+    from VRP.config import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
 
-    print("Building occupancy grid …")
-    og = build_occupancy_grid()
-    raw = og.raw_grid if og.raw_grid is not None else og.grid
+    print("Loading mesh …")
+    tm = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(np.asarray(tm.vertices))
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(tm.faces))
+
+    print("Building sampling occupancy grid …")
+    og = build_sampling_occupancy_grid(o3d_mesh, frustum_far=6.0, min_clearance=1.0)
+    raw = og.raw_grid
     print(f"Grid shape: {raw.shape}  origin: {og.origin}  res: {og.resolution}m")
 
-    print("Computing ESDF …")
-    outside_dist = distance_transform_edt(~raw) * og.resolution
-    inside_dist  = distance_transform_edt(raw)  * og.resolution
-    esdf = (inside_dist - outside_dist).astype(np.float32)
-    print(f"ESDF range: [{esdf.min():.3f}, {esdf.max():.3f}]")
+    print("Computing SDF …")
+    esdf = build_sdf_grid(og)
+    print(f"SDF range: [{esdf.min():.3f}, {esdf.max():.3f}]")
     return og, raw, esdf
 
 
@@ -52,7 +59,7 @@ def _load_scaled_mesh():
     """Load the ship mesh with the same scale + pose applied in occupancy_grid."""
     import trimesh
     from scipy.spatial.transform import Rotation as R
-    from config import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
+    from VRP.config import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
 
     raw_mesh = trimesh.load(MESH_PATH, force="mesh")
     if isinstance(raw_mesh, trimesh.Scene):

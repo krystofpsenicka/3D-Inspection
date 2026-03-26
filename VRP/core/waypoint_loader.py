@@ -57,8 +57,7 @@ def _get_scaled_mesh():
 
     T = np.eye(4)
     T[:3, 3] = MESH_POSE[:3]
-    qw, qx, qy, qz = MESH_POSE[3:7]
-    T[:3, :3] = R.from_quat([qx, qy, qz, qw]).as_matrix()
+    T[:3, :3] = R.from_quat(MESH_POSE[3:7], scalar_first=True).as_matrix()
     raw.apply_transform(T)
 
     _SCALED_MESH = raw
@@ -344,11 +343,11 @@ def load_waypoints_from_inspection(
     waypoints = []
     for vp in all_viewpoints:
         pos = np.asarray(vp.position, dtype=np.float32)
-        # Derive quaternion from view direction if available
-        quat = np.asarray(vp.orientation, dtype=np.float32)
+        quat_wxyz = vp.orientation.as_quat(scalar_first=True).astype(np.float32)
         waypoints.append([
             float(pos[0]), float(pos[1]), float(pos[2]),
-            float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]),
+            float(quat_wxyz[0]), float(quat_wxyz[1]),
+            float(quat_wxyz[2]), float(quat_wxyz[3]),
         ])
 
     print(f"[WaypointLoader] Loaded {len(waypoints)} viewpoints from "

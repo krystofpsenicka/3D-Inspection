@@ -51,7 +51,7 @@ from ..config import (
     ST_ASTAR_MAX_EXPANSIONS,
 )
 
-from shared.occupancy_grid import downsample_occupancy_grid
+from shared.grid_utils import downsample_occupancy_grid
 from shared.grid_utils import OFFSETS_26, WEIGHTS_26
 
 logger = logging.getLogger(__name__)

@@ -173,16 +173,18 @@ def main():
             return
 
         if args.resampling_strategy == "optimal":
-            # Build uncovered mask for DE
-            uncovered_mask = cp.zeros(len(target_points), dtype=cp.bool_)
-            uncovered_mask[cp.asarray(uncovered_indices)] = True
+            # Build per-point coverage counts for DE
+            coverage_count_gpu = cp.zeros(len(target_points), dtype=cp.int32)
+            for v in normal_vis_map.values():
+                if len(v) > 0:
+                    coverage_count_gpu[cp.asarray(v)] += 1
 
             de_sampler = DEViewpointSampler(
                 mesh, target_points, normals, frustum_params.far,
                 collision_radius=args.collision_radius,
             )
             targeted_candidates = de_sampler.sample_de(
-                n_targeted, uncovered_mask, vis_query,
+                n_targeted, coverage_count_gpu, vis_query,
                 existing_candidates=normal_candidates,
                 side=args.side, verbose=True)
 

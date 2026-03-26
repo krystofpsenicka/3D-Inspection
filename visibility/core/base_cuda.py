@@ -4,7 +4,7 @@ import cupy as cp
 from typing import Tuple
 
 from .types import FrustumParams
-from .base import VisibilityQueryBase, get_frustum_basis_from_quaternion
+from .base import VisibilityQueryBase, get_frustum_basis_from_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class VisibilityQueryCuda(VisibilityQueryBase):
     def points_in_frustum_gpu(self, viewpoint: np.ndarray,
                                orientation: np.ndarray) -> np.ndarray:
         """Brute-force frustum culling on GPU."""
-        forward, right, up = get_frustum_basis_from_quaternion(orientation)
+        forward, right, up = get_frustum_basis_from_rotation(orientation)
 
         vp_gpu = cp.asarray(viewpoint, dtype=cp.float64)
         dir_gpu = cp.asarray(forward, dtype=cp.float64)

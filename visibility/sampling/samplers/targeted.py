@@ -9,7 +9,7 @@ from typing import List, Tuple
 from ...core.constants import (
     NORM_EPS, DEFAULT_MAX_DIR_NOISE_RAD,
     GPU_NN_CHUNK_SIZE, PROXIMITY_KNN_FRACTION,
-    TARGETED_PROXIMITY_SIGMA_FACTOR,
+    TARGETED_PROXIMITY_SIGMA_FACTOR, DEFAULT_K_COVERAGE,
 )
 from .uniform import UniformViewpointSampler
 
@@ -21,7 +21,7 @@ class TargetedViewpointSampler(UniformViewpointSampler):
 
     Inherits uniform sampling capabilities and adds proximity-weighted
     targeted sampling.  Supports batch mode (all at once) and iterative
-    mode (sample one, update uncovered set, repeat).
+    mode (sample one, update coverage counts, repeat).
     """
 
     def sample_targeted(self, uncovered_indices, num_candidates: int,
@@ -32,22 +32,32 @@ class TargetedViewpointSampler(UniformViewpointSampler):
                         curvature_weighting: bool = False,
                         iterative: bool = False,
                         visibility_query=None,
+                        k_coverage: int = DEFAULT_K_COVERAGE,
+                        coverage_count_gpu=None,
                         ) -> List[Tuple[np.ndarray, np.ndarray]]:
         """Sample candidates biased toward uncovered surface regions.
 
         Re-uses cached feasible positions, re-weights by proximity to the
-        uncovered points, and orients viewing directions toward them.
+        under-covered points, and orients viewing directions toward them.
 
         Args:
-            uncovered_indices: 1-D array of target-point indices not yet covered.
-            num_candidates:    how many new candidates to generate.
+            uncovered_indices: 1-D array of target-point indices not yet
+                               fully covered (count < k).
+            num_candidates:    max number of new candidates to generate.
             side:              "outside" or "inside".
             curvature_weighting: also apply curvature bias to base weights.
             iterative:         if True, sample one viewpoint at a time,
-                               compute visibility, update uncovered set, repeat.
-                               Requires *visibility_query*.
+                               compute visibility, update coverage counts,
+                               repeat.  Requires *visibility_query*.
             visibility_query:  required when iterative=True. Must implement
                                ``compute_visibility_batch(candidates)``.
+            k_coverage:        coverage-redundancy target — a point is
+                               considered covered when seen by >= k viewpoints.
+                               Only used in iterative mode.
+            coverage_count_gpu: optional (num_points,) CuPy int32 — per-point
+                               coverage count.  If provided and iterative=True,
+                               updated in-place.  If None, a fresh array is
+                               built from *uncovered_indices*.
 
         Returns:
             List of (position, orientation) tuples, where orientation is a quaternion.
@@ -56,7 +66,7 @@ class TargetedViewpointSampler(UniformViewpointSampler):
             return self._sample_targeted_iterative(
                 uncovered_indices, num_candidates, side, min_distance,
                 max_distance_offset, max_dir_noise_rad, curvature_weighting,
-                visibility_query)
+                visibility_query, k_coverage, coverage_count_gpu)
 
         return self._sample_targeted_batch(
             uncovered_indices, num_candidates, side, min_distance,
@@ -93,8 +103,9 @@ class TargetedViewpointSampler(UniformViewpointSampler):
     def _sample_targeted_iterative(self, uncovered_indices, num_candidates,
                                    side, min_distance, max_distance_offset,
                                    max_dir_noise_rad, curvature_weighting,
-                                   visibility_query):
-        """Sample one viewpoint at a time, updating uncovered set after each."""
+                                   visibility_query, k_coverage,
+                                   coverage_count_gpu):
+        """Sample one viewpoint at a time, updating coverage counts after each."""
         if visibility_query is None:
             raise ValueError("visibility_query is required for iterative targeted sampling.")
 
@@ -103,16 +114,23 @@ class TargetedViewpointSampler(UniformViewpointSampler):
         if int(len(centers_gpu)) == 0:
             return []
 
-        uncovered = set(np.asarray(uncovered_indices).tolist())
+        # Initialize coverage count array if not provided
+        if coverage_count_gpu is None:
+            coverage_count_gpu = cp.full(
+                self.num_points, k_coverage, dtype=cp.int32)
+            coverage_count_gpu[cp.asarray(uncovered_indices)] = 0
+
         all_candidates = []
 
         for i in range(num_candidates):
-            if not uncovered:
-                logger.info("[TargetedSampler] All points covered after %d iterations.", i)
+            under_k_mask = coverage_count_gpu < k_coverage
+            if not cp.any(under_k_mask):
+                logger.info("[TargetedSampler] All points k=%d-covered "
+                            "after %d iterations.", k_coverage, i)
                 break
 
-            uncovered_arr = np.array(sorted(uncovered), dtype=np.int64)
-            uncovered_pts_gpu = self._target_points_gpu[cp.asarray(uncovered_arr)]
+            under_k_indices = cp.where(under_k_mask)[0]
+            uncovered_pts_gpu = self._target_points_gpu[under_k_indices]
             sigma = TARGETED_PROXIMITY_SIGMA_FACTOR * coarse_res
             prox_w = self._compute_proximity_weights(
                 centers_gpu, uncovered_pts_gpu, sigma)
@@ -120,7 +138,8 @@ class TargetedViewpointSampler(UniformViewpointSampler):
             blended = base_weights_gpu * prox_w
             blended_sum = float(blended.sum())
             if blended_sum < NORM_EPS:
-                logger.warning("[TargetedSampler] All blended weights zero at iteration %d.", i)
+                logger.warning("[TargetedSampler] All blended weights zero "
+                               "at iteration %d.", i)
                 break
             blended = blended / blended_sum
 
@@ -135,14 +154,17 @@ class TargetedViewpointSampler(UniformViewpointSampler):
 
             all_candidates.extend(cands)
 
-            # Compute visibility for the new viewpoint and update uncovered set
+            # Compute visibility and update coverage counts
             vis_map, _ = visibility_query.compute_visibility_batch(cands)
             for vis_indices in vis_map.values():
-                uncovered -= set(vis_indices.tolist())
+                if len(vis_indices) > 0:
+                    coverage_count_gpu[cp.asarray(vis_indices)] += 1
 
-        logger.info("[TargetedSampler] Iterative: generated %d/%d candidates, "
-                    "%d points remain uncovered.",
-                    len(all_candidates), num_candidates, len(uncovered))
+        n_remaining = int((coverage_count_gpu < k_coverage).sum())
+        logger.info("[TargetedSampler] Iterative (k=%d): generated %d/%d "
+                    "candidates, %d points remain under-covered.",
+                    k_coverage, len(all_candidates), num_candidates,
+                    n_remaining)
         return all_candidates
 
     def _compute_proximity_weights(self, feasible_gpu, uncovered_gpu, sigma,

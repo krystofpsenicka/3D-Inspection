@@ -35,7 +35,7 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 - [ x ] 20. `visibility/sampling/targeted.py` (189 lines) — depends on constants.py
 - [ ] 21. `visibility/sampling/base.py` (788 lines) — main GPU viewpoint sampler
 - [ x ] 22. `visibility/sampling/__init__.py` (1 line)
-- [ ] 23. `tests/test_sampling.py` (228 lines)
+- [ x ] 23. `tests/test_sampling.py` (228 lines)
 
 ### Visibility methods (CPU then GPU for each)
 - [ x ] 24. `visibility/methods/raycast.py` (62 lines) — CPU raycast
@@ -96,7 +96,7 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 ### VRP route execution
 - [ ] 54. `VRP/routing/route_executor.py` (553 lines) — route command sequencing
 - [ ] 55. `VRP/routing/__init__.py` (10 lines)
-- [ ] 56. `tests/test_serialization.py` (107 lines)
+- [ x ] 56. `tests/test_serialization.py` (107 lines)
 
 ### VRP visualization
 - [ ] 57. `VRP/viz/visualize_esdf.py` (306 lines) — standalone ESDF renderer

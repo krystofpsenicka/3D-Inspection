@@ -29,6 +29,7 @@ CURVATURE_POSITION_WEIGHT = 5.0
 TARGETED_PROXIMITY_SIGMA_FACTOR = 2.0
 PROXIMITY_KNN_FRACTION = 0.01
 RESAMPLE_FRACTION = 0.25
+DEFAULT_K_COVERAGE = 1  # coverage-redundancy k (Glorieux 2020)
 
 # Optimal resampling (Differential Evolution)
 DE_POPSIZE = 15       # scipy multiplier (actual pop = DE_POPSIZE * n_dims = 90)

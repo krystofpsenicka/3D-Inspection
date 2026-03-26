@@ -110,6 +110,9 @@ def parse_args() -> argparse.Namespace:
                    default="optimal",
                    help="Targeted resampling strategy: 'random' (proximity-weighted) "
                         "or 'optimal' (Differential Evolution).")
+    p.add_argument("--k_coverage", type=int, default=1,
+                   help="Coverage redundancy: sample until each point is covered "
+                        "by at least k viewpoints (Glorieux 2020). Default: 1.")
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args()
 
@@ -243,15 +246,13 @@ def main() -> None:
     # STAGE 2b – Build surface-only occupancy grid for sampling
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[2b/9] Building surface-only occupancy grid for sampling …")
-    from math import ceil
-    from VRP.core.occupancy_grid import build_occupancy_grid
+    from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
     sampling_min_clearance = 2 * _vrp_cfg.ROBOT_RADIUS
-    sampling_og = build_occupancy_grid(
-        fill_interior=False,
-        padding=args.frustum_far + sampling_min_clearance,
-        inflation_voxels=ceil(sampling_min_clearance / _vrp_cfg.VOXEL_RESOLUTION),
-        mesh_target_length=MESH_TARGET_LENGTH,
-        mesh_pose=MESH_POSE,
+    sampling_og = build_sampling_occupancy_grid(
+        mesh=o3d_mesh,
+        frustum_far=args.frustum_far,
+        min_clearance=sampling_min_clearance,
+        resolution=_vrp_cfg.VOXEL_RESOLUTION,
     )
     logger.info("  Sampling OG shape: %s  res=%.2f m  free=%d",
                 sampling_og.grid.shape, sampling_og.resolution, sampling_og.num_free)
@@ -319,11 +320,13 @@ def main() -> None:
             curvature_weighting=args.curvature_weighting)
         vis_map, _ = raycast_query.compute_visibility_batch(candidates)
 
-        # Phase 2: identify uncovered points
-        covered = set()
+        # Phase 2: build per-point coverage counts and identify under-covered
+        coverage_count_gpu = _cp.zeros(raycast_query.num_points, dtype=_cp.int32)
         for vis_indices in vis_map.values():
-            covered.update(vis_indices.tolist())
-        uncovered = np.array(sorted(set(range(raycast_query.num_points)) - covered))
+            if len(vis_indices) > 0:
+                coverage_count_gpu[_cp.asarray(vis_indices)] += 1
+        under_k_mask = coverage_count_gpu < args.k_coverage
+        uncovered = _cp.asnumpy(_cp.where(under_k_mask)[0])
 
         if len(uncovered) > 0 and n_targeted > 0:
             if args.resampling_strategy == "optimal":
@@ -334,21 +337,23 @@ def main() -> None:
                     collision_radius=_vrp_cfg.ROBOT_RADIUS,
                     occupancy_grid=sampling_og,
                 )
-                uncovered_mask = _cp.zeros(raycast_query.num_points, dtype=_cp.bool_)
-                uncovered_mask[_cp.asarray(uncovered)] = True
                 de_cands = de_sampler.sample_de(
-                    n_targeted, uncovered_mask, raycast_query,
-                    existing_candidates=candidates)
+                    n_targeted, coverage_count_gpu, raycast_query,
+                    existing_candidates=candidates,
+                    k_coverage=args.k_coverage)
                 new_vis, _ = raycast_query.compute_visibility_batch(de_cands)
                 offset = len(candidates)
                 for k, v in new_vis.items():
                     vis_map[k + offset] = v
                 candidates.extend(de_cands)
             else:
-                # Random targeted sampling
+                # Random targeted sampling (iterative for k-coverage tracking)
                 targeted_cands = sampler.sample_targeted(
                     uncovered, n_targeted, side="outside",
-                    curvature_weighting=args.curvature_weighting)
+                    curvature_weighting=args.curvature_weighting,
+                    iterative=True, visibility_query=raycast_query,
+                    k_coverage=args.k_coverage,
+                    coverage_count_gpu=coverage_count_gpu)
                 if targeted_cands:
                     new_vis, _ = raycast_query.compute_visibility_batch(targeted_cands)
                     offset = len(candidates)
@@ -392,7 +397,7 @@ def main() -> None:
     selected_wp_7dof = np.zeros((opt_result.num_viewpoints, 7), dtype=np.float64)
     for i, vp in enumerate(opt_result.viewpoints):
         selected_wp_7dof[i, :3] = vp.position
-        selected_wp_7dof[i, 3:] = vp.orientation  # already a quaternion
+        selected_wp_7dof[i, 3:] = vp.orientation.as_quat(scalar_first=True)
 
     logger.info("  Waypoints array shape: %s", selected_wp_7dof.shape)
 
@@ -401,7 +406,7 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[7/9] Building occupancy grid & distance matrix …")
 
-    from VRP.core.occupancy_grid import build_occupancy_grid, get_mesh_world_bounds, OccupancyGrid
+    from VRP.core.occupancy_grid import get_mesh_world_bounds, OccupancyGrid
     from VRP.scripts.vrp_planner import _compute_start_grid
     from VRP.core.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
 
@@ -415,21 +420,8 @@ def main() -> None:
     for i, p in enumerate(robot_start_xyzs):
         logger.info("  Robot %d depot: %s", i, p)
 
-    # Extend the OG bounds to cover ALL inspection viewpoint apices, not just
-    # the robot depots.  Without this, viewpoints above/beside the ship (apex
-    # at surface + frustum_far ≈ 6 m from the hull) fall outside the grid and
-    # both the fine A* (path cache) and the coarse space-time A* clip the goal
-    # to the grid boundary — causing AUVs to stop 4-5 m short of their targets.
-    extra_free_pts = np.vstack([
-        np.array(robot_start_xyzs, dtype=np.float32),
-        selected_wp_7dof[:, :3].astype(np.float32),
-    ])
-    og = build_occupancy_grid(
-        extra_free_points=extra_free_pts,
-        fill_interior=False,
-        mesh_target_length=MESH_TARGET_LENGTH,
-        mesh_pose=MESH_POSE,
-    )
+    # Reuse the sampling OG (SamplingOccupancyGrid inherits from OccupancyGrid).
+    og = sampling_og
     logger.info("  Grid shape: %s  res=%.2f m", og.grid.shape, og.resolution)
 
     # Assemble VRP node array: [depots | inspection waypoints]

@@ -51,7 +51,7 @@ def load_and_transform_mesh(
     T_pose = np.eye(4)
     T_pose[:3, 3] = pose[:3]
     quat_wxyz = pose[3:7]
-    rot = R.from_quat([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])
+    rot = R.from_quat(quat_wxyz, scalar_first=True)
     T_pose[:3, :3] = rot.as_matrix()
     mesh.apply_transform(T_pose)
 

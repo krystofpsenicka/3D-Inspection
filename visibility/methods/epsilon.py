@@ -34,7 +34,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
             self.fixed_epsilon = np.deg2rad(epsilon_deg)
             self.delta = None
             logger.info("Using Epsilon (radians): %.6f (%.3f degrees)",
-                        self.fixed_epsilon, epsilon_deg))
+                        self.fixed_epsilon, epsilon_deg)
         else:
             logger.info("Epsilon not provided, estimating δ from point set...")
             self.fixed_epsilon = None

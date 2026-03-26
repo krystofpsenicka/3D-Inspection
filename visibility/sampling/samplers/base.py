@@ -10,8 +10,8 @@ from scipy.spatial import KDTree
 from typing import List, Tuple
 
 from ...core.constants import NORM_EPS, GPU_NN_CHUNK_SIZE
-from ..utils.occupancy import build_occupancy_grid, precompute_sdf_grid
-from ..utils.free_space import build_free_space, sample_from_free_space
+from ..utils.sampling_grid_builder import build_sampling_occupancy_grid, build_sdf_grid
+from ..utils.free_space import build_sampling_space, sample_from_free_space
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class ViewpointSamplerBase:
         # Auto-build OG when none provided
         if occupancy_grid is None:
             logger.info("[ViewpointSampler] No occupancy grid provided — building surface-only OG from mesh...")
-            occupancy_grid = build_occupancy_grid(mesh, frustum_far, self.min_clearance)
+            occupancy_grid = build_sampling_occupancy_grid(mesh, frustum_far, self.min_clearance)
             self._occupancy_grid = occupancy_grid
 
         # Watertight warning
@@ -83,7 +83,7 @@ class ViewpointSamplerBase:
         self._target_points_gpu = None # CuPy float32 (M, 3)
 
         t0 = time.perf_counter()
-        self._sdf_grid = precompute_sdf_grid(self._occupancy_grid)
+        self._sdf_grid = build_sdf_grid(self._occupancy_grid)
         self._sdf_grid_gpu = cp.asarray(self._sdf_grid)
         self._og_grid_gpu = cp.asarray(occupancy_grid.grid)
         self._og_origin_gpu = cp.asarray(occupancy_grid.origin, dtype=cp.float32)
@@ -95,30 +95,6 @@ class ViewpointSamplerBase:
                     "GPU memory: %.1f MB", dt, gpu_mb)
 
     # ── SDF / collision helpers ─────────────────────────────────────────
-
-    def _sdf_lookup(self, positions_gpu):
-        """Look up SDF values for (N, 3) world positions on GPU.
-
-        Out-of-bounds positions get +inf (exterior).
-        """
-        ijk = cp.floor(
-            (positions_gpu - self._og_origin_gpu) / self._og_resolution
-        ).astype(cp.int32)
-
-        shape = cp.asarray(self._sdf_grid_gpu.shape, dtype=cp.int32)
-        in_bounds = (
-            (ijk[:, 0] >= 0) & (ijk[:, 0] < shape[0]) &
-            (ijk[:, 1] >= 0) & (ijk[:, 1] < shape[1]) &
-            (ijk[:, 2] >= 0) & (ijk[:, 2] < shape[2])
-        )
-
-        sdf = cp.full(len(positions_gpu), cp.inf, dtype=cp.float32)
-        if cp.any(in_bounds):
-            valid_ijk = ijk[in_bounds]
-            sdf[in_bounds] = self._sdf_grid_gpu[
-                valid_ijk[:, 0], valid_ijk[:, 1], valid_ijk[:, 2]
-            ]
-        return sdf
 
     def _is_free(self, positions_gpu):
         """Check OG collision for (N, 3) world positions on GPU.
@@ -176,14 +152,12 @@ class ViewpointSamplerBase:
     def _build_free_space(self, side: str, min_dist: float, max_dist: float,
                           curvature_weighting: bool = False):
         """Build feasible positions. Returns (centers_gpu, weights_gpu, coarse_res)."""
-        return build_free_space(
+        return build_sampling_space(
             self._occupancy_grid, self._sdf_grid_gpu,
-            self._og_origin_gpu, self._og_resolution,
             self._target_points_gpu, self.normals,
             self.free_space_resolution,
             side, min_dist, max_dist,
             curvature_weighting=curvature_weighting,
-            sdf_lookup_fn=self._sdf_lookup,
         )
 
     def _sample_from_free_space(self, centers_gpu, weights_gpu,

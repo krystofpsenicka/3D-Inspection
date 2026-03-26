@@ -27,11 +27,8 @@ def get_frustum_basis(direction):
     return right, up
 
 
-def get_frustum_basis_from_quaternion(q_wxyz):
-    """Extract (forward, right, up) from quaternion [qw,qx,qy,qz], +X is forward."""
-    from scipy.spatial.transform import Rotation as R
-
-    rot = R.from_quat([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]])
+def get_frustum_basis_from_rotation(rot):
+    """Extract (forward, right, up) from a Rotation object. +X is forward."""
     mat = rot.as_matrix()
     return mat[:, 0], mat[:, 1], mat[:, 2]  # forward, right, up
 
@@ -127,7 +124,7 @@ class VisibilityQuery(VisibilityQueryBase):
 
     def points_in_frustum_with_kdtree(self, viewpoint, orientation):
         """Frustum culling with KD-tree."""
-        forward, right, up = get_frustum_basis_from_quaternion(orientation)
+        forward, right, up = get_frustum_basis_from_rotation(orientation)
 
         center, radius = get_frustum_bounding_sphere(viewpoint, forward, self.frustum_params)
         candidate_indices = self.kdtree.query_ball_point(center, radius)

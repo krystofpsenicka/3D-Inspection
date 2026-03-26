@@ -6,7 +6,7 @@ from typing import List, Tuple
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQueryBase
 from ..core.constants import NORM_EPS, KERNEL_N_SAMPLES, KERNEL_RADIUS
-from shared.geometry import direction_roll_to_quaternion
+from shared.geometry import direction_roll_to_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class KernelGreedyOptimizer:
         for sample in samples:
             direction = visible_centroid - sample
             direction /= (np.linalg.norm(direction) + NORM_EPS)
-            orientation = direction_roll_to_quaternion(direction)
+            orientation = direction_roll_to_rotation(direction)
             vis, _ = self.query.compute_visibility(sample, orientation)
             if len(vis) > len(best_vis):
                 best_vp = sample
@@ -108,7 +108,7 @@ class KernelGreedyOptimizer:
             full_visible = initial_visibility_map[best_candidate_idx]
             selected_viewpoints.append(ViewpointResult(
                 position=np.asarray(best_vp),
-                orientation=np.asarray(best_orient),
+                orientation=best_orient,
                 visible_indices=np.asarray(full_visible),
                 coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,

@@ -4,17 +4,16 @@ Geometry utils.
 
 from __future__ import annotations
 
+import cupy as cp
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 
-def direction_to_quaternion(direction: np.ndarray) -> np.ndarray:
-    """Convert a unit view-direction vector to quaternion [qw, qx, qy, qz].
+def direction_to_rotation(direction: np.ndarray) -> Rotation:
+    """Rotation that maps the local +X axis to *direction*.
 
-    Convention: the camera looks along +X in its local frame, so this
-    computes the rotation that maps +X -> *direction*.
+    Convention: the camera looks along +X in its local frame.
     """
-    from scipy.spatial.transform import Rotation as R
-
     d = direction / (np.linalg.norm(direction) + 1e-12)
     forward = np.array([1.0, 0.0, 0.0])
 
@@ -23,35 +22,45 @@ def direction_to_quaternion(direction: np.ndarray) -> np.ndarray:
 
     if cross_norm < 1e-8:
         if np.dot(forward, d) > 0:
-            return np.array([1.0, 0.0, 0.0, 0.0])  # identity
+            return Rotation.identity()
         else:
-            return np.array([0.0, 0.0, 1.0, 0.0])  # 180 deg about Y
+            return Rotation.from_rotvec([0.0, np.pi, 0.0])  # 180° about Y
 
     axis = cross / cross_norm
     angle = np.arccos(np.clip(np.dot(forward, d), -1.0, 1.0))
-    rot = R.from_rotvec(axis * angle)
-    qx, qy, qz, qw = rot.as_quat()  # scipy returns [x,y,z,w]
-    return np.array([qw, qx, qy, qz])
+    return Rotation.from_rotvec(axis * angle)
 
 
-def direction_roll_to_quaternion(direction: np.ndarray, roll: float = 0.0) -> np.ndarray:
-    """Convert direction + roll (in radians) to quaternion [qw,qx,qy,qz]."""
-    from scipy.spatial.transform import Rotation as R
-
-    base_q = direction_to_quaternion(direction)  # [qw,qx,qy,qz]
+def direction_roll_to_rotation(direction: np.ndarray,
+                               roll: float = 0.0) -> Rotation:
+    """Direction + roll (radians) → Rotation."""
+    base = direction_to_rotation(direction)
     if abs(roll) < 1e-8:
-        return base_q
-    # Roll about the local X axis
-    roll_rot = R.from_rotvec(np.array([roll, 0.0, 0.0]))
-    base_rot = R.from_quat([base_q[1], base_q[2], base_q[3], base_q[0]])  # scipy xyzw
-    combined = base_rot * roll_rot  # apply roll in local frame
-    qx, qy, qz, qw = combined.as_quat()
-    return np.array([qw, qx, qy, qz])
+        return base
+    return base * Rotation.from_rotvec([roll, 0.0, 0.0])
 
 
-def quaternion_to_forward(q_wxyz: np.ndarray) -> np.ndarray:
-    """Extract forward direction (local X axis) from [qw,qx,qy,qz] quaternion."""
-    from scipy.spatial.transform import Rotation as R
+def directions_rolls_to_rotmats(directions_gpu, rolls_gpu):
+    """(N,3) unit directions + (N,) roll angles -> (N,3,3) rotation matrices (GPU).
 
-    rot = R.from_quat([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]])
-    return rot.as_matrix()[:, 0]
+    Convention: camera looks along local +X.
+    """
+    NORM_EPS = 1e-12
+    x = directions_gpu  # (N, 3) — forward axis
+
+    # Reference up vector; fall back to +Y when direction ≈ ±Z
+    up = cp.tile(cp.array([0.0, 0.0, 1.0], dtype=cp.float32), (len(x), 1))
+    up[cp.abs(x[:, 2]) > 0.99] = cp.array([0.0, 1.0, 0.0], dtype=cp.float32)
+
+    # y = normalize(up × x),  z = x × y
+    y = cp.cross(up, x)
+    y /= cp.maximum(cp.linalg.norm(y, axis=1, keepdims=True), NORM_EPS)
+    z = cp.cross(x, y)
+
+    # Apply roll around viewing axis
+    cos_r = cp.cos(rolls_gpu)[:, None]
+    sin_r = cp.sin(rolls_gpu)[:, None]
+    y_r = cos_r * y + sin_r * z
+    z_r = -sin_r * y + cos_r * z
+
+    return cp.stack([x, y_r, z_r], axis=-1)   # (N, 3, 3)

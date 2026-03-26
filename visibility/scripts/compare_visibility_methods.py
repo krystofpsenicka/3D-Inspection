@@ -181,10 +181,10 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7)
 
-    from shared.geometry import direction_roll_to_quaternion
+    from shared.geometry import direction_roll_to_rotation
     candidate_pos = target_points[:num_candidates] + normals[:num_candidates] * 1.5
     candidate_dir = -normals[:num_candidates]
-    candidates = [(pos, direction_roll_to_quaternion(d)) for pos, d in zip(candidate_pos, candidate_dir)]
+    candidates = [(pos, direction_roll_to_rotation(d)) for pos, d in zip(candidate_pos, candidate_dir)]
 
     return mesh, target_points, normals, frustum_params, candidates
 

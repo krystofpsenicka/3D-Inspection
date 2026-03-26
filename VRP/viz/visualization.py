@@ -60,8 +60,7 @@ def _traj8_to_pose(traj_pos: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     xyz = traj_pos[:3].copy().astype(np.float64)
     yaw, pitch, roll = float(traj_pos[3]), float(traj_pos[4]), float(traj_pos[5])
     rot = R.from_euler("ZYX", [yaw, pitch, roll])
-    qx, qy, qz, qw = rot.as_quat()
-    return xyz, np.array([qw, qx, qy, qz], dtype=np.float64)
+    return xyz, rot.as_quat(scalar_first=True).astype(np.float64)
 
 
 def _convert_trajectories(all_traj_positions: list) -> List[np.ndarray]:

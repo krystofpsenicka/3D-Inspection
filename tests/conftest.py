@@ -31,5 +31,11 @@ def corridor_og():
 
 
 @pytest.fixture
+def og(small_og):
+    """Alias for small_og — used by test_occupancy_grid."""
+    return small_og
+
+
+@pytest.fixture
 def rng():
     return np.random.RandomState(42)

@@ -89,7 +89,7 @@ class GreedyOptimizerCuda:
             full_visible_indices = cp.where(V[best])[0].get()
             selected_viewpoints.append(ViewpointResult(
                 position=np.asarray(best_vp),
-                orientation=np.asarray(best_orient),
+                orientation=best_orient,
                 visible_indices=full_visible_indices,
                 coverage_score=len(full_visible_indices) / self.num_points,
                 computation_time=0.0,
