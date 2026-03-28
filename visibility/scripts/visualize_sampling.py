@@ -17,9 +17,21 @@ import cupy as cp
 import open3d as o3d
 
 from visibility.core import FrustumParams, orient_normals_outward
-from visibility.sampling import TargetedViewpointSampler, DEViewpointSampler
+from visibility.sampling import TargetedViewpointSampler, OptimizingSampler, CMAESBackend
 from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
 from visibility.visualization import Visualizer
+
+
+def _V_to_vis_map(V_gpu):
+    """Convert (N, M) uint8 GPU matrix to {i: np.ndarray} dict for visualization."""
+    vis_map = {}
+    for i in range(len(V_gpu)):
+        indices = cp.where(V_gpu[i])[0].get()
+        if len(indices) > 0:
+            vis_map[i] = indices
+        else:
+            vis_map[i] = np.array([], dtype=np.int64)
+    return vis_map
 
 
 def load_mesh(mesh_path: str | None) -> o3d.geometry.TriangleMesh:
@@ -96,16 +108,18 @@ def main():
     )
 
     print("\nBuilding feasible regions...")
-    outside_pos, outside_w = sampler.get_feasible_data(
+    outside_pos_gpu, outside_w_gpu, _ = sampler.get_feasible_sampling_data(
         side="outside", curvature_weighting=curvature_weighting)
-    inside_pos, inside_w = sampler.get_feasible_data(
+    inside_pos_gpu, inside_w_gpu, _ = sampler.get_feasible_sampling_data(
         side="inside", curvature_weighting=curvature_weighting)
+    outside_pos, outside_w = cp.asnumpy(outside_pos_gpu), cp.asnumpy(outside_w_gpu)
+    inside_pos, inside_w = cp.asnumpy(inside_pos_gpu), cp.asnumpy(inside_w_gpu)
 
     print(f"  Outside: {len(outside_pos)} feasible positions")
     print(f"  Inside:  {len(inside_pos)} feasible positions")
 
     # --- Visualize free-space heatmap (Window 1) ---
-    mode_labels = {"normal": "SDF²", "curvature": "Curvature-Weighted", "resampling": "SDF²"}
+    mode_labels = {"normal": "SDF\u00b2", "curvature": "Curvature-Weighted", "resampling": "SDF\u00b2"}
     window_name = f"Free-Space Sampling Heatmap ({mode_labels[args.mode]})"
 
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
@@ -120,19 +134,25 @@ def main():
         # --- Normal / Curvature: sample and show all VPs (Window 2) ---
         print(f"\nSampling {args.num_viewpoints} viewpoints from {args.side} "
               f"(mode={args.mode})...")
-        candidates = sampler.sample(
+        pos_gpu, rot_gpu = sampler.sample(
             num_candidates=args.num_viewpoints,
             side=args.side,
             curvature_weighting=curvature_weighting)
 
-        if not candidates:
+        if len(pos_gpu) == 0:
             print("No valid viewpoints sampled — skipping visibility visualization.")
             return
 
-        print(f"  Sampled {len(candidates)} valid viewpoints.")
+        print(f"  Sampled {len(pos_gpu)} valid viewpoints.")
 
         vis_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
-        visibility_map, vis_time = vis_query.compute_visibility_batch(candidates)
+        V, vis_time = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
+        visibility_map = _V_to_vis_map(V)
+
+        # Transfer for visualization
+        pos_cpu = cp.asnumpy(pos_gpu)
+        rot_cpu = cp.asnumpy(rot_gpu)
+        candidates = list(zip(pos_cpu, rot_cpu))
 
         print_coverage_summary(visibility_map, len(target_points), vis_time)
         visualizer.visualize_all_visibility_results(visibility_map, candidates)
@@ -147,17 +167,24 @@ def main():
 
         # Phase 1: sample normal candidates
         print(f"  Sampling {n_normal} normal viewpoints from {args.side}...")
-        normal_candidates = sampler.sample(num_candidates=n_normal, side=args.side)
+        normal_pos_gpu, normal_rot_gpu = sampler.sample(
+            num_candidates=n_normal, side=args.side)
 
-        if not normal_candidates:
+        if len(normal_pos_gpu) == 0:
             print("No valid normal viewpoints sampled — aborting.")
             return
 
-        print(f"  Sampled {len(normal_candidates)} normal viewpoints.")
+        print(f"  Sampled {len(normal_pos_gpu)} normal viewpoints.")
 
         vis_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
-        normal_vis_map, normal_time = vis_query.compute_visibility_batch(
-            normal_candidates)
+        V_normal, normal_time = vis_query.compute_visibility_batch(
+            normal_pos_gpu, normal_rot_gpu)
+        normal_vis_map = _V_to_vis_map(V_normal)
+
+        # Transfer for visualization
+        normal_pos_cpu = cp.asnumpy(normal_pos_gpu)
+        normal_rot_cpu = cp.asnumpy(normal_rot_gpu)
+        normal_candidates = list(zip(normal_pos_cpu, normal_rot_cpu))
 
         normal_covered, normal_coverage = print_coverage_summary(
             normal_vis_map, len(target_points), normal_time, label="Normal VPs")
@@ -173,49 +200,52 @@ def main():
             return
 
         if args.resampling_strategy == "optimal":
-            # Build per-point coverage counts for DE
-            coverage_count_gpu = cp.zeros(len(target_points), dtype=cp.int32)
-            for v in normal_vis_map.values():
-                if len(v) > 0:
-                    coverage_count_gpu[cp.asarray(v)] += 1
+            # Build per-point coverage counts for optimisation
+            coverage_count_gpu = V_normal.astype(cp.int32).sum(axis=0)
 
-            de_sampler = DEViewpointSampler(
+            opt_sampler = OptimizingSampler(
                 mesh, target_points, normals, frustum_params.far,
                 collision_radius=args.collision_radius,
+                backend=CMAESBackend(),
             )
-            targeted_candidates = de_sampler.sample_de(
+            targeted_pos_gpu, targeted_rot_gpu = opt_sampler.sample_optimized(
                 n_targeted, coverage_count_gpu, vis_query,
-                existing_candidates=normal_candidates,
+                existing_pos_gpu=normal_pos_gpu,
+                existing_rot_gpu=normal_rot_gpu,
                 side=args.side, verbose=True)
 
-            if not targeted_candidates:
-                print("  No valid targeted viewpoints found via DE.")
+            if len(targeted_pos_gpu) == 0:
+                print("  No valid targeted viewpoints found via optimisation.")
                 visualizer.visualize_all_visibility_results(
                     normal_vis_map, normal_candidates)
                 return
 
-            targeted_vis_map = {}
-            targeted_vis_all, _ = vis_query.compute_visibility_batch(targeted_candidates)
-            for k, v in targeted_vis_all.items():
-                targeted_vis_map[k] = v
+            V_targeted, _ = vis_query.compute_visibility_batch(
+                targeted_pos_gpu, targeted_rot_gpu)
+            targeted_vis_map = _V_to_vis_map(V_targeted)
 
         else:
             # Random proximity-weighted targeted sampling
             print(f"  Sampling {n_targeted} targeted viewpoints...")
-            targeted_candidates = sampler.sample_targeted(
+            targeted_pos_gpu, targeted_rot_gpu = sampler.sample_targeted(
                 uncovered_indices, n_targeted, side=args.side)
 
-            if not targeted_candidates:
+            if len(targeted_pos_gpu) == 0:
                 print("  No valid targeted viewpoints sampled.")
                 visualizer.visualize_all_visibility_results(
                     normal_vis_map, normal_candidates)
                 return
 
-            print(f"  Sampled {len(targeted_candidates)} targeted viewpoints.")
+            print(f"  Sampled {len(targeted_pos_gpu)} targeted viewpoints.")
 
-            targeted_vis_map, _ = vis_query.compute_visibility_batch(
-                targeted_candidates)
-            targeted_vis_map = dict(targeted_vis_map)
+            V_targeted, _ = vis_query.compute_visibility_batch(
+                targeted_pos_gpu, targeted_rot_gpu)
+            targeted_vis_map = _V_to_vis_map(V_targeted)
+
+        # Transfer targeted arrays to CPU for visualization
+        targeted_pos_cpu = cp.asnumpy(targeted_pos_gpu)
+        targeted_rot_cpu = cp.asnumpy(targeted_rot_gpu)
+        targeted_candidates = list(zip(targeted_pos_cpu, targeted_rot_cpu))
 
         # Coverage summary for targeted VPs
         targeted_covered = set()

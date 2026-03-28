@@ -7,11 +7,11 @@ Usage:
 """
 import argparse
 import numpy as np
+import cupy as cp
 import open3d as o3d
 from time import time as get_time
-
-from visibility.core import FrustumParams, orient_normals_outward, get_frustum_basis_from_rotation
-from visibility.sampling import UniformViewpointSampler
+from visibility.core import FrustumParams, orient_normals_outward
+from visibility.sampling import WeightedViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
@@ -72,7 +72,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
         geometries.append(sphere)
 
     pos, orientation = viewpoints[vp_index]
-    forward = orientation.as_matrix()[:, 0]
+    forward = orientation[:, 0]
     arrow_length = frustum_params.far * 0.2
     arrow_end = pos + forward * arrow_length
     arrow = o3d.geometry.LineSet()
@@ -84,7 +84,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
     # Build frustum lineset without constructing a full Visualizer
     half_angle = frustum_params.fov_y / 2.0
     far_half = frustum_params.far * np.tan(half_angle)
-    _, right, up = get_frustum_basis_from_rotation(orientation)
+    _, right, up = rotmat[:, 0], rotmat[:, 1], rotmat[:, 2]
     far_center = pos + forward * frustum_params.far
     r, u = right * far_half, up * far_half
     f_corners = [pos, far_center + r + u, far_center - r + u,
@@ -130,9 +130,9 @@ def main():
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
-    # --- Viewpoints ---
-    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    viewpoints = sampler.sample(num_candidates=args.num_viewpoints, side="outside")
+    # --- Viewpoints (GPU arrays) ---
+    sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side="outside")
 
     # --- Instantiate both queries ---
     gt_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
@@ -140,12 +140,14 @@ def main():
     match args.method:
         case "epsilon":
             pred_query = EpsilonVisibilityQuery(target_points, normals, frustum_params)
+            pred_needs_cpu = True
         case "epsilon_cuda":
             pred_query = EpsilonVisibilityQueryCuda(target_points, normals, frustum_params)
+            pred_needs_cpu = False
         case _:
             raise ValueError(f"Unknown method: {args.method}")
 
-    print(f"\nComparing '{args.method}' vs raycast on {len(viewpoints)} viewpoints "
+    print(f"\nComparing '{args.method}' vs raycast on {len(pos_gpu)} viewpoints "
           f"({len(target_points)} surface points)...\n")
 
     header = f"{'VP':>4}  {'GT':>6}  {'Pred':>6}  {'TP':>6}  "
@@ -156,11 +158,19 @@ def main():
     precisions, recalls, f1s = [], [], []
     vp_results = []  # store (gt_set, pred_set) for visualization
 
-    for i, (pos, orientation) in enumerate(viewpoints):
+    for i in range(len(pos_gpu)):
         t0 = get_time()
 
-        gt_indices, _ = gt_query.compute_visibility(pos, orientation)
-        pred_indices, _ = pred_query.compute_visibility(pos, orientation)
+        # GPU queries accept CuPy
+        gt_indices, _ = gt_query.compute_visibility(pos_gpu[i], rot_gpu[i])
+
+        # CPU queries need numpy
+        if pred_needs_cpu:
+            pos_cpu_i = cp.asnumpy(pos_gpu[i])
+            rot_cpu_i = cp.asnumpy(rot_gpu[i])
+            pred_indices, _ = pred_query.compute_visibility(pos_cpu_i, rot_cpu_i)
+        else:
+            pred_indices, _ = pred_query.compute_visibility(pos_gpu[i], rot_gpu[i])
 
         elapsed = get_time() - t0
 
@@ -184,13 +194,18 @@ def main():
 
     # --- Summary ---
     print("\n" + "=" * 60)
-    print("SUMMARY (mean ± std across viewpoints)")
-    print(f"  Precision: {np.mean(precisions):.3f} ± {np.std(precisions):.3f}")
-    print(f"  Recall:    {np.mean(recalls):.3f} ± {np.std(recalls):.3f}")
-    print(f"  F1:        {np.mean(f1s):.3f} ± {np.std(f1s):.3f}")
+    print("SUMMARY (mean +/- std across viewpoints)")
+    print(f"  Precision: {np.mean(precisions):.3f} +/- {np.std(precisions):.3f}")
+    print(f"  Recall:    {np.mean(recalls):.3f} +/- {np.std(recalls):.3f}")
+    print(f"  F1:        {np.mean(f1s):.3f} +/- {np.std(f1s):.3f}")
     print("=" * 60)
 
     # --- Visual diff per viewpoint (reuse stored results) ---
+    # Build CPU viewpoints list for visualization
+    pos_cpu = cp.asnumpy(pos_gpu)
+    rot_cpu = cp.asnumpy(rot_gpu)
+    viewpoints = list(zip(pos_cpu, rot_cpu))
+
     print("\nOpening visual diff windows (close each to advance)...")
     for i, (gt_set, pred_set) in enumerate(vp_results):
         visualize_diff(mesh, target_points, gt_set, pred_set, viewpoints, i, frustum_params)

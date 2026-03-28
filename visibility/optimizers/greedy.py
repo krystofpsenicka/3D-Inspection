@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 from time import time as get_time
-from typing import List, Tuple
+from typing import List
 
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQueryBase
@@ -22,25 +22,33 @@ class GreedyOptimizer:
         self.num_points = visibility_query.num_points
         logger.info("[GreedyOptimizer] Initialized with %s.", type(visibility_query).__name__)
 
-    def optimize(self, candidates: List[Tuple[np.ndarray, np.ndarray]],
+    def optimize(self, positions, rotmats,
                  target_coverage: float = 0.95,
                  max_viewpoints: int = 50,
                  precomputed_visibility_map=None) -> OptimizationResult:
-        """Standard greedy set-cover optimization."""
-        logger.info("[GreedyOptimizer] Starting standard greedy optimization with %d candidates.", len(candidates))
+        """Standard greedy set-cover optimization.
+
+        Parameters
+        ----------
+        positions : array (N, 3)
+            Candidate positions (numpy or CuPy).
+        rotmats : array (N, 3, 3)
+            Candidate rotation matrices (numpy or CuPy).
+        """
+        n_cand = len(positions)
+        logger.info("[GreedyOptimizer] Starting standard greedy optimization with %d candidates.", n_cand)
         start_time = get_time()
 
-        if self.num_points == 0 or not candidates:
+        if self.num_points == 0 or n_cand == 0:
             return OptimizationResult("Greedy_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0)
 
         if precomputed_visibility_map is not None:
             initial_visibility_map = precomputed_visibility_map
             vis_comp_time = 0.0
         else:
-            initial_visibility_map, vis_comp_time = self.query.compute_visibility_batch(candidates)
+            initial_visibility_map, vis_comp_time = self.query.compute_visibility_batch(positions, rotmats)
 
         # Build per-candidate boolean visibility masks for fast scoring
-        n_cand = len(candidates)
         vis_masks = [None] * n_cand
         for idx in initial_visibility_map:
             mask = np.zeros(self.num_points, dtype=np.bool_)
@@ -75,7 +83,11 @@ class GreedyOptimizer:
                 logger.info("  [GreedyOptimizer] No candidate provides new coverage. Stopping.")
                 break
 
-            best_vp, best_orient = candidates[best_candidate_idx]
+            pos_i = positions[best_candidate_idx]
+            rot_i = rotmats[best_candidate_idx]
+            if hasattr(pos_i, 'get'):  # CuPy array
+                pos_i = pos_i.get()
+                rot_i = rot_i.get()
 
             uncovered &= ~vis_masks[best_candidate_idx]
             total_covered = self.num_points - int(uncovered.sum())
@@ -85,8 +97,8 @@ class GreedyOptimizer:
             # viewpoint), not just the incremental contribution.
             full_visible = initial_visibility_map[best_candidate_idx]
             selected_viewpoints.append(ViewpointResult(
-                position=np.asarray(best_vp),
-                orientation=best_orient,
+                position=np.asarray(pos_i),
+                orientation=np.asarray(rot_i),
                 visible_indices=np.asarray(full_visible),
                 coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,

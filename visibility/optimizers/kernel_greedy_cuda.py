@@ -2,12 +2,12 @@ import logging
 import numpy as np
 import cupy as cp
 from time import time as get_time
-from typing import List, Tuple
+from typing import List
 
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQueryBase
 from ..core.constants import NORM_EPS, KERNEL_N_SAMPLES, KERNEL_RADIUS
-from shared.geometry import direction_roll_to_rotation
+from shared.geometry import direction_roll_to_rotmat
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,12 @@ class KernelGreedyOptimizerCuda:
         logger.info("[KernelGreedyOptimizerCuda] Initialized with %s.", type(visibility_query).__name__)
 
     def _expand_gpu(self, vp, vis_indices, n_samples=KERNEL_N_SAMPLES, radius=KERNEL_RADIUS):
-        """GPU-accelerated expansion: sample n_samples positions around vp, pick best."""
+        """GPU-accelerated expansion: sample n_samples positions around vp, pick best.
+
+        Args:
+            vp:          numpy (3,) position.
+            vis_indices: CuPy int64 array of visible point indices.
+        """
         if len(vis_indices) == 0:
             return vp, vis_indices
 
@@ -37,55 +42,67 @@ class KernelGreedyOptimizerCuda:
         offsets *= scales
         vp_gpu = cp.asarray(vp, dtype=cp.float32)
         samples_gpu = vp_gpu + offsets          # (n_samples, 3) on GPU
-        samples_cpu = samples_gpu.get()         # bring back to call compute_visibility
 
-        # Compute centroid of currently visible points (for direction)
-        visible_centroid = np.mean(self.query.target_points[vis_indices], axis=0)
+        # Compute centroid of currently visible points on GPU
+        visible_centroid_gpu = cp.mean(
+            self.query.gpu_points[vis_indices], axis=0).astype(cp.float32)
 
         best_vp = vp
         best_vis = vis_indices
 
-        for sample in samples_cpu:
-            direction = visible_centroid - sample
-            direction /= (np.linalg.norm(direction) + NORM_EPS)
-            orientation = direction_roll_to_rotation(direction)
-            vis, _ = self.query.compute_visibility(sample, orientation)
+        for i in range(n_samples):
+            sample = samples_gpu[i]
+            direction = visible_centroid_gpu - sample
+            direction /= (cp.linalg.norm(direction) + NORM_EPS)
+            rotmat = direction_roll_to_rotmat(direction.get())
+            rotmat_gpu = cp.asarray(rotmat, dtype=cp.float32)
+            vis, _ = self.query.compute_visibility(sample, rotmat_gpu)
             if len(vis) > len(best_vis):
-                best_vp = sample
+                best_vp = sample.get()
                 best_vis = vis
 
         return best_vp, best_vis
 
-    def optimize(self, candidates: List[Tuple[np.ndarray, np.ndarray]],
+    def optimize(self, positions, rotmats,
                  target_coverage: float = 0.95,
                  max_viewpoints: int = 50) -> OptimizationResult:
-        """GPU greedy set-cover with random-sphere expansion."""
-        logger.info("[KernelGreedyOptimizerCuda] Starting optimization with %d candidates.", len(candidates))
+        """GPU greedy set-cover with random-sphere expansion.
+
+        Parameters
+        ----------
+        positions : array (N, 3)
+            Candidate positions (numpy or CuPy).
+        rotmats : array (N, 3, 3)
+            Candidate rotation matrices (numpy or CuPy).
+        """
+        n_cand = len(positions)
+        logger.info("[KernelGreedyOptimizerCuda] Starting optimization with %d candidates.", n_cand)
         start_time = get_time()
 
-        if self.num_points == 0 or not candidates:
+        if self.num_points == 0 or n_cand == 0:
             return OptimizationResult("KernelGreedyCuda_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0)
 
-        # 1. Pre-compute initial visibility for all candidates
-        vis_map, vis_comp_time = self.query.compute_visibility_batch(candidates)
+        # 1. Pre-compute initial visibility — (N, M) uint8 GPU matrix
+        V, vis_comp_time = self.query.compute_visibility_batch(positions, rotmats)
 
         # 2. Apply _expand_gpu to each candidate
-        n_cand = len(candidates)
         logger.info("[KernelGreedyOptimizerCuda] Expanding kernels for %d candidates...", n_cand)
-        expanded_entries = []  # list of (expanded_vp, orientation, expanded_vis_indices)
+        expanded_entries = []  # list of (expanded_vp, rotmat, expanded_vis_indices)
         for i in range(n_cand):
-            vp = np.asarray(candidates[i][0])
-            orientation = candidates[i][1]
-            initial_vis = vis_map[i]
+            vp = np.asarray(positions[i]) if not hasattr(positions[i], 'get') else positions[i].get()
+            rot_i = rotmats[i]
+            if hasattr(rot_i, 'get'):
+                rot_i = rot_i.get()
+            initial_vis = cp.where(V[i])[0]  # CuPy indices from matrix row
             exp_vp, exp_vis = self._expand_gpu(vp, initial_vis)
-            expanded_entries.append((exp_vp, orientation, exp_vis))
+            expanded_entries.append((exp_vp, rot_i, exp_vis))
 
-        # 3. Build dense GPU visibility matrix from expanded sets
+        # 3. Rebuild dense GPU visibility matrix from expanded sets
         n = len(expanded_entries)
         V = cp.zeros((n, self.num_points), dtype=cp.uint8)
         for i, (_, _, vis_idx) in enumerate(expanded_entries):
             if len(vis_idx) > 0:
-                V[i, cp.asarray(vis_idx, dtype=cp.int64)] = 1
+                V[i, vis_idx] = 1
 
         logger.info("[KernelGreedyOptimizerCuda] Visibility matrix on GPU: %s (%.1f MB)",
                     V.shape, V.nbytes / 1e6)
@@ -121,13 +138,13 @@ class KernelGreedyOptimizerCuda:
             total_covered = self.num_points - int(cp.sum(uncovered))
             coverage = total_covered / self.num_points
 
-            exp_vp, best_orient, _ = expanded_entries[best]
+            exp_vp, best_rot, _ = expanded_entries[best]
 
             # Store the *full* visibility set, not just the incremental contribution
             full_visible_indices = cp.where(V[best])[0].get()
             selected_viewpoints.append(ViewpointResult(
-                position=exp_vp,
-                orientation=best_orient,
+                position=np.asarray(exp_vp),
+                orientation=np.asarray(best_rot),
                 visible_indices=full_visible_indices,
                 coverage_score=len(full_visible_indices) / self.num_points,
                 computation_time=0.0,
@@ -151,5 +168,5 @@ class KernelGreedyOptimizerCuda:
             redundancy=redundancy,
             visibility_computation_time=vis_comp_time,
             optimization_time=optimization_time,
-            visibility_map=vis_map,
+            visibility_map=None,
         )

@@ -39,6 +39,7 @@ import sys
 from dataclasses import asdict
 from time import time as get_time
 
+import cupy as cp
 import numpy as np
 
 # ── Ensure repo root is on sys.path ──────────────────────────────────────────
@@ -109,7 +110,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resampling_strategy", choices=["random", "optimal"],
                    default="optimal",
                    help="Targeted resampling strategy: 'random' (proximity-weighted) "
-                        "or 'optimal' (Differential Evolution).")
+                        "or 'optimal' (CMA-ES).")
     p.add_argument("--k_coverage", type=int, default=1,
                    help="Coverage redundancy: sample until each point is covered "
                         "by at least k viewpoints (Glorieux 2020). Default: 1.")
@@ -175,11 +176,7 @@ def main() -> None:
         format="%(levelname)-8s %(name)s: %(message)s",
     )
     np.random.seed(args.seed)
-    try:
-        import cupy as cp
-        cp.random.seed(args.seed)
-    except ImportError:
-        pass
+    cp.random.seed(args.seed)
 
     MESH_TARGET_LENGTH = args.mesh_target_length
     MESH_PATH = _vrp_cfg.MESH_PATH
@@ -267,7 +264,7 @@ def main() -> None:
         logger.info("  Targeted resampling: ENABLED (fraction=%.2f, strategy=%s)",
                     args.resample_fraction, args.resampling_strategy)
 
-    from visibility.sampling import UniformViewpointSampler, TargetedViewpointSampler, DEViewpointSampler
+    from visibility.sampling import WeightedViewpointSampler, TargetedViewpointSampler, OptimizingSampler, CMAESBackend
 
     sampler = TargetedViewpointSampler(
         mesh=o3d_mesh,
@@ -303,83 +300,81 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 5 – Greedy set cover at target coverage
     # ══════════════════════════════════════════════════════════════════════
-    from visibility.optimizers.lazy_greedy import LazyGreedyOptimizer
-    optimizer = LazyGreedyOptimizer(raycast_query)
+    from visibility.optimizers.lazy_greedy_cuda import LazyGreedyOptimizerCuda
+    optimizer = LazyGreedyOptimizerCuda(raycast_query)
 
     if args.resample_fraction > 0:
-        import cupy as _cp
-
         n_targeted = int(args.num_candidates * args.resample_fraction)
         n_uniform = args.num_candidates - n_targeted
 
         # Phase 1: uniform sampling
         logger.info("[3–5/9] Sampling %d uniform + %d targeted (%s) …",
                     n_uniform, n_targeted, args.resampling_strategy)
-        candidates = sampler.sample(
+        pos_gpu, rot_gpu = sampler.sample(
             n_uniform, side="outside",
             curvature_weighting=args.curvature_weighting)
-        vis_map, _ = raycast_query.compute_visibility_batch(candidates)
+        V, _ = raycast_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
         # Phase 2: build per-point coverage counts and identify under-covered
-        coverage_count_gpu = _cp.zeros(raycast_query.num_points, dtype=_cp.int32)
-        for vis_indices in vis_map.values():
-            if len(vis_indices) > 0:
-                coverage_count_gpu[_cp.asarray(vis_indices)] += 1
+        coverage_count_gpu = V.astype(cp.int32).sum(axis=0)
         under_k_mask = coverage_count_gpu < args.k_coverage
-        uncovered = _cp.asnumpy(_cp.where(under_k_mask)[0])
+        uncovered = cp.asnumpy(cp.where(under_k_mask)[0])
 
         if len(uncovered) > 0 and n_targeted > 0:
             if args.resampling_strategy == "optimal":
-                # DE-based iterative optimization
-                de_sampler = DEViewpointSampler(
+                # Optimisation-based iterative resampling
+                opt_sampler = OptimizingSampler(
                     mesh=o3d_mesh, target_points=target_points,
                     normals=normals, frustum_far=args.frustum_far,
                     collision_radius=_vrp_cfg.ROBOT_RADIUS,
                     occupancy_grid=sampling_og,
+                    backend=CMAESBackend(),
                 )
-                de_cands = de_sampler.sample_de(
+                opt_pos_gpu, opt_rot_gpu = opt_sampler.sample_optimized(
                     n_targeted, coverage_count_gpu, raycast_query,
-                    existing_candidates=candidates,
+                    existing_pos_gpu=pos_gpu,
+                    existing_rot_gpu=rot_gpu,
                     k_coverage=args.k_coverage)
-                new_vis, _ = raycast_query.compute_visibility_batch(de_cands)
-                offset = len(candidates)
-                for k, v in new_vis.items():
-                    vis_map[k + offset] = v
-                candidates.extend(de_cands)
+                if len(opt_pos_gpu) > 0:
+                    V_new, _ = raycast_query.compute_visibility_batch(opt_pos_gpu, opt_rot_gpu)
+                    V = cp.concatenate([V, V_new])
+                    pos_gpu = cp.concatenate([pos_gpu, opt_pos_gpu])
+                    rot_gpu = cp.concatenate([rot_gpu, opt_rot_gpu])
             else:
                 # Random targeted sampling (iterative for k-coverage tracking)
-                targeted_cands = sampler.sample_targeted(
+                targeted_pos_gpu, targeted_rot_gpu = sampler.sample_targeted(
                     uncovered, n_targeted, side="outside",
                     curvature_weighting=args.curvature_weighting,
-                    iterative=True, visibility_query=raycast_query,
+                    visibility_query=raycast_query,
                     k_coverage=args.k_coverage,
                     coverage_count_gpu=coverage_count_gpu)
-                if targeted_cands:
-                    new_vis, _ = raycast_query.compute_visibility_batch(targeted_cands)
-                    offset = len(candidates)
-                    for k, v in new_vis.items():
-                        vis_map[k + offset] = v
-                    candidates.extend(targeted_cands)
+                if len(targeted_pos_gpu) > 0:
+                    V_new, _ = raycast_query.compute_visibility_batch(targeted_pos_gpu, targeted_rot_gpu)
+                    V = cp.concatenate([V, V_new])
+                    pos_gpu = cp.concatenate([pos_gpu, targeted_pos_gpu])
+                    rot_gpu = cp.concatenate([rot_gpu, targeted_rot_gpu])
 
-        logger.info("  Total candidates after resampling: %d", len(candidates))
+        logger.info("  Total candidates after resampling: %d", len(pos_gpu))
         opt_result: OptimizationResult = optimizer.optimize(
-            candidates=candidates,
+            positions=pos_gpu,
+            rotmats=rot_gpu,
             target_coverage=args.target_coverage,
             max_viewpoints=1000,
-            precomputed_visibility_map=vis_map,
+            precomputed_visibility_map=V,
         )
     else:
         # Original flow: sample → greedy computes visibility internally
-        candidates = sampler.sample(
+        pos_gpu, rot_gpu = sampler.sample(
             num_candidates=args.num_candidates,
             side="outside",
             curvature_weighting=args.curvature_weighting,
         )
-        logger.info("  Generated %d candidates.", len(candidates))
+        logger.info("  Generated %d candidates.", len(pos_gpu))
         logger.info("[5/9] Running greedy set cover at %.0f%% (%d candidates) …",
-                    args.target_coverage * 100, len(candidates))
+                    args.target_coverage * 100, len(pos_gpu))
         opt_result: OptimizationResult = optimizer.optimize(
-            candidates=candidates,
+            positions=pos_gpu,
+            rotmats=rot_gpu,
             target_coverage=args.target_coverage,
             max_viewpoints=1000,
         )
@@ -394,10 +389,11 @@ def main() -> None:
     logger.info("[6/9] Converting %d viewpoints to VRP waypoints …",
                 opt_result.num_viewpoints)
 
+    from scipy.spatial.transform import Rotation
     selected_wp_7dof = np.zeros((opt_result.num_viewpoints, 7), dtype=np.float64)
     for i, vp in enumerate(opt_result.viewpoints):
         selected_wp_7dof[i, :3] = vp.position
-        selected_wp_7dof[i, 3:] = vp.orientation.as_quat(scalar_first=True)
+        selected_wp_7dof[i, 3:] = Rotation.from_matrix(vp.orientation).as_quat(scalar_first=True)
 
     logger.info("  Waypoints array shape: %s", selected_wp_7dof.shape)
 
@@ -552,7 +548,8 @@ def main() -> None:
         "target_points": target_points,
         "normals": normals,
         # Candidates
-        "all_candidates": candidates,   # List[(pos, dir)]
+        "all_positions": cp.asnumpy(pos_gpu),
+        "all_rotmats": cp.asnumpy(rot_gpu),
         # Visibility
         "visibility_map": visibility_map,
         # Frustum
@@ -584,7 +581,7 @@ def main() -> None:
     logger.info("=" * 70)
     logger.info("Pipeline complete in %.1f s.  Saved to: %s", elapsed, args.output)
     logger.info("  Pointcloud   : %d points", len(target_points))
-    logger.info("  Candidates   : %d", len(candidates))
+    logger.info("  Candidates   : %d", len(pos_gpu))
     logger.info("  Selected VPs : %d", opt_result.num_viewpoints)
     logger.info("  Coverage     : %.2f%%", opt_result.total_coverage * 100)
     logger.info("  Robots       : %d", args.num_robots)

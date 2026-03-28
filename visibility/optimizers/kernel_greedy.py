@@ -1,12 +1,12 @@
 import logging
 import numpy as np
 from time import time as get_time
-from typing import List, Tuple
+from typing import List
 
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQueryBase
 from ..core.constants import NORM_EPS, KERNEL_N_SAMPLES, KERNEL_RADIUS
-from shared.geometry import direction_roll_to_rotation
+from shared.geometry import direction_roll_to_rotmat
 
 logger = logging.getLogger(__name__)
 
@@ -43,25 +43,34 @@ class KernelGreedyOptimizer:
         for sample in samples:
             direction = visible_centroid - sample
             direction /= (np.linalg.norm(direction) + NORM_EPS)
-            orientation = direction_roll_to_rotation(direction)
-            vis, _ = self.query.compute_visibility(sample, orientation)
+            rotmat = direction_roll_to_rotmat(direction)
+            vis, _ = self.query.compute_visibility(sample, rotmat)
             if len(vis) > len(best_vis):
                 best_vp = sample
                 best_vis = vis
 
         return best_vp, best_vis
 
-    def optimize(self, candidates: List[Tuple[np.ndarray, np.ndarray]],
+    def optimize(self, positions, rotmats,
                  target_coverage: float = 0.95,
                  max_viewpoints: int = 50) -> OptimizationResult:
-        """Greedy set-cover with kernel expansion."""
-        logger.info("[KernelGreedyOptimizer] Starting optimization with %d candidates.", len(candidates))
+        """Greedy set-cover with kernel expansion.
+
+        Parameters
+        ----------
+        positions : array (N, 3)
+            Candidate positions (numpy or CuPy).
+        rotmats : array (N, 3, 3)
+            Candidate rotation matrices (numpy or CuPy).
+        """
+        n_cand = len(positions)
+        logger.info("[KernelGreedyOptimizer] Starting optimization with %d candidates.", n_cand)
         start_time = get_time()
 
-        if self.num_points == 0 or not candidates:
+        if self.num_points == 0 or n_cand == 0:
             return OptimizationResult("KernelGreedy_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0)
 
-        initial_visibility_map, vis_comp_time = self.query.compute_visibility_batch(candidates)
+        initial_visibility_map, vis_comp_time = self.query.compute_visibility_batch(positions, rotmats)
 
         uncovered = set(range(self.num_points))
         selected_viewpoints: List[ViewpointResult] = []
@@ -81,7 +90,7 @@ class KernelGreedyOptimizer:
             best_score = 0
 
             for candidate_idx in remaining_candidate_indices:
-                vp = np.asarray(candidates[candidate_idx][0])
+                vp = np.asarray(positions[candidate_idx])
                 visible_indices = initial_visibility_map[candidate_idx]
 
                 # Kernel expansion
@@ -99,7 +108,11 @@ class KernelGreedyOptimizer:
                 logger.info("  [KernelGreedyOptimizer] No candidate provides new coverage. Stopping.")
                 break
 
-            best_vp, best_orient = candidates[best_candidate_idx]
+            pos_i = positions[best_candidate_idx]
+            rot_i = rotmats[best_candidate_idx]
+            if hasattr(pos_i, 'get'):  # CuPy array
+                pos_i = pos_i.get()
+                rot_i = rot_i.get()
 
             uncovered -= best_expanded_set
             coverage = 1.0 - len(uncovered) / self.num_points
@@ -107,8 +120,8 @@ class KernelGreedyOptimizer:
             # Store the *full* visibility set, not just the incremental contribution
             full_visible = initial_visibility_map[best_candidate_idx]
             selected_viewpoints.append(ViewpointResult(
-                position=np.asarray(best_vp),
-                orientation=best_orient,
+                position=np.asarray(pos_i),
+                orientation=np.asarray(rot_i),
                 visible_indices=np.asarray(full_visible),
                 coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,

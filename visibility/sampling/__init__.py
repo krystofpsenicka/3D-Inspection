@@ -1,1 +1,8 @@
-from .samplers import ViewpointSamplerBase, UniformViewpointSampler, TargetedViewpointSampler, DEViewpointSampler
+from .samplers import (
+    ViewpointSamplerBase,
+    WeightedViewpointSampler,
+    TargetedViewpointSampler,
+    OptimizingSampler,
+    OptimizationBackend,
+    CMAESBackend,
+)

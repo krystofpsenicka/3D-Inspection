@@ -14,7 +14,7 @@ import heapq
 import logging
 import numpy as np
 from time import time as get_time
-from typing import Dict, List, Tuple
+from typing import List
 
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQueryBase
@@ -37,15 +37,26 @@ class LazyGreedyOptimizer:
 
     def optimize(
         self,
-        candidates: List[Tuple[np.ndarray, np.ndarray]],
+        positions,
+        rotmats,
         target_coverage: float = 0.95,
         max_viewpoints: int = 50,
         precomputed_visibility_map=None,
     ) -> OptimizationResult:
-        logger.info("[LazyGreedy] Starting with %d candidates.", len(candidates))
+        """Lazy greedy set-cover optimization.
+
+        Parameters
+        ----------
+        positions : array (N, 3)
+            Candidate positions (numpy or CuPy).
+        rotmats : array (N, 3, 3)
+            Candidate rotation matrices (numpy or CuPy).
+        """
+        n_cand = len(positions)
+        logger.info("[LazyGreedy] Starting with %d candidates.", n_cand)
         start_time = get_time()
 
-        if self.num_points == 0 or not candidates:
+        if self.num_points == 0 or n_cand == 0:
             return OptimizationResult(
                 "LazyGreedy_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0,
             )
@@ -56,9 +67,8 @@ class LazyGreedyOptimizer:
             vis_comp_time = 0.0
         else:
             vis_map, vis_comp_time = self.query.compute_visibility_batch(
-                candidates
+                positions, rotmats
             )
-        n_cand = len(candidates)
 
         # Build per-candidate boolean visibility masks for fast scoring
         vis_masks: List[np.ndarray] = [np.zeros(0)] * n_cand
@@ -111,13 +121,18 @@ class LazyGreedyOptimizer:
             total_covered = self.num_points - int(uncovered.sum())
             coverage = total_covered / self.num_points
 
-            best_vp, best_orient = candidates[best_idx]
+            pos_i = positions[best_idx]
+            rot_i = rotmats[best_idx]
+            if hasattr(pos_i, 'get'):  # CuPy array
+                pos_i = pos_i.get()
+                rot_i = rot_i.get()
+
             # Store the *full* visibility set (all points visible from this
             # viewpoint), not just the incremental contribution.
             full_visible = vis_map[best_idx]
             selected_viewpoints.append(ViewpointResult(
-                position=np.asarray(best_vp),
-                orientation=best_orient,
+                position=np.asarray(pos_i),
+                orientation=np.asarray(rot_i),
                 visible_indices=np.asarray(full_visible),
                 coverage_score=len(full_visible) / self.num_points,
                 computation_time=0.0,

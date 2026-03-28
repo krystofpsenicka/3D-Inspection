@@ -2,7 +2,7 @@ import logging
 import numpy as np
 import cupy as cp
 from time import time as get_time
-from typing import List, Tuple
+from typing import List
 
 from ..core.types import ViewpointResult, OptimizationResult
 from ..core.base import VisibilityQueryBase
@@ -22,29 +22,28 @@ class GreedyOptimizerCuda:
         self.num_points = visibility_query.num_points
         logger.info("[GreedyOptimizerCuda] Initialized with %s.", type(visibility_query).__name__)
 
-    def optimize(self, candidates: List[Tuple[np.ndarray, np.ndarray]],
+    def optimize(self, positions, rotmats,
                  target_coverage: float = 0.95,
                  max_viewpoints: int = 50) -> OptimizationResult:
-        """GPU greedy set-cover optimization."""
+        """GPU greedy set-cover optimization.
+
+        Parameters
+        ----------
+        positions : array (N, 3)
+            Candidate positions (numpy or CuPy).
+        rotmats : array (N, 3, 3)
+            Candidate rotation matrices (numpy or CuPy).
+        """
+        n_candidates = len(positions)
         logger.info("[GreedyOptimizerCuda] Starting GPU greedy optimization with %d candidates.",
-                    len(candidates))
+                    n_candidates)
         start_time = get_time()
 
-        if self.num_points == 0 or not candidates:
+        if self.num_points == 0 or n_candidates == 0:
             return OptimizationResult("GreedyCuda_Empty", [], 0.0, 0, 0.0, [], 0.0, 0.0, 0.0)
 
-        # Pre-compute visibility for all candidates
-        initial_visibility_map, vis_comp_time = \
-            self.query.compute_visibility_batch(candidates)
-
-        n_candidates = len(candidates)
-
-        # Build dense visibility matrix on GPU (n_candidates x n_points, uint8)
-        V = cp.zeros((n_candidates, self.num_points), dtype=cp.uint8)
-        for i in range(n_candidates):
-            visible_indices = initial_visibility_map[i]
-            if len(visible_indices) > 0:
-                V[i, visible_indices] = 1
+        # Pre-compute visibility for all candidates — returns (N, M) uint8 GPU matrix
+        V, vis_comp_time = self.query.compute_visibility_batch(positions, rotmats)
 
         logger.info("[GreedyOptimizerCuda] Visibility matrix on GPU: %s (%.1f MB)",
                     V.shape, V.nbytes / 1e6)
@@ -64,7 +63,7 @@ class GreedyOptimizerCuda:
                 break
 
             # GPU matmul: score each candidate by number of newly covered points
-            # V @ uncovered gives (n_candidates,) — count of uncovered points each can see
+            # V @ uncovered gives (n_candidates,) -- count of uncovered points each can see
             scores = V.astype(cp.float32) @ uncovered.astype(cp.float32)
             scores[~candidate_mask] = 0
 
@@ -83,13 +82,17 @@ class GreedyOptimizerCuda:
             total_covered = self.num_points - int(cp.sum(uncovered))
             coverage = total_covered / self.num_points
 
-            best_vp, best_orient = candidates[best]
+            pos_i = positions[best]
+            rot_i = rotmats[best]
+            if hasattr(pos_i, 'get'):  # CuPy array
+                pos_i = pos_i.get()
+                rot_i = rot_i.get()
 
             # Store the *full* visibility set, not just the incremental contribution
             full_visible_indices = cp.where(V[best])[0].get()
             selected_viewpoints.append(ViewpointResult(
-                position=np.asarray(best_vp),
-                orientation=best_orient,
+                position=np.asarray(pos_i),
+                orientation=np.asarray(rot_i),
                 visible_indices=full_visible_indices,
                 coverage_score=len(full_visible_indices) / self.num_points,
                 computation_time=0.0,
@@ -113,5 +116,5 @@ class GreedyOptimizerCuda:
             redundancy=redundancy,
             visibility_computation_time=vis_comp_time,
             optimization_time=optimization_time,
-            visibility_map=initial_visibility_map,
+            visibility_map=None,
         )

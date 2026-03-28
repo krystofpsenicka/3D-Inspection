@@ -1,4 +1,5 @@
 from .base import ViewpointSamplerBase
-from .uniform import UniformViewpointSampler
+from .weighted import WeightedViewpointSampler
 from .targeted import TargetedViewpointSampler
-from .de import DEViewpointSampler
+from .optimizing import OptimizingSampler, OptimizationBackend
+from .optimization_backends import CMAESBackend

@@ -6,13 +6,16 @@ from __future__ import annotations
 
 import cupy as cp
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 
-def direction_to_rotation(direction: np.ndarray) -> Rotation:
-    """Rotation that maps the local +X axis to *direction*.
+def direction_to_rotmat(direction: np.ndarray) -> np.ndarray:
+    """Rotation matrix that maps the local +X axis to *direction*.
 
-    Convention: the camera looks along +X in its local frame.
+    Convention: the camera looks along local +X.
+    Uses the Rodrigues formula (axis-angle → rotation matrix) directly.
+
+    Returns:
+        (3, 3) numpy rotation matrix.
     """
     d = direction / (np.linalg.norm(direction) + 1e-12)
     forward = np.array([1.0, 0.0, 0.0])
@@ -22,22 +25,38 @@ def direction_to_rotation(direction: np.ndarray) -> Rotation:
 
     if cross_norm < 1e-8:
         if np.dot(forward, d) > 0:
-            return Rotation.identity()
+            return np.eye(3)
         else:
-            return Rotation.from_rotvec([0.0, np.pi, 0.0])  # 180° about Y
+            # 180° about Y: Ry(π) = diag(-1, 1, -1)
+            return np.diag([-1.0, 1.0, -1.0])
 
     axis = cross / cross_norm
     angle = np.arccos(np.clip(np.dot(forward, d), -1.0, 1.0))
-    return Rotation.from_rotvec(axis * angle)
+
+    # Rodrigues formula: R = I + sin(θ)K + (1 - cos(θ))K²
+    K = np.array([
+        [0, -axis[2], axis[1]],
+        [axis[2], 0, -axis[0]],
+        [-axis[1], axis[0], 0],
+    ])
+    R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
+    return R
 
 
-def direction_roll_to_rotation(direction: np.ndarray,
-                               roll: float = 0.0) -> Rotation:
-    """Direction + roll (radians) → Rotation."""
-    base = direction_to_rotation(direction)
+def direction_roll_to_rotmat(direction: np.ndarray,
+                              roll: float = 0.0) -> np.ndarray:
+    """Direction + roll (radians) → (3,3) rotation matrix."""
+    base = direction_to_rotmat(direction)
     if abs(roll) < 1e-8:
         return base
-    return base * Rotation.from_rotvec([roll, 0.0, 0.0])
+    # Roll rotation about the local X axis
+    c, s = np.cos(roll), np.sin(roll)
+    Rx = np.array([
+        [1, 0, 0],
+        [0, c, -s],
+        [0, s, c],
+    ])
+    return base @ Rx
 
 
 def directions_rolls_to_rotmats(directions_gpu, rolls_gpu):

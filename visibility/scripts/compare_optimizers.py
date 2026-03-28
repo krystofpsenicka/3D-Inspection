@@ -3,6 +3,7 @@ Compare Greedy vs KernelGreedy optimizers using EpsilonVisibilityQuery,
 cross-validated with RaycastingVisibilityQuery for ground truth coverage.
 """
 import numpy as np
+import cupy as cp
 import open3d as o3d
 import os
 from time import time as get_time
@@ -10,7 +11,7 @@ from typing import Dict, Any
 import matplotlib.pyplot as plt
 
 from visibility.core.types import FrustumParams, OptimizationResult
-from visibility.sampling import UniformViewpointSampler
+from visibility.sampling import WeightedViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.optimizers.greedy import GreedyOptimizer
@@ -146,12 +147,13 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7)
 
-    from shared.geometry import direction_roll_to_rotation
+    from shared.geometry import direction_roll_to_rotmat
     candidate_pos = target_points[:num_candidates] + normals[:num_candidates] * 1.5
     candidate_dir = -normals[:num_candidates]
-    candidates = [(pos, direction_roll_to_rotation(d)) for pos, d in zip(candidate_pos, candidate_dir)]
+    positions = candidate_pos.astype(np.float32)
+    rotmats = np.array([direction_roll_to_rotmat(d) for d in candidate_dir])
 
-    return mesh, target_points, normals, frustum_params, candidates
+    return mesh, target_points, normals, frustum_params, positions, rotmats
 
 
 def run_comparison_pipeline():
@@ -168,16 +170,18 @@ def run_comparison_pipeline():
 
     print(f"\n[SETUP] Loading mesh and sampling target points ({NUM_TARGET_POINTS} points)")
 
-    mesh, target_points, normals, frustum_params, candidates = create_mock_data(
+    mesh, target_points, normals, frustum_params, positions, rotmats = create_mock_data(
         NUM_TARGET_POINTS,
         NUM_CANDIDATE_VPs,
     )
 
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
-    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
-    candidates = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
+    positions = cp.asnumpy(pos_gpu)
+    rotmats = cp.asnumpy(rot_gpu)
 
     # Initialize Epsilon query (used by both optimizers)
     visibility_query_epsilon = EpsilonVisibilityQuery(
@@ -204,7 +208,8 @@ def run_comparison_pipeline():
         print("\n--- Greedy Optimizer ---")
         optimizer_greedy = GreedyOptimizer(visibility_query_epsilon)
         result_greedy = optimizer_greedy.optimize(
-            candidates=candidates,
+            positions=positions,
+            rotmats=rotmats,
             target_coverage=TARGET_COVERAGE,
             max_viewpoints=MAX_VIEWPOINTS
         )
@@ -225,7 +230,8 @@ def run_comparison_pipeline():
         print("\n--- KernelGreedy Optimizer ---")
         optimizer_kernel = KernelGreedyOptimizer(visibility_query_epsilon)
         result_kernel = optimizer_kernel.optimize(
-            candidates=candidates,
+            positions=positions,
+            rotmats=rotmats,
             target_coverage=TARGET_COVERAGE,
             max_viewpoints=MAX_VIEWPOINTS
         )

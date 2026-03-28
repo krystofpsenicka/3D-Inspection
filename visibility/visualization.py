@@ -6,7 +6,6 @@ import PIL.Image
 from typing import Dict, Tuple
 
 from .core.types import FrustumParams, OptimizationResult
-from .core.base import get_frustum_basis, get_frustum_basis_from_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +99,7 @@ class Visualizer:
             geometries.append(vp_sphere)
 
         arrow_length = self.frustum_params.far * 0.2
-        forward = selected_vp_orient.as_matrix()[:, 0]
+        forward = selected_vp_orient[:, 0]
         arrow_end = selected_vp_pos + forward * arrow_length
 
         arrow_points = np.array([selected_vp_pos, arrow_end])
@@ -181,7 +180,7 @@ class Visualizer:
 
             # Direction arrow
             arrow_length = 0.5
-            forward = orientation.as_matrix()[:, 0]
+            forward = orientation[:, 0]
             arrow_end = pos + forward * arrow_length
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
@@ -257,7 +256,7 @@ class Visualizer:
                 geometries.append(visible_pcd)
 
             arrow_length = 0.5
-            forward = vp.orientation.as_matrix()[:, 0]
+            forward = vp.orientation[:, 0]
             arrow_end = vp.position + forward * arrow_length
             arrow_points = np.array([vp.position, arrow_end])
             arrow_lines = np.array([[0, 1]])
@@ -333,134 +332,6 @@ class Visualizer:
             image_frames[0].save(filename, save_all=True, append_images=image_frames[1:],
                                  duration=50, loop=0)
             logger.info("  - Saved GIF to %s", filename)
-
-    def visualize_solution_triangles(self, result: OptimizationResult,
-                                     mesh: o3d.geometry.TriangleMesh,
-                                     title: str = "Triangle Visibility Solution"):
-        """Visualize the complete solution with triangle-based visibility."""
-        logger.info("Visualizing triangle-based solution: %s", title)
-        logger.info("Total viewpoints: %d", result.num_viewpoints)
-
-        num_triangles = len(np.asarray(mesh.triangles))
-        geometries = []
-
-        all_visible_triangles = set()
-        for vp in result.viewpoints:
-            all_visible_triangles.update(vp.visible_indices)
-
-        triangle_colors = np.full((num_triangles, 3), [0.5, 0.5, 0.5], dtype=np.float64)
-
-        viewpoint_colors = plt.cm.tab20(np.linspace(0, 1, max(20, result.num_viewpoints)))
-
-        triangle_to_viewpoint = {}
-        for i, vp in enumerate(result.viewpoints):
-            for tri_idx in vp.visible_indices:
-                if tri_idx not in triangle_to_viewpoint:
-                    triangle_to_viewpoint[tri_idx] = i
-                    triangle_colors[tri_idx] = viewpoint_colors[i % len(viewpoint_colors)][:3]
-
-        colored_mesh = o3d.geometry.TriangleMesh(mesh)
-        colored_mesh.vertex_colors = o3d.utility.Vector3dVector([])
-        colored_mesh.triangle_colors = o3d.utility.Vector3dVector(triangle_colors)
-        colored_mesh.compute_vertex_normals()
-        geometries.append(colored_mesh)
-
-        for i, vp in enumerate(result.viewpoints):
-            color = viewpoint_colors[i % len(viewpoint_colors)][:3]
-
-            viewpoint_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.15)
-            viewpoint_sphere.translate(vp.position)
-            viewpoint_sphere.paint_uniform_color(color)
-            viewpoint_sphere.compute_vertex_normals()
-            geometries.append(viewpoint_sphere)
-
-            frustum = self.create_frustrum_lineset(vp.position, vp.orientation, self.frustum_params)
-            frustum.paint_uniform_color(color)
-            geometries.append(frustum)
-
-            arrow_length = 0.5
-            forward = vp.orientation.as_matrix()[:, 0]
-            arrow_end = vp.position + forward * arrow_length
-            arrow_points = np.array([vp.position, arrow_end])
-            arrow_lines = np.array([[0, 1]])
-            arrow = o3d.geometry.LineSet()
-            arrow.points = o3d.utility.Vector3dVector(arrow_points)
-            arrow.lines = o3d.utility.Vector2iVector(arrow_lines)
-            arrow.paint_uniform_color(color)
-            geometries.append(arrow)
-
-        vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name=f"{title} - {result.method_name}", width=1920, height=1080)
-
-        render_option = vis.get_render_option()
-        render_option.mesh_show_back_face = True
-        render_option.line_width = 2.0
-
-        for geom in geometries:
-            vis.add_geometry(geom)
-
-        vis.run()
-        vis.destroy_window()
-
-    def visualize_visibility_results_triangles(self,
-                                               visibility_map,
-                                               mesh: o3d.geometry.TriangleMesh,
-                                               candidate_index: int = 0,
-                                               candidates=None):
-        """Visualizes a specific candidate's triangle visibility."""
-        if not visibility_map:
-            logger.warning("[Visualizer] Visibility map is empty.")
-            return
-
-        index_to_visualize = candidate_index % len(visibility_map)
-        selected_vp_pos = np.asarray(candidates[index_to_visualize][0])
-        selected_vp_orient = candidates[index_to_visualize][1]
-        visible_triangle_indices = visibility_map[index_to_visualize]
-
-        geometries = []
-
-        num_triangles = len(np.asarray(mesh.triangles))
-        logger.info("[Visualizer] Visualizing Candidate %d: %d/%d visible triangles.",
-                    index_to_visualize, len(visible_triangle_indices), num_triangles)
-
-        triangle_colors = np.full((num_triangles, 3), [0.5, 0.5, 0.5], dtype=np.float64)
-        triangle_colors[visible_triangle_indices] = [0.0, 1.0, 0.0]
-
-        mesh_vis = o3d.geometry.TriangleMesh(mesh)
-        mesh_vis.vertex_colors = o3d.utility.Vector3dVector([])
-        mesh_vis.triangle_colors = o3d.utility.Vector3dVector(triangle_colors)
-        mesh_vis.compute_vertex_normals()
-        geometries.append(mesh_vis)
-
-        for i, key in enumerate(candidate_list):
-            pos = np.array(key[0])
-            color = [0.0, 0.0, 1.0]
-            radius = 0.01
-
-            if i == index_to_visualize:
-                color = [1.0, 0.0, 0.0]
-                radius = 0.015
-
-            vp_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
-            vp_sphere.translate(pos)
-            vp_sphere.paint_uniform_color(color)
-            geometries.append(vp_sphere)
-
-        arrow_length = self.frustum_params.far * 0.2
-        forward = selected_vp_orient.as_matrix()[:, 0]
-        arrow_end = selected_vp_pos + forward * arrow_length
-
-        arrow_points = np.array([selected_vp_pos, arrow_end])
-        arrow_lines = np.array([[0, 1]])
-
-        line_set = o3d.geometry.LineSet()
-        line_set.points = o3d.utility.Vector3dVector(arrow_points)
-        line_set.lines = o3d.utility.Vector2iVector(arrow_lines)
-        line_set.colors = o3d.utility.Vector3dVector([[1.0, 1.0, 0.0]])
-        geometries.append(line_set)
-
-        o3d.visualization.draw_geometries(geometries,
-                                          window_name=f"Triangle Visibility (Candidate {index_to_visualize})")
 
     def visualize_free_space(self,
                              outside_positions: np.ndarray, outside_weights: np.ndarray,
@@ -560,7 +431,7 @@ class Visualizer:
             frustum.paint_uniform_color(color)
             geometries.append(frustum)
 
-            forward = orientation.as_matrix()[:, 0]
+            forward = orientation[:, 0]
             arrow_end = pos + forward * 0.5
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
@@ -639,7 +510,7 @@ class Visualizer:
             frustum.paint_uniform_color(ORANGE)
             geometries.append(frustum)
 
-            forward = cur_orient.as_matrix()[:, 0]
+            forward = cur_orient[:, 0]
             arrow_end = cur_pos + forward * 0.5
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([cur_pos, arrow_end]))
@@ -744,7 +615,7 @@ class Visualizer:
             frustum.paint_uniform_color(base_color)
             geometries.append(frustum)
 
-            forward = orientation.as_matrix()[:, 0]
+            forward = orientation[:, 0]
             arrow_end = pos + forward * 0.5
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
@@ -780,7 +651,7 @@ class Visualizer:
         half_angle_rad = (params.fov_y / 2.0)
         far_half_size = params.far * np.tan(half_angle_rad)
 
-        forward, right, up = get_frustum_basis_from_rotation(orientation)
+        forward, right, up = rotmat[:, 0], rotmat[:, 1], rotmat[:, 2]
 
         far_center = viewpoint + forward * params.far
 

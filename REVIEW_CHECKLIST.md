@@ -99,7 +99,6 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 - [ x ] 56. `tests/test_serialization.py` (107 lines)
 
 ### VRP visualization
-- [ ] 57. `VRP/viz/visualize_esdf.py` (306 lines) — standalone ESDF renderer
 - [ ] 58. `VRP/viz/visualize_solution.py` (106 lines) — standalone solution viewer
 - [ ] 59. `VRP/viz/visualization.py` (353 lines) — main VRP visualization
 - [ ] 60. `VRP/viz/__init__.py` (1 line)
@@ -119,6 +118,7 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 - [ ] 70. `visibility/scripts/compare_gpu_vs_cpu.py` (277 lines)
 - [ ] 71. `visibility/scripts/compare_visibility_methods.py` (310 lines)
 - [ ] 72. `visibility/scripts/visualize_sampling.py` (284 lines)
+- [ ] 73. `visibility/scripts/visualize_esdf.py` (306 lines) — standalone ESDF renderer
 
 ### Main pipeline (the capstone)
 - [ ] 73. `run_full_pipeline.py` (565 lines) — end-to-end orchestration

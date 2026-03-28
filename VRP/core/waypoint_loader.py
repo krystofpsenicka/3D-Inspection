@@ -343,7 +343,8 @@ def load_waypoints_from_inspection(
     waypoints = []
     for vp in all_viewpoints:
         pos = np.asarray(vp.position, dtype=np.float32)
-        quat_wxyz = vp.orientation.as_quat(scalar_first=True).astype(np.float32)
+        from scipy.spatial.transform import Rotation as _R
+        quat_wxyz = _R.from_matrix(vp.orientation).as_quat(scalar_first=True).astype(np.float32)
         waypoints.append([
             float(pos[0]), float(pos[1]), float(pos[2]),
             float(quat_wxyz[0]), float(quat_wxyz[1]),

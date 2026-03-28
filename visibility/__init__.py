@@ -1,7 +1,14 @@
 from .core.types import FrustumParams, ViewpointResult, OptimizationResult, normalize_vector
-from .core.base import VisibilityQueryBase, VisibilityQuery, get_frustum_basis, get_frustum_bounding_sphere
+from .core.base import VisibilityQueryBase, VisibilityQuery, get_frustum_bounding_sphere
 from .core.base_cuda import VisibilityQueryCuda
-from .sampling import ViewpointSamplerBase, UniformViewpointSampler, TargetedViewpointSampler, DEViewpointSampler
+from .sampling import (
+    ViewpointSamplerBase,
+    WeightedViewpointSampler,
+    TargetedViewpointSampler,
+    OptimizingSampler,
+    OptimizationBackend,
+    CMAESBackend,
+)
 from .methods.raycast import RaycastingVisibilityQuery
 from .methods.epsilon import EpsilonVisibilityQuery
 from .methods.raycast_cuda import RaycastingVisibilityQueryCuda

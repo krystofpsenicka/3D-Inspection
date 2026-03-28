@@ -11,28 +11,6 @@ from .types import FrustumParams, ViewpointResult
 logger = logging.getLogger(__name__)
 
 
-def get_frustum_basis(direction):
-    """Calculate orthonormal basis for frustum."""
-    direction = direction / norm(direction)
-
-    if 1.0 - np.abs(direction[2]) < 1e-6:
-        temp_up = np.array([1.0, 0.0, 0.0])
-    else:
-        temp_up = np.array([0.0, 0.0, 1.0])
-
-    right = np.cross(direction, temp_up)
-    right = right / norm(right)
-    up = np.cross(right, direction)
-
-    return right, up
-
-
-def get_frustum_basis_from_rotation(rot):
-    """Extract (forward, right, up) from a Rotation object. +X is forward."""
-    mat = rot.as_matrix()
-    return mat[:, 0], mat[:, 1], mat[:, 2]  # forward, right, up
-
-
 def get_frustum_bounding_sphere(viewpoint, direction, params):
     """Calculate bounding sphere for frustum (for spatial query)."""
     center = viewpoint + direction * (params.near + params.far) / 2.0
@@ -54,22 +32,15 @@ class VisibilityQueryBase(ABC):
         self.num_points = num_points
 
     @abstractmethod
-    def compute_visibility(self, viewpoint: np.ndarray,
-                           orientation: np.ndarray) -> Tuple[np.ndarray, float]:
-        """Computes visible indices and computation time from a single viewpoint.
+    def compute_visibility(self, viewpoint, orientation) -> Tuple[np.ndarray, float]:
+        """Compute visible indices from a single viewpoint."""
+
+    def compute_visibility_batch(self, positions, orientations) -> Tuple[Dict[int, np.ndarray], float]:
+        """Compute visibility for a batch of viewpoints.
 
         Args:
-            viewpoint: 3D position.
-            orientation: quaternion [qw,qx,qy,qz].
-
-        Returns:
-            visible_indices: array of visible point indices.
-            computation_time: time taken to compute visibility for this viewpoint.
-        """
-        ...
-
-    def compute_visibility_batch(self, candidates: List[Tuple[np.ndarray, np.ndarray]]) -> Tuple[Dict[int, np.ndarray], float]:
-        """Computes visibility for a batch of viewpoints.
+            positions:    (N, 3) array of viewpoint positions.
+            orientations: (N, 3, 3) array of rotation matrices.
 
         Returns ``(visibility_map, total_time)`` where ``visibility_map``
         maps candidate index -> visible point indices array.
@@ -78,17 +49,18 @@ class VisibilityQueryBase(ABC):
         visibility_map: Dict[int, np.ndarray] = {}
         class_name = type(self).__name__
 
-        for i, (vp, orientation) in enumerate(candidates):
+        n = len(positions)
+        for i in range(n):
             if (i + 1) % 100 == 0:
                 logger.info("  [%s] ... computed %d / %d candidates",
-                            class_name, i + 1, len(candidates))
+                            class_name, i + 1, n)
 
-            visible_indices, _ = self.compute_visibility(vp, orientation)
+            visible_indices, _ = self.compute_visibility(positions[i], orientations[i])
             visibility_map[i] = visible_indices
 
         total_time = get_time() - start_time
         logger.info("[%s] Visibility computation for %d candidates finished in %.2fs",
-                    class_name, len(candidates), total_time)
+                    class_name, n, total_time)
         return visibility_map, total_time
 
     def compute_redundancy(self, viewpoints: List[ViewpointResult]) -> float:
@@ -119,12 +91,12 @@ class VisibilityQuery(VisibilityQueryBase):
         self.kdtree = KDTree(self.target_points)
         logger.info("[VisibilityQuery] Initialized base query for %d target points.", self.num_points)
 
-    def compute_visibility(self, viewpoint: np.ndarray, orientation: np.ndarray) -> Tuple[np.ndarray, float]:
+    def compute_visibility(self, viewpoint: np.ndarray, rotmat: np.ndarray) -> Tuple[np.ndarray, float]:
         raise NotImplementedError("Subclasses must implement compute_visibility")
 
-    def points_in_frustum_with_kdtree(self, viewpoint, orientation):
+    def points_in_frustum_with_kdtree(self, viewpoint: np.ndarray, rotmat: np.ndarray):
         """Frustum culling with KD-tree."""
-        forward, right, up = get_frustum_basis_from_rotation(orientation)
+        forward, right, up = rotmat[:, 0], rotmat[:, 1], rotmat[:, 2]
 
         center, radius = get_frustum_bounding_sphere(viewpoint, forward, self.frustum_params)
         candidate_indices = self.kdtree.query_ball_point(center, radius)

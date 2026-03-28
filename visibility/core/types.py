@@ -4,8 +4,6 @@ from time import time as get_time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from scipy.spatial.transform import Rotation
-
 from .constants import NORM_EPS
 
 
@@ -39,7 +37,7 @@ class EpsilonHyperparams:
 class ViewpointResult:
     """Result from a single viewpoint query/optimization step."""
     position: np.ndarray
-    orientation: Rotation
+    orientation: np.ndarray  # (3,3) rotation matrix
     visible_indices: np.ndarray
     coverage_score: float
     computation_time: float

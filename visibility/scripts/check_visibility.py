@@ -7,11 +7,12 @@ Usage:
 """
 import argparse
 import numpy as np
+import cupy as cp
 import open3d as o3d
 from time import time as get_time
 
 from visibility.core import FrustumParams, orient_normals_outward
-from visibility.sampling import UniformViewpointSampler
+from visibility.sampling import WeightedViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
@@ -63,10 +64,11 @@ def main():
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
     # --- Viewpoints ---
-    sampler = UniformViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    viewpoints = sampler.sample(num_candidates=args.num_viewpoints, side=args.side)
-        
+    sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side=args.side)
+
     # --- Query ---
+    use_gpu = args.method in ("epsilon_cuda", "raycast_cuda")
     match args.method:
         case "raycast":
             query = RaycastingVisibilityQuery(mesh, target_points, normals, frustum_params)
@@ -79,25 +81,36 @@ def main():
         case _:
             raise ValueError(f"Unknown method: {args.method}")
 
-    print(f"\nRunning '{args.method}' visibility on {len(viewpoints)} viewpoints "
+    n_vp = len(pos_gpu)
+    print(f"\nRunning '{args.method}' visibility on {n_vp} viewpoints "
           f"({len(target_points)} surface points)...\n")
 
+    # Transfer to CPU for CPU queries
+    if use_gpu:
+        positions, rotmats = pos_gpu, rot_gpu
+    else:
+        positions, rotmats = cp.asnumpy(pos_gpu), cp.asnumpy(rot_gpu)
+
     visibility_map = {}
-    for i, (pos, orientation) in enumerate(viewpoints):
+    for i in range(n_vp):
         t0 = get_time()
-        visible_indices, comp_time = query.compute_visibility(pos, orientation)
+        visible_indices, comp_time = query.compute_visibility(positions[i], rotmats[i])
         print(f"  VP {i}: visible {len(visible_indices)} / {len(target_points)}  "
               f"time={get_time() - t0:.3f} s")
         visibility_map[i] = visible_indices.astype(int)
 
-    # --- Visualize ---
+    # --- Visualize (CPU arrays + list of tuples) ---
+    pos_cpu = cp.asnumpy(pos_gpu) if use_gpu else positions
+    rot_cpu = cp.asnumpy(rot_gpu) if use_gpu else rotmats
+    candidates = list(zip(pos_cpu, rot_cpu))
+
     visualizer = Visualizer(mesh, target_points, normals, frustum_params)
     if args.separate:
         print("\nOpening visualization windows (close each to advance)...")
-        for i in range(len(viewpoints)):
-            visualizer.visualize_visibility_results(visibility_map, i, candidates=viewpoints)
+        for i in range(n_vp):
+            visualizer.visualize_visibility_results(visibility_map, i, candidates=candidates)
     else:
-        visualizer.visualize_all_visibility_results(visibility_map, candidates=viewpoints)
+        visualizer.visualize_all_visibility_results(visibility_map, candidates=candidates)
 
 
 if __name__ == "__main__":
