@@ -384,7 +384,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         N, M = len(positions), self.num_points
         V_flat = cp.zeros(N * M, dtype=cp.uint8)
 
-        # 1. Batch frustum cull (CUDA kernel)
+        # 1. Batch frustum cull
         frustum_mask = self.batch_points_in_frustum_gpu(positions, rotmats)
         vp_idx, pt_idx = cp.where(frustum_mask)
         del frustum_mask
@@ -395,7 +395,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         vp_idx_i32 = vp_idx.astype(cp.int32)
         pt_idx_i32 = pt_idx.astype(cp.int32)
 
-        # 2. Fused pair preprocessing (CUDA kernel)
+        # 2. Fused pair preprocessing
         points_f32 = cp.ascontiguousarray(self.gpu_points.astype(cp.float32))
         normals_f32 = cp.ascontiguousarray(self.gpu_normals.astype(cp.float32))
         positions_f32 = cp.ascontiguousarray(cp.asarray(positions, dtype=cp.float32))
@@ -428,7 +428,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         theta_shifted = pair_theta + THETA_SHIFT
         phi_shifted = pair_phi + PHI_SHIFT
 
-        # Segmented min/max via CUDA kernel (vp_idx is sorted)
+        # Segmented min/max via CUDA kernel
         unique_vps, first_idx, counts = cp.unique(
             vp_idx_i32, return_index=True, return_counts=True)
         n_active = len(unique_vps)
@@ -448,7 +448,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
              np.int32(int(n_active)))
         )
 
-        # Compute num_bins per VP on GPU
+        # Compute num_bins per VP
         eps_per_vp = cp.maximum(epsilon_per_vp, cp.float32(1e-6))
         num_bins_theta_vp = cp.maximum(
             cp.int32(1),
@@ -459,7 +459,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             cp.ceil((phi_max_vp - phi_min_vp + eps_per_vp) / eps_per_vp
                     ).astype(cp.int32))
 
-        # 5. Compute local bin keys for each pair
+        # 5. Compute bin keys for each pair
         num_bins_per_vp = (num_bins_theta_vp * num_bins_phi_vp).astype(cp.int32)
         bin_offsets = cp.zeros(N + 1, dtype=cp.int32)
         bin_offsets[1:] = cp.cumsum(num_bins_per_vp)
@@ -481,7 +481,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             0, pair_nbp - 1)
         local_bin = (t_bins * pair_nbp + p_bins).astype(cp.int32)
 
-        # 6. Scatter-min for occluders (CUDA kernel)
+        # 6. Scatter-min for occluders
         bin_min_dist = cp.full(total_bins, 0x7F7FFFFF, dtype=cp.int32)
         occ_mask = pair_front == 0
         occ_idx = cp.where(occ_mask)[0]
@@ -496,7 +496,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
                  np.int32(R_occ))
             )
 
-        # 7. Visibility check for front-facing pairs (CUDA kernel)
+        # 7. Visibility check for front-facing pairs
         front_mask = pair_front.astype(cp.bool_)
         front_idx = cp.where(front_mask)[0]
 

@@ -116,7 +116,7 @@ class OptimizingSampler(ViewpointSamplerBase):
 
         spatial_diag = float(cp.sqrt(cp.sum((bounds_hi_gpu - bounds_lo_gpu) ** 2)))
 
-        # 6-D bounds entirely on GPU: [x, y, z, theta, phi, roll]
+        # 6-D bounds: [x, y, z, theta, phi, roll]
         lo_gpu = cp.concatenate([
             bounds_lo_gpu,
             cp.array([0.0, 0.0, -cp.pi], dtype=cp.float32)
