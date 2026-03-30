@@ -21,13 +21,12 @@ from visibility.core import orient_normals_outward
 # CPU methods
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
-from visibility.optimizers.greedy import GreedyOptimizer
-from visibility.optimizers.kernel_greedy import KernelGreedyOptimizer
 
 # GPU methods
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
-from visibility.optimizers.greedy_cuda import GreedyOptimizerCuda
-from visibility.optimizers.kernel_greedy_cuda import KernelGreedyOptimizerCuda
+
+# Set-cover optimizers
+from visibility.set_cover import GreedySetCover, GreedySetCoverCuda
 
 # Optionally import GPU raycast (requires Triro/OptiX)
 try:
@@ -153,32 +152,23 @@ def benchmark_visibility_methods(queries, positions_cpu, rotmats_cpu,
     return results
 
 
-def benchmark_optimization(optimizer_configs, positions, rotmats):
-    """Benchmark optimizers given as (label, optimizer) pairs."""
+def benchmark_optimization(optimizer_configs, num_points):
+    """Benchmark optimizers given as (label, optimizer) tuples."""
     print("\n" + "=" * 70)
     print("GREEDY OPTIMIZER BENCHMARK")
     print("=" * 70)
 
-    subset_pos = positions[:min(500, len(positions))]
-    subset_rot = rotmats[:min(500, len(rotmats))]
-
     for label, optimizer in optimizer_configs:
         print(f"\n  --- {label} ---")
 
-        t0 = get_time()
         result = optimizer.optimize(
-            positions=subset_pos,
-            rotmats=subset_rot,
             target_coverage=TARGET_COVERAGE,
             max_viewpoints=MAX_VIEWPOINTS,
         )
-        total_t = get_time() - t0
 
         print(f"  [{label}] {result.num_viewpoints} VPs, "
               f"coverage={result.total_coverage*100:.1f}%, "
-              f"vis_time={result.visibility_computation_time:.2f}s, "
-              f"opt_time={result.optimization_time:.2f}s, "
-              f"total={total_t:.2f}s")
+              f"opt_time={result.optimization_time:.2f}s")
 
 
 def main():
@@ -249,16 +239,26 @@ def main():
     benchmark_visibility_methods(queries, positions, rotmats, pos_gpu, rot_gpu)
 
     # 3. Optimization benchmark
+    subset_pos = positions[:min(500, len(positions))]
+    subset_rot = rotmats[:min(500, len(rotmats))]
+    num_points = len(target_points)
+
+    V_eps_cpu, _ = q_epsilon_cpu.compute_visibility_batch(subset_pos, subset_rot)
+    V_eps_gpu, _ = q_epsilon_gpu.compute_visibility_batch(
+        cp.asarray(subset_pos), cp.asarray(subset_rot))
+    V_rc_cpu, _ = q_raycast_cpu.compute_visibility_batch(subset_pos, subset_rot)
+
     opt_configs = [
-        ("CPU Epsilon + CPU Greedy",       GreedyOptimizer(q_epsilon_cpu)),
-        ("GPU Epsilon + GPU Greedy",       GreedyOptimizerCuda(q_epsilon_gpu)),
-        ("CPU Epsilon + KernelGreedy",     KernelGreedyOptimizer(q_epsilon_cpu)),
-        ("GPU Epsilon + KernelGreedy GPU", KernelGreedyOptimizerCuda(q_epsilon_gpu)),
-        ("CPU Raycast + CPU Greedy",       GreedyOptimizer(q_raycast_cpu)),
+        ("CPU Epsilon + CPU Greedy", GreedySetCover(num_points, subset_pos, subset_rot, V_eps_cpu)),
+        ("GPU Epsilon + GPU Greedy", GreedySetCoverCuda(num_points, cp.asarray(subset_pos), cp.asarray(subset_rot), V_eps_gpu)),
+        ("CPU Raycast + CPU Greedy", GreedySetCover(num_points, subset_pos, subset_rot, V_rc_cpu)),
     ]
     if q_raycast_gpu is not None:
-        opt_configs.append(("GPU Raycast + GPU Greedy", GreedyOptimizerCuda(q_raycast_gpu)))
-    benchmark_optimization(opt_configs, positions, rotmats)
+        V_rc_gpu, _ = q_raycast_gpu.compute_visibility_batch(
+            cp.asarray(subset_pos), cp.asarray(subset_rot))
+        opt_configs.append(("GPU Raycast + GPU Greedy",
+                            GreedySetCoverCuda(num_points, cp.asarray(subset_pos), cp.asarray(subset_rot), V_rc_gpu)))
+    benchmark_optimization(opt_configs, num_points)
 
     print("\n" + "=" * 70)
     print("BENCHMARK COMPLETE")

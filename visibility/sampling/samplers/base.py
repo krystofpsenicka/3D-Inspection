@@ -2,6 +2,7 @@
 
 import logging
 import time
+from abc import ABC, abstractmethod
 
 import cupy as cp
 import numpy as np
@@ -13,7 +14,7 @@ from ..utils.sampling_space_builder import build_sampling_space
 logger = logging.getLogger(__name__)
 
 
-class ViewpointSamplerBase:
+class ViewpointSamplerBase(ABC):
     """
     Base class for viewpoint sampling.
 
@@ -53,6 +54,10 @@ class ViewpointSamplerBase:
                 "unreliable. Free-space sampling results could be incorrect."
             )
 
+        # Sphere restriction for expansion sampling
+        self._sphere_center = None   # CuPy float32 (3,) or None
+        self._sphere_radius = None   # float or None
+
         # Cache for feasible free-space data: (side, curvature_weighting) -> (centers_gpu, weights_gpu, coarse_res)
         self._feasible_cache = {}
 
@@ -74,6 +79,18 @@ class ViewpointSamplerBase:
         logger.info("[ViewpointSamplerBase] GPU init: %.2fs (SDF precompute + transfer). "
                     "GPU memory: %.1f MB", dt, gpu_mb)
 
+    # ── Sphere restriction ──────────────────────────────────────
+
+    def restrict_to_sphere(self, center: np.ndarray, radius: float):
+        """Restrict subsequent sampling to a sphere around *center*."""
+        self._sphere_center = cp.asarray(center, dtype=cp.float32)
+        self._sphere_radius = radius
+
+    def clear_restriction(self):
+        """Remove any active sphere restriction."""
+        self._sphere_center = None
+        self._sphere_radius = None
+
     # ── Feasible data access ────────────────────────────────────
 
     def get_feasible_sampling_data(self, side: str = "outside",
@@ -85,6 +102,9 @@ class ViewpointSamplerBase:
 
         Weights are normalized sdf² and curvature biased probabilities on GPU.
         Triggers the computation if not already cached.
+
+        If a sphere restriction is active, the returned centers and weights
+        are filtered to the sphere (voxelized approximation).
         """
         if min_distance is None:
             min_distance = self.min_clearance
@@ -103,4 +123,29 @@ class ViewpointSamplerBase:
             dt = time.perf_counter() - t0
             logger.info("[ViewpointSamplerBase] build_sampling_space: %.3fs", dt)
 
-        return self._feasible_cache[key]
+        centers_gpu, weights_gpu, coarse_res = self._feasible_cache[key]
+
+        # Apply sphere restriction if active
+        if self._sphere_center is not None:
+            dists = cp.linalg.norm(centers_gpu - self._sphere_center, axis=1)
+            mask = dists <= self._sphere_radius
+            centers_gpu = centers_gpu[mask]
+            weights_gpu = weights_gpu[mask]
+            # Re-normalize weights
+            w_sum = cp.sum(weights_gpu)
+            if w_sum > 0:
+                weights_gpu = weights_gpu / w_sum
+
+        return centers_gpu, weights_gpu, coarse_res
+
+
+class ProbabilisticSampler(ViewpointSamplerBase, ABC):
+    """Base class for samplers that generate N random candidate viewpoints."""
+
+    @abstractmethod
+    def sample(self, num_candidates: int, **kwargs) -> Tuple[cp.ndarray, cp.ndarray]:
+        """Sample candidate viewpoints.
+
+        Returns:
+            (positions_gpu, rotmats_gpu) — CuPy arrays (N, 3) and (N, 3, 3).
+        """

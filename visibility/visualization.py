@@ -222,43 +222,48 @@ class Visualizer:
         base_mesh.compute_vertex_normals()
         geometries.append(base_mesh)
 
-        all_covered = set()
-        for vp in result.viewpoints:
-            all_covered.update(vp.visible_indices)
+        # Transfer GPU arrays to CPU for visualization
+        positions_np = result.positions.get()
+        orientations_np = result.orientations.get()
+        vis_map_np = result.visibility_map.get()
 
-        uncovered_indices = set(range(len(self.target_points))) - all_covered
+        covered_mask = vis_map_np.any(axis=0)
+        uncovered_indices = np.where(~covered_mask)[0]
 
-        if uncovered_indices:
+        if len(uncovered_indices) > 0:
             uncovered_pcd = o3d.geometry.PointCloud()
-            uncovered_pcd.points = o3d.utility.Vector3dVector(self.target_points[list(uncovered_indices)])
+            uncovered_pcd.points = o3d.utility.Vector3dVector(self.target_points[uncovered_indices])
             uncovered_pcd.paint_uniform_color([1.0, 0.0, 0.0])
             geometries.append(uncovered_pcd)
 
         colors = plt.cm.tab20(np.linspace(0, 1, max(20, result.num_viewpoints)))
 
-        for i, vp in enumerate(result.viewpoints):
+        for i in range(result.num_viewpoints):
             color = colors[i % len(colors)][:3]
+            pos = positions_np[i]
+            rot = orientations_np[i]
+            vis = np.where(vis_map_np[i])[0]
 
             viewpoint_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.15)
-            viewpoint_sphere.translate(vp.position)
+            viewpoint_sphere.translate(pos)
             viewpoint_sphere.paint_uniform_color(color)
             viewpoint_sphere.compute_vertex_normals()
             geometries.append(viewpoint_sphere)
 
-            frustum = self.create_frustrum_lineset(vp.position, vp.orientation, self.frustum_params)
+            frustum = self.create_frustrum_lineset(pos, rot, self.frustum_params)
             frustum.paint_uniform_color(color)
             geometries.append(frustum)
 
-            if len(vp.visible_indices) > 0:
+            if len(vis) > 0:
                 visible_pcd = o3d.geometry.PointCloud()
-                visible_pcd.points = o3d.utility.Vector3dVector(self.target_points[vp.visible_indices])
+                visible_pcd.points = o3d.utility.Vector3dVector(self.target_points[vis])
                 visible_pcd.paint_uniform_color(color)
                 geometries.append(visible_pcd)
 
             arrow_length = 0.5
-            forward = vp.orientation[:, 0]
-            arrow_end = vp.position + forward * arrow_length
-            arrow_points = np.array([vp.position, arrow_end])
+            forward = rot[:, 0]
+            arrow_end = pos + forward * arrow_length
+            arrow_points = np.array([pos, arrow_end])
             arrow_lines = np.array([[0, 1]])
             arrow = o3d.geometry.LineSet()
             arrow.points = o3d.utility.Vector3dVector(arrow_points)
@@ -278,7 +283,7 @@ class Visualizer:
         geometries = self._create_solution_geometries(result)
 
         vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name=f"{title} - {result.method_name}", width=1920, height=1080)
+        vis.create_window(window_name=title, width=1920, height=1080)
 
         render_option = vis.get_render_option()
         render_option.point_size = 4.0

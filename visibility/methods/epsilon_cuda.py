@@ -10,7 +10,7 @@ from ..core.types import FrustumParams, EpsilonHyperparams
 from ..core.base_cuda import VisibilityQueryCuda
 from ..core.constants import (
     NORM_EPS, CUDA_BLOCK_SIZE, DELTA_AGG_FUNCS_CP, GAMMA_AGG_FUNCS_CP,
-    DELTA_DEFAULT, DELTA_SAMPLE_SIZE, GAMMA_FALLBACK_DIVISOR,
+    DELTA_DEFAULT, DELTA_SAMPLE_SIZE, GAMMA_FALLBACK_DIVISOR, GAMMA_PERCENTILE,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,45 +137,31 @@ void batch_check_visibility(
 ''', 'batch_check_visibility')
 
 
-_SEGMENTED_MINMAX_KERNEL = cp.RawKernel(r'''
+_PAIR_MINMAX_KERNEL = cp.RawKernel(r'''
 extern "C" __global__
-void segmented_minmax(
-    const float* pair_theta_shifted,  // (R,) shifted theta values per pair
-    const float* pair_phi_shifted,    // (R,) shifted phi values per pair
-    const int* segment_starts,        // (n_active,) first pair index for each active VP
-    const int* segment_lengths,       // (n_active,) number of pairs in each segment
-    const int* segment_vp_ids,        // (n_active,) which VP each segment belongs to
-    float* theta_min_per_vp,          // (N,) output
-    float* theta_max_per_vp,          // (N,) output
-    float* phi_min_per_vp,            // (N,) output
-    float* phi_max_per_vp,            // (N,) output
-    int n_active
+void pair_minmax(
+    const float* theta_shifted,   // (R,) shifted theta per pair
+    const float* phi_shifted,     // (R,) shifted phi per pair
+    const int* vp_indices,        // (R,) viewpoint index per pair
+    int* theta_min,               // (N,) output: min theta as int bits
+    int* theta_max,               // (N,) output: max theta as int bits
+    int* phi_min,                 // (N,) output: min phi as int bits
+    int* phi_max,                 // (N,) output: max phi as int bits
+    int R
 ) {
-    int seg = blockDim.x * blockIdx.x + threadIdx.x;
-    if (seg >= n_active) return;
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx >= R) return;
 
-    int vp = segment_vp_ids[seg];
-    int start = segment_starts[seg];
-    int len = segment_lengths[seg];
+    int vp = vp_indices[idx];
+    int t_int = __float_as_int(theta_shifted[idx]);
+    int p_int = __float_as_int(phi_shifted[idx]);
 
-    float t_min = 1e30f, t_max = -1e30f;
-    float p_min = 1e30f, p_max = -1e30f;
-
-    for (int i = start; i < start + len; i++) {
-        float t = pair_theta_shifted[i];
-        float p = pair_phi_shifted[i];
-        if (t < t_min) t_min = t;
-        if (t > t_max) t_max = t;
-        if (p < p_min) p_min = p;
-        if (p > p_max) p_max = p;
-    }
-
-    theta_min_per_vp[vp] = t_min;
-    theta_max_per_vp[vp] = t_max;
-    phi_min_per_vp[vp] = p_min;
-    phi_max_per_vp[vp] = p_max;
+    atomicMin(&theta_min[vp], t_int);
+    atomicMax(&theta_max[vp], t_int);
+    atomicMin(&phi_min[vp], p_int);
+    atomicMax(&phi_max[vp], p_int);
 }
-''', 'segmented_minmax')
+''', 'pair_minmax')
 
 
 class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
@@ -234,7 +220,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
 
     # ── Per-viewpoint epsilon ────────────────────────────────────────────
 
-    def _compute_epsilon_gpu(self, distances_gpu, front_facing_gpu):
+    def _compute_epsilon_gpu(self, distances_gpu: cp.ndarray, front_facing_gpu: cp.ndarray) -> float:
         """Compute per-viewpoint epsilon = 2*arctan(delta/(4*gamma))."""
         front_distances = distances_gpu[front_facing_gpu]
         gamma_func = GAMMA_AGG_FUNCS_CP[self.hp.gamma_method]
@@ -367,7 +353,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
 
     # ── Batch epsilon visibility ─────────────────────────────────────────
 
-    def compute_visibility_batch(self, positions, rotmats) -> Tuple[cp.ndarray, float]:
+    def compute_visibility_batch(self, positions: cp.ndarray, rotmats: cp.ndarray) -> Tuple[cp.ndarray, float]:
         """Batch epsilon visibility with multi-VP CUDA kernels.
 
         Uses 4 CUDA kernels: batch frustum cull, fused pair preprocessing,
@@ -386,20 +372,21 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
 
         # 1. Batch frustum cull
         frustum_mask = self.batch_points_in_frustum_gpu(positions, rotmats)
-        vp_idx, pt_idx = cp.where(frustum_mask)
+        pair_vp_indices, pair_pt_indices = cp.where(frustum_mask)
         del frustum_mask
-        R = len(vp_idx)
+        R = len(pair_vp_indices)
         if R == 0:
             return V_flat.reshape(N, M), get_time() - start
 
-        vp_idx_i32 = vp_idx.astype(cp.int32)
-        pt_idx_i32 = pt_idx.astype(cp.int32)
+        pair_vp_indices_i32 = pair_vp_indices.astype(cp.int32)
+        pair_pt_indices_i32 = pair_pt_indices.astype(cp.int32)
 
         # 2. Fused pair preprocessing
         points_f32 = cp.ascontiguousarray(self.gpu_points.astype(cp.float32))
         normals_f32 = cp.ascontiguousarray(self.gpu_normals.astype(cp.float32))
         positions_f32 = cp.ascontiguousarray(cp.asarray(positions, dtype=cp.float32))
 
+        # Output arrays for pairs (viewpoint, target point)
         pair_dist = cp.empty(R, dtype=cp.float32)
         pair_theta = cp.empty(R, dtype=cp.float32)
         pair_phi = cp.empty(R, dtype=cp.float32)
@@ -409,7 +396,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         _BATCH_PREPROCESS_KERNEL(
             (grid_size,), (CUDA_BLOCK_SIZE,),
             (points_f32, normals_f32, positions_f32,
-             vp_idx_i32, pt_idx_i32,
+             pair_vp_indices_i32, pair_pt_indices_i32,
              pair_dist, pair_theta, pair_phi, pair_front,
              np.float32(self.hp.back_face_threshold), np.int32(R))
         )
@@ -419,7 +406,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             epsilon_per_vp = cp.full(N, self.fixed_epsilon, dtype=cp.float32)
         else:
             epsilon_per_vp = self._compute_batch_epsilon(
-                vp_idx_i32, pair_dist, pair_front, N)
+                pair_vp_indices_i32, pair_dist, pair_front, N)
 
         # 4. Angular extents and bin parameters
         # Shift theta/phi to non-negative for segmented min/max
@@ -428,27 +415,27 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         theta_shifted = pair_theta + THETA_SHIFT
         phi_shifted = pair_phi + PHI_SHIFT
 
-        # Segmented min/max via CUDA kernel
-        unique_vps, first_idx, counts = cp.unique(
-            vp_idx_i32, return_index=True, return_counts=True)
-        n_active = len(unique_vps)
+        # Per-pair atomic min/max of angular extents
+        theta_min_int = cp.full(N, 0x7F7FFFFF, dtype=cp.int32)
+        theta_max_int = cp.full(N, 0x00000000, dtype=cp.int32)
+        phi_min_int = cp.full(N, 0x7F7FFFFF, dtype=cp.int32)
+        phi_max_int = cp.full(N, 0x00000000, dtype=cp.int32)
 
-        theta_min_vp = cp.zeros(N, dtype=cp.float32)
-        theta_max_vp = cp.zeros(N, dtype=cp.float32)
-        phi_min_vp = cp.zeros(N, dtype=cp.float32)
-        phi_max_vp = cp.zeros(N, dtype=cp.float32)
-
-        grid_seg = (int(n_active) + CUDA_BLOCK_SIZE - 1) // CUDA_BLOCK_SIZE
-        _SEGMENTED_MINMAX_KERNEL(
-            (grid_seg,), (CUDA_BLOCK_SIZE,),
-            (theta_shifted, phi_shifted,
-             first_idx.astype(cp.int32), counts.astype(cp.int32),
-             unique_vps.astype(cp.int32),
-             theta_min_vp, theta_max_vp, phi_min_vp, phi_max_vp,
-             np.int32(int(n_active)))
+        grid_mm = (R + CUDA_BLOCK_SIZE - 1) // CUDA_BLOCK_SIZE
+        _PAIR_MINMAX_KERNEL(
+            (grid_mm,), (CUDA_BLOCK_SIZE,),
+            (theta_shifted, phi_shifted, pair_vp_indices_i32,
+             theta_min_int, theta_max_int, phi_min_int, phi_max_int,
+             np.int32(R))
         )
 
+        theta_min_vp = theta_min_int.view(cp.float32)
+        theta_max_vp = theta_max_int.view(cp.float32)
+        phi_min_vp = phi_min_int.view(cp.float32)
+        phi_max_vp = phi_max_int.view(cp.float32)
+
         # Compute num_bins per VP
+        # Based on the extents of the frustum-culled points for each VP
         eps_per_vp = cp.maximum(epsilon_per_vp, cp.float32(1e-6))
         num_bins_theta_vp = cp.maximum(
             cp.int32(1),
@@ -466,13 +453,14 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         total_bins = int(bin_offsets[-1])
 
         # Per-pair bin assignment
-        pair_eps = epsilon_per_vp[vp_idx]
+        pair_eps = epsilon_per_vp[pair_vp_indices]
         pair_eps = cp.maximum(pair_eps, cp.float32(1e-6))
-        pair_theta_min = theta_min_vp[vp_idx]
-        pair_phi_min = phi_min_vp[vp_idx]
-        pair_nbt = num_bins_theta_vp[vp_idx]
-        pair_nbp = num_bins_phi_vp[vp_idx]
+        pair_theta_min = theta_min_vp[pair_vp_indices]
+        pair_phi_min = phi_min_vp[pair_vp_indices]
+        pair_nbt = num_bins_theta_vp[pair_vp_indices]
+        pair_nbp = num_bins_phi_vp[pair_vp_indices]
 
+        # Map each pair's theta/phi to a local bin index within its VP's grid
         t_bins = cp.clip(
             ((theta_shifted - pair_theta_min) / pair_eps).astype(cp.int32),
             0, pair_nbt - 1)
@@ -491,7 +479,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             grid_occ = (R_occ + CUDA_BLOCK_SIZE - 1) // CUDA_BLOCK_SIZE
             _BATCH_SCATTER_MIN_KERNEL(
                 (grid_occ,), (CUDA_BLOCK_SIZE,),
-                (vp_idx_i32[occ_idx], local_bin[occ_idx],
+                (pair_vp_indices_i32[occ_idx], local_bin[occ_idx],
                  pair_dist[occ_idx], bin_offsets, bin_min_dist,
                  np.int32(R_occ))
             )
@@ -505,7 +493,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             grid_front = (R_front + CUDA_BLOCK_SIZE - 1) // CUDA_BLOCK_SIZE
             _BATCH_VISIBILITY_CHECK_KERNEL(
                 (grid_front,), (CUDA_BLOCK_SIZE,),
-                (vp_idx_i32[front_idx], pt_idx_i32[front_idx],
+                (pair_vp_indices_i32[front_idx], pair_pt_indices_i32[front_idx],
                  local_bin[front_idx], pair_dist[front_idx],
                  bin_offsets, bin_min_dist,
                  V_flat, np.int32(R_front), np.int32(M))
@@ -517,44 +505,45 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
                     "%d bins, %.2fs", N, R, total_bins, total_time)
         return V, total_time
 
-    def _compute_batch_epsilon(self, vp_idx_i32, pair_dist, pair_front, N):
+    def _compute_batch_epsilon(self, pair_vp_indices_i32: cp.ndarray, pair_dist: cp.ndarray, pair_front: cp.ndarray, N: int) -> cp.ndarray:
         """Compute per-VP epsilon from segmented front-facing distances.
 
         For ``mean`` gamma: fully vectorised via ``cp.scatter_add``.
-        For percentile/median gamma: per-segment GPU slicing (no CPU transfer).
+        For percentile/median gamma: per-segment GPU slicing.
         Final epsilon is computed in one vectorised CuPy expression.
         """
         fallback_gamma = cp.float32(self.frustum_params.far / GAMMA_FALLBACK_DIVISOR)
         gamma_per_vp = cp.full(N, fallback_gamma, dtype=cp.float32)
 
-        # Mask to front-facing pairs only
+        # Filter to front-facing pairs only
         front_mask = pair_front.astype(cp.bool_)
-        front_vp = vp_idx_i32[front_mask]
-        front_dist = pair_dist[front_mask]
+        front_pair_vp_indices = pair_vp_indices_i32[front_mask]
+        front_pair_distances = pair_dist[front_mask]
 
-        if len(front_vp) > 0:
+        if len(front_pair_vp_indices) > 0:
             if self.hp.gamma_method == "mean":
-                # Fully vectorised: scatter_add for sum + count
+                # Vectorised mean: scatter_add for sum and count
                 sum_per_vp = cp.zeros(N, dtype=cp.float32)
-                cp.scatter_add(sum_per_vp, front_vp, front_dist)
+                cp.scatter_add(sum_per_vp, front_pair_vp_indices, front_pair_distances)
                 count_per_vp = cp.zeros(N, dtype=cp.int32)
-                cp.scatter_add(count_per_vp, front_vp,
-                               cp.ones(len(front_vp), dtype=cp.int32))
+                cp.scatter_add(count_per_vp, front_pair_vp_indices,
+                               cp.ones(len(front_pair_vp_indices), dtype=cp.int32))
                 has_front = count_per_vp > 0
                 gamma_per_vp[has_front] = (
                     sum_per_vp[has_front]
                     / count_per_vp[has_front].astype(cp.float32))
             else:
-                # Per-segment GPU slicing for percentile/median
-                gamma_func = GAMMA_AGG_FUNCS_CP[self.hp.gamma_method]
-                unique_front_vps, front_first, front_counts = cp.unique(
-                    front_vp, return_index=True, return_counts=True)
-                for k in range(len(unique_front_vps)):
-                    vp = unique_front_vps[k]
-                    s = front_first[k]
-                    e = s + front_counts[k]
-                    gamma_per_vp[vp] = cp.float32(
-                        max(float(gamma_func(front_dist[s:e])), 1e-6))
+                # Vectorized percentile: sort within VP segments, index directly
+                p = GAMMA_PERCENTILE[self.hp.gamma_method]
+                sort_order = cp.lexsort((front_pair_distances, front_pair_vp_indices))
+                sorted_dist = front_pair_distances[sort_order]
+                sorted_vps = front_pair_vp_indices[sort_order]
+
+                unique_front_vps, seg_start, seg_count = cp.unique(
+                    sorted_vps, return_index=True, return_counts=True)
+                pct_idx = seg_start + cp.minimum(
+                    (seg_count * p).astype(cp.int32), seg_count - 1)
+                gamma_per_vp[unique_front_vps] = sorted_dist[pct_idx]
 
         # Vectorised epsilon: 2 * arctan(delta / (4 * gamma)) * scale
         gamma_per_vp = cp.maximum(gamma_per_vp, cp.float32(1e-6))

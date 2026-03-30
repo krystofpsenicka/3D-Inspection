@@ -81,8 +81,6 @@ class OptimizingSampler(ViewpointSamplerBase):
             ]
         return result
 
-    # ── Main entry point ─────────────────────────────────────────────────
-
     def sample_optimized(
         self,
         n_rounds: int,
@@ -113,6 +111,13 @@ class OptimizingSampler(ViewpointSamplerBase):
         half_res = coarse_res / 2.0
         bounds_lo_gpu = cp.min(centers_gpu, axis=0) - half_res
         bounds_hi_gpu = cp.max(centers_gpu, axis=0) + half_res
+
+        # Apply sphere restriction if active (intersect bounding box)
+        if self._sphere_center is not None:
+            bounds_lo_gpu = cp.maximum(
+                bounds_lo_gpu, self._sphere_center - self._sphere_radius)
+            bounds_hi_gpu = cp.minimum(
+                bounds_hi_gpu, self._sphere_center + self._sphere_radius)
 
         spatial_diag = float(cp.sqrt(cp.sum((bounds_hi_gpu - bounds_lo_gpu) ** 2)))
 

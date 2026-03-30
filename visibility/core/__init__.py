@@ -1,4 +1,5 @@
-from .types import FrustumParams, ViewpointResult, OptimizationResult, normalize_vector
+from .types import FrustumParams, OptimizationResult, normalize_vector
+from .utils import compute_redundancy
 from .base import VisibilityQueryBase, VisibilityQuery, get_frustum_bounding_sphere
 from .base_cuda import VisibilityQueryCuda
 from ..sampling import (

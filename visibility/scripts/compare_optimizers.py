@@ -14,8 +14,7 @@ from visibility.core.types import FrustumParams, OptimizationResult
 from visibility.sampling import WeightedViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
-from visibility.optimizers.greedy import GreedyOptimizer
-from visibility.optimizers.kernel_greedy import KernelGreedyOptimizer
+from visibility.set_cover import GreedySetCover
 from visibility.visualization import Visualizer
 
 
@@ -38,10 +37,12 @@ def check_solution_with_raycast(raycast_query: RaycastingVisibilityQuery,
     num_target_points = len(raycast_query.target_points)
     total_visible_mask = np.zeros(num_target_points, dtype=bool)
 
-    for vp_result in result.viewpoints:
+    positions_np = result.positions.get()
+    orientations_np = result.orientations.get()
+    for i in range(result.num_viewpoints):
         visible_indices_rc, _ = raycast_query.compute_visibility(
-            viewpoint=vp_result.position,
-            orientation=vp_result.orientation
+            viewpoint=positions_np[i],
+            orientation=orientations_np[i]
         )
         total_visible_mask[visible_indices_rc] = True
 
@@ -204,12 +205,11 @@ def run_comparison_pipeline():
 
         comparison_data[TARGET_COVERAGE] = {}
 
-        # Greedy Optimizer (standard)
-        print("\n--- Greedy Optimizer ---")
-        optimizer_greedy = GreedyOptimizer(visibility_query_epsilon)
+        # Greedy Set Cover
+        print("\n--- Greedy Set Cover ---")
+        V_eps, _ = visibility_query_epsilon.compute_visibility_batch(positions, rotmats)
+        optimizer_greedy = GreedySetCover(len(target_points), positions, rotmats, V_eps)
         result_greedy = optimizer_greedy.optimize(
-            positions=positions,
-            rotmats=rotmats,
             target_coverage=TARGET_COVERAGE,
             max_viewpoints=MAX_VIEWPOINTS
         )
@@ -219,42 +219,17 @@ def run_comparison_pipeline():
         )
 
         comparison_data[TARGET_COVERAGE]["Greedy"] = {
-            "Total_Time": result_greedy.total_time,
+            "Optimization_Time": result_greedy.optimization_time,
             "Num_Viewpoints": result_greedy.num_viewpoints,
             "Reported_Coverage": result_greedy.total_coverage,
             "Actual_Coverage": actual_coverage_greedy,
             "Redundancy": result_greedy.redundancy,
         }
 
-        # KernelGreedy Optimizer
-        print("\n--- KernelGreedy Optimizer ---")
-        optimizer_kernel = KernelGreedyOptimizer(visibility_query_epsilon)
-        result_kernel = optimizer_kernel.optimize(
-            positions=positions,
-            rotmats=rotmats,
-            target_coverage=TARGET_COVERAGE,
-            max_viewpoints=MAX_VIEWPOINTS
-        )
-
-        actual_coverage_kernel = check_solution_with_raycast(
-            visibility_query_raycast, result_kernel
-        )
-
-        comparison_data[TARGET_COVERAGE]["KernelGreedy"] = {
-            "Total_Time": result_kernel.total_time,
-            "Num_Viewpoints": result_kernel.num_viewpoints,
-            "Reported_Coverage": result_kernel.total_coverage,
-            "Actual_Coverage": actual_coverage_kernel,
-            "Redundancy": result_kernel.redundancy,
-        }
-
         print(f"\n[SUMMARY for {TARGET_COVERAGE * 100:.1f}% Target]")
-        print(f"  Greedy:       VPs={result_greedy.num_viewpoints}, "
+        print(f"  Greedy: VPs={result_greedy.num_viewpoints}, "
               f"Actual={actual_coverage_greedy * 100:.2f}%, "
-              f"Time={result_greedy.total_time:.2f}s")
-        print(f"  KernelGreedy: VPs={result_kernel.num_viewpoints}, "
-              f"Actual={actual_coverage_kernel * 100:.2f}%, "
-              f"Time={result_kernel.total_time:.2f}s")
+              f"Time={result_greedy.optimization_time:.2f}s")
 
     print("\n" + "=" * 80)
     print("OPTIMIZER COMPARISON PIPELINE COMPLETE")

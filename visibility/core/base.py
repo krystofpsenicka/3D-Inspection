@@ -4,9 +4,9 @@ from abc import ABC, abstractmethod
 from scipy.spatial import KDTree
 from numpy.linalg import norm
 from time import time as get_time
-from typing import List, Dict, Tuple
+from typing import Tuple
 
-from .types import FrustumParams, ViewpointResult
+from .types import FrustumParams
 
 logger = logging.getLogger(__name__)
 
@@ -35,49 +35,18 @@ class VisibilityQueryBase(ABC):
     def compute_visibility(self, viewpoint, orientation) -> Tuple[np.ndarray, float]:
         """Compute visible indices from a single viewpoint."""
 
-    def compute_visibility_batch(self, positions, orientations) -> Tuple[Dict[int, np.ndarray], float]:
+    @abstractmethod
+    def compute_visibility_batch(self, positions, orientations) -> Tuple[np.ndarray, float]:
         """Compute visibility for a batch of viewpoints.
 
         Args:
             positions:    (N, 3) array of viewpoint positions.
             orientations: (N, 3, 3) array of rotation matrices.
 
-        Returns ``(visibility_map, total_time)`` where ``visibility_map``
-        maps candidate index -> visible point indices array.
+        Returns ``(visibility_matrix, total_time)`` where ``visibility_matrix``
+        is an (N, M) array; entry [i, j] indicates whether point j is visible
+        from viewpoint i.
         """
-        start_time = get_time()
-        visibility_map: Dict[int, np.ndarray] = {}
-        class_name = type(self).__name__
-
-        n = len(positions)
-        for i in range(n):
-            if (i + 1) % 100 == 0:
-                logger.info("  [%s] ... computed %d / %d candidates",
-                            class_name, i + 1, n)
-
-            visible_indices, _ = self.compute_visibility(positions[i], orientations[i])
-            visibility_map[i] = visible_indices
-
-        total_time = get_time() - start_time
-        logger.info("[%s] Visibility computation for %d candidates finished in %.2fs",
-                    class_name, n, total_time)
-        return visibility_map, total_time
-
-    def compute_redundancy(self, viewpoints: List[ViewpointResult]) -> float:
-        """Compute mean coverage redundancy."""
-        if self.num_points == 0 or not viewpoints:
-            return 0
-
-        coverage_count = np.zeros(self.num_points)
-        for vp in viewpoints:
-            if len(vp.visible_indices) > 0:
-                coverage_count[vp.visible_indices] += 1
-
-        covered_points = coverage_count[coverage_count > 0]
-        if len(covered_points) == 0:
-            return 0
-
-        return np.mean(covered_points)
 
 
 class VisibilityQuery(VisibilityQueryBase):
@@ -93,6 +62,31 @@ class VisibilityQuery(VisibilityQueryBase):
 
     def compute_visibility(self, viewpoint: np.ndarray, rotmat: np.ndarray) -> Tuple[np.ndarray, float]:
         raise NotImplementedError("Subclasses must implement compute_visibility")
+
+    def compute_visibility_batch(self, positions, orientations) -> Tuple[np.ndarray, float]:
+        """CPU batch visibility via per-viewpoint loop.
+
+        Returns ``(visibility_matrix, total_time)`` where ``visibility_matrix``
+        is an (N, M) bool array.
+        """
+        start_time = get_time()
+        class_name = type(self).__name__
+
+        n = len(positions)
+        matrix = np.zeros((n, self.num_points), dtype=np.bool_)
+        for i in range(n):
+            if (i + 1) % 100 == 0:
+                logger.info("  [%s] ... computed %d / %d candidates",
+                            class_name, i + 1, n)
+
+            visible_indices, _ = self.compute_visibility(positions[i], orientations[i])
+            if len(visible_indices) > 0:
+                matrix[i, visible_indices] = True
+
+        total_time = get_time() - start_time
+        logger.info("[%s] Visibility computation for %d candidates finished in %.2fs",
+                    class_name, n, total_time)
+        return matrix, total_time
 
     def points_in_frustum_with_kdtree(self, viewpoint: np.ndarray, rotmat: np.ndarray):
         """Frustum culling with KD-tree."""

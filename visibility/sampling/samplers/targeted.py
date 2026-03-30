@@ -25,7 +25,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
     targeted sampling with configurable batch size per iteration.
     """
 
-    def sample_targeted(self, uncovered_indices: np.ndarray, num_candidates: int,
+    def sample(self, uncovered_indices: np.ndarray, num_candidates: int,
                         side: str = "outside",
                         min_distance: float | None = None,
                         max_distance_offset: float = 0.95,

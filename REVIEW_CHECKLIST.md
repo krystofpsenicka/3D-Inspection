@@ -33,7 +33,7 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 ### Sampling
 - [ x ] 19. `visibility/sampling/curvature.py` (57 lines) — depends on constants.py
 - [ x ] 20. `visibility/sampling/targeted.py` (189 lines) — depends on constants.py
-- [ ] 21. `visibility/sampling/base.py` (788 lines) — main GPU viewpoint sampler
+- [ x ] 21. `visibility/sampling/base.py` (788 lines) — main GPU viewpoint sampler
 - [ x ] 22. `visibility/sampling/__init__.py` (1 line)
 - [ x ] 23. `tests/test_sampling.py` (228 lines)
 
@@ -45,13 +45,13 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 - [ x ] 28. `visibility/methods/__init__.py` (4 lines)
 
 ### Optimizers (read CPU/GPU pairs together)
-- [ ] 29. `visibility/optimizers/greedy.py` (117 lines) — CPU greedy set-cover
+- [ x ] 29. `visibility/optimizers/greedy.py` (117 lines) — CPU greedy set-cover
 - [ ] 30. `visibility/optimizers/greedy_cuda.py` (117 lines) — GPU greedy set-cover
 - [ ] 31. `visibility/optimizers/lazy_greedy.py` (155 lines) — CPU lazy greedy
 - [ ] 32. `visibility/optimizers/lazy_greedy_cuda.py` (156 lines) — GPU lazy greedy
 - [ ] 33. `visibility/optimizers/kernel_greedy.py` (138 lines) — CPU kernel greedy
 - [ ] 34. `visibility/optimizers/kernel_greedy_cuda.py` (155 lines) — GPU kernel greedy
-- [ ] 35. `visibility/optimizers/__init__.py` (6 lines)
+- [ x ] 35. `visibility/optimizers/__init__.py` (6 lines)
 
 ### Visualization + top-level init
 - [ ] 36. `visibility/visualization.py` (808 lines)

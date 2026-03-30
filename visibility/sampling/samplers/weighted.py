@@ -12,12 +12,12 @@ from shared.geometry import directions_rolls_to_rotmats
 
 from ...core.constants import DEFAULT_MAX_DIR_NOISE_RAD, NORM_EPS
 from ..utils.direction import knn_centroid_direction, apply_angular_noise
-from .base import ViewpointSamplerBase
+from .base import ProbabilisticSampler
 
 logger = logging.getLogger(__name__)
 
 
-class WeightedViewpointSampler(ViewpointSamplerBase):
+class WeightedViewpointSampler(ProbabilisticSampler):
     """Sample viewpoints from free space with sdf² distance weighting.
 
     Optionally applies curvature weighting to bias toward geometrically

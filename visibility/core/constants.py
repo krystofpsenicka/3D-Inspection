@@ -12,9 +12,13 @@ RAYCAST_TOLERANCE = 1e-4
 # CUDA kernel configuration
 CUDA_BLOCK_SIZE = 256
 
-# Kernel greedy expansion
-KERNEL_N_SAMPLES = 20
-KERNEL_RADIUS = 0.5
+# Set-cover optimization defaults
+DEFAULT_TARGET_COVERAGE = 0.95
+DEFAULT_MAX_VIEWPOINTS = 50
+
+# Expansion sampling
+EXPANSION_N_SAMPLES = 20
+EXPANSION_RADIUS = 0.5
 
 # Viewpoint sampling
 DEFAULT_MAX_DIR_NOISE_RAD = np.deg2rad(25.0)
@@ -79,4 +83,10 @@ GAMMA_AGG_FUNCS_CP = {
     "p60": lambda x: float(cp.percentile(x, 60)),
     "p75": lambda x: float(cp.percentile(x, 75)),
     "p90": lambda x: float(cp.percentile(x, 90)),
+}
+
+GAMMA_PERCENTILE = {
+    "median": 0.5,
+    "p10": 0.1, "p25": 0.25, "p30": 0.3, "p40": 0.4,
+    "p60": 0.6, "p75": 0.75, "p90": 0.9,
 }

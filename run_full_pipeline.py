@@ -11,8 +11,7 @@ Pipeline stages
 ---------------
 1. Load & transform mesh (duke_of_lancaster_uk_clipped.glb → 50 m, VRP pose).
 2. Sample 200 K surface points (pointcloud) and estimate outward normals.
-3. Generate 1 500 candidate viewpoints outside the mesh; filter any that
-   fall below the hull.
+3. Generate 1 500 candidate viewpoints outside the mesh.
 4. Compute raycast visibility for every candidate (BVH + KD-tree frustum
    culling).
 5. Greedy set-cover optimisation at 95 % target coverage.
@@ -157,7 +156,7 @@ def _save_pipeline_data(pipeline_data: dict, path: str) -> None:
             "selected_indices": opt.selected_indices if hasattr(opt, "selected_indices") else [],
             "total_coverage": opt.total_coverage,
             "num_viewpoints": opt.num_viewpoints,
-            "per_vp_coverage": opt.per_vp_coverage if hasattr(opt, "per_vp_coverage") else opt.coverage_per_viewpoint,
+            "per_vp_coverage": (opt.visibility_map.sum(axis=1) / opt.num_viewpoints).get().tolist() if opt.num_viewpoints > 0 else [],
         }
 
     np.savez_compressed(base + ".npz", **arrays)
@@ -280,7 +279,7 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[4/9] Building raycast visibility query …")
 
-    from visibility.core.types import FrustumParams, ViewpointResult, OptimizationResult
+    from visibility.core.types import FrustumParams, OptimizationResult
     from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
 
     frustum_params = FrustumParams(
@@ -300,9 +299,6 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 5 – Greedy set cover at target coverage
     # ══════════════════════════════════════════════════════════════════════
-    from visibility.optimizers.lazy_greedy_cuda import LazyGreedyOptimizerCuda
-    optimizer = LazyGreedyOptimizerCuda(raycast_query)
-
     if args.resample_fraction > 0:
         n_targeted = int(args.num_candidates * args.resample_fraction)
         n_uniform = args.num_candidates - n_targeted
@@ -342,7 +338,7 @@ def main() -> None:
                     rot_gpu = cp.concatenate([rot_gpu, opt_rot_gpu])
             else:
                 # Random targeted sampling (iterative for k-coverage tracking)
-                targeted_pos_gpu, targeted_rot_gpu = sampler.sample_targeted(
+                targeted_pos_gpu, targeted_rot_gpu = sampler.sample(
                     uncovered, n_targeted, side="outside",
                     curvature_weighting=args.curvature_weighting,
                     visibility_query=raycast_query,
@@ -355,33 +351,26 @@ def main() -> None:
                     rot_gpu = cp.concatenate([rot_gpu, targeted_rot_gpu])
 
         logger.info("  Total candidates after resampling: %d", len(pos_gpu))
-        opt_result: OptimizationResult = optimizer.optimize(
-            positions=pos_gpu,
-            rotmats=rot_gpu,
-            target_coverage=args.target_coverage,
-            max_viewpoints=1000,
-            precomputed_visibility_map=V,
-        )
     else:
-        # Original flow: sample → greedy computes visibility internally
         pos_gpu, rot_gpu = sampler.sample(
             num_candidates=args.num_candidates,
             side="outside",
             curvature_weighting=args.curvature_weighting,
         )
         logger.info("  Generated %d candidates.", len(pos_gpu))
-        logger.info("[5/9] Running greedy set cover at %.0f%% (%d candidates) …",
-                    args.target_coverage * 100, len(pos_gpu))
-        opt_result: OptimizationResult = optimizer.optimize(
-            positions=pos_gpu,
-            rotmats=rot_gpu,
-            target_coverage=args.target_coverage,
-            max_viewpoints=1000,
-        )
-    visibility_map = opt_result.visibility_map
+        V, _ = raycast_query.compute_visibility_batch(pos_gpu, rot_gpu)
+
+    logger.info("[5/9] Running greedy set cover at %.0f%% (%d candidates) …",
+                args.target_coverage * 100, len(pos_gpu))
+    from visibility.set_cover import LazyGreedySetCoverCuda
+    optimizer = LazyGreedySetCoverCuda(len(target_points), pos_gpu, rot_gpu, V)
+    opt_result: OptimizationResult = optimizer.optimize(
+        target_coverage=args.target_coverage,
+        max_viewpoints=1000,
+    )
     logger.info("  Selected %d viewpoints.  Coverage=%.2f%%  Time=%.1f s",
                 opt_result.num_viewpoints, opt_result.total_coverage * 100,
-                opt_result.total_time)
+                opt_result.optimization_time)
 
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 6 – Convert selected viewpoints to VRP waypoints
@@ -390,10 +379,12 @@ def main() -> None:
                 opt_result.num_viewpoints)
 
     from scipy.spatial.transform import Rotation
+    positions_np = opt_result.positions.get()
+    orientations_np = opt_result.orientations.get()
     selected_wp_7dof = np.zeros((opt_result.num_viewpoints, 7), dtype=np.float64)
-    for i, vp in enumerate(opt_result.viewpoints):
-        selected_wp_7dof[i, :3] = vp.position
-        selected_wp_7dof[i, 3:] = Rotation.from_matrix(vp.orientation).as_quat(scalar_first=True)
+    for i in range(opt_result.num_viewpoints):
+        selected_wp_7dof[i, :3] = positions_np[i]
+        selected_wp_7dof[i, 3:] = Rotation.from_matrix(orientations_np[i]).as_quat(scalar_first=True)
 
     logger.info("  Waypoints array shape: %s", selected_wp_7dof.shape)
 

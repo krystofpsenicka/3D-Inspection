@@ -227,7 +227,7 @@ def main():
         else:
             # Random proximity-weighted targeted sampling
             print(f"  Sampling {n_targeted} targeted viewpoints...")
-            targeted_pos_gpu, targeted_rot_gpu = sampler.sample_targeted(
+            targeted_pos_gpu, targeted_rot_gpu = sampler.sample(
                 uncovered_indices, n_targeted, side=args.side)
 
             if len(targeted_pos_gpu) == 0:

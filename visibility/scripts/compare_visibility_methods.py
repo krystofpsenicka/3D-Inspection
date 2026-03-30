@@ -10,12 +10,12 @@ from time import time as get_time
 from typing import List, Dict, Any, Tuple
 import matplotlib.pyplot as plt
 
-from visibility.core.types import FrustumParams, ViewpointResult, OptimizationResult
+from visibility.core.types import FrustumParams, OptimizationResult
 from visibility.sampling import WeightedViewpointSampler
 from visibility.core import orient_normals_outward
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
-from visibility.optimizers.greedy import GreedyOptimizer
+from visibility.set_cover import GreedySetCover
 from visibility.visualization import Visualizer
 
 
@@ -42,10 +42,12 @@ def check_epsilon_solution_with_raycast(raycast_query: RaycastingVisibilityQuery
     num_target_points = len(target_points)
     total_visible_mask = np.zeros(num_target_points, dtype=bool)
 
-    for vp_result in epsilon_result.viewpoints:
+    positions_np = epsilon_result.positions.get()
+    orientations_np = epsilon_result.orientations.get()
+    for i in range(epsilon_result.num_viewpoints):
         visible_indices_rc, _ = raycast_query.compute_visibility(
-            viewpoint=vp_result.position,
-            orientation=vp_result.orientation
+            viewpoint=positions_np[i],
+            orientation=orientations_np[i]
         )
         total_visible_mask[visible_indices_rc] = True
 
@@ -247,10 +249,9 @@ def run_comparison_pipeline():
 
         # Raycasting Visibility (Ground Truth)
         print("\n--- Raycast Visibility ---")
-        optimizer_raycast = GreedyOptimizer(visibility_query_raycast)
+        V_rc, _ = visibility_query_raycast.compute_visibility_batch(positions, rotmats)
+        optimizer_raycast = GreedySetCover(len(target_points), positions, rotmats, V_rc)
         optimization_result_raycast = optimizer_raycast.optimize(
-            positions=positions,
-            rotmats=rotmats,
             target_coverage=TARGET_COVERAGE,
             max_viewpoints=MAX_VIEWPOINTS
         )
@@ -259,9 +260,7 @@ def run_comparison_pipeline():
         visualizer.save_solution_animation(optimization_result_raycast, snap_name, frames=210)
 
         comparison_data[TARGET_COVERAGE]["Raycast Visibility"] = {
-            "Total_Time": optimization_result_raycast.total_time,
-            "Optimization_Time": optimization_result_raycast.total_time - optimization_result_raycast.visibility_computation_time,
-            "Visibility_Time": optimization_result_raycast.visibility_computation_time,
+            "Optimization_Time": optimization_result_raycast.optimization_time,
             "Num_Viewpoints": optimization_result_raycast.num_viewpoints,
             "Reported_Coverage": optimization_result_raycast.total_coverage,
             "Actual_Coverage": optimization_result_raycast.total_coverage,
@@ -269,11 +268,10 @@ def run_comparison_pipeline():
         }
 
         # Epsilon Visibility
-        print("\n--- Epsilon Visibility (with Kernel Expansion) ---")
-        optimizer_epsilon = GreedyOptimizer(visibility_query_epsilon)
+        print("\n--- Epsilon Visibility ---")
+        V_eps, _ = visibility_query_epsilon.compute_visibility_batch(positions, rotmats)
+        optimizer_epsilon = GreedySetCover(len(target_points), positions, rotmats, V_eps)
         optimization_result_epsilon = optimizer_epsilon.optimize(
-            positions=positions,
-            rotmats=rotmats,
             target_coverage=TARGET_COVERAGE,
             max_viewpoints=MAX_VIEWPOINTS
         )
@@ -287,9 +285,7 @@ def run_comparison_pipeline():
         )
 
         comparison_data[TARGET_COVERAGE]["Epsilon Visibility"] = {
-            "Total_Time": optimization_result_epsilon.total_time,
-            "Optimization_Time": optimization_result_epsilon.total_time - optimization_result_epsilon.visibility_computation_time,
-            "Visibility_Time": optimization_result_epsilon.visibility_computation_time,
+            "Optimization_Time": optimization_result_epsilon.optimization_time,
             "Num_Viewpoints": optimization_result_epsilon.num_viewpoints,
             "Reported_Coverage": optimization_result_epsilon.total_coverage,
             "Actual_Coverage": actual_coverage_eps,
@@ -299,11 +295,11 @@ def run_comparison_pipeline():
         print(f"\n[SUMMARY for {TARGET_COVERAGE * 100:.1f}% Target]")
         print(f"  Raycast: VPs={optimization_result_raycast.num_viewpoints}, "
               f"Coverage={optimization_result_raycast.total_coverage * 100:.2f}%, "
-              f"Time={optimization_result_raycast.total_time:.2f}s")
+              f"Time={optimization_result_raycast.optimization_time:.2f}s")
         print(f"  Epsilon: VPs={optimization_result_epsilon.num_viewpoints}, "
               f"Reported={optimization_result_epsilon.total_coverage * 100:.2f}%, "
               f"Actual={actual_coverage_eps * 100:.2f}%, "
-              f"Time={optimization_result_epsilon.total_time:.2f}s")
+              f"Time={optimization_result_epsilon.optimization_time:.2f}s")
 
     print("\n" + "=" * 80)
     print("FULL COMPARISON PIPELINE COMPLETE")
