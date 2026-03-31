@@ -16,6 +16,7 @@ from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
 from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
+from visualization import create_frustum_lineset
 
 
 def load_mesh(mesh_path: str | None) -> o3d.geometry.TriangleMesh:
@@ -81,18 +82,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
     arrow.colors = o3d.utility.Vector3dVector([[1.0, 1.0, 0.0]])
     geometries.append(arrow)
 
-    # Build frustum lineset without constructing a full Visualizer
-    half_angle = frustum_params.fov_y / 2.0
-    far_half = frustum_params.far * np.tan(half_angle)
-    _, right, up = rotmat[:, 0], rotmat[:, 1], rotmat[:, 2]
-    far_center = pos + forward * frustum_params.far
-    r, u = right * far_half, up * far_half
-    f_corners = [pos, far_center + r + u, far_center - r + u,
-                 far_center - r - u, far_center + r - u]
-    f_lines = [[1, 2], [2, 3], [3, 4], [4, 1], [0, 1], [0, 2], [0, 3], [0, 4]]
-    frustum = o3d.geometry.LineSet()
-    frustum.points = o3d.utility.Vector3dVector(np.array(f_corners))
-    frustum.lines = o3d.utility.Vector2iVector(np.array(f_lines))
+    frustum = create_frustum_lineset(pos, orientation, frustum_params)
     frustum.paint_uniform_color([0.8, 0.8, 0.0])
     geometries.append(frustum)
 

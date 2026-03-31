@@ -22,4 +22,3 @@ from .set_cover import (
     LazyGreedySetCoverCuda,
     ExpansionIterativeSetCover,
 )
-from .visualization import Visualizer

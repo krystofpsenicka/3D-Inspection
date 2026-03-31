@@ -17,7 +17,7 @@ from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
 from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
-from visibility.visualization import Visualizer
+from visualization import VisibilityVisualizer
 
 
 def load_mesh(mesh_path: str | None) -> o3d.geometry.TriangleMesh:
@@ -104,13 +104,13 @@ def main():
     rot_cpu = cp.asnumpy(rot_gpu) if use_gpu else rotmats
     candidates = list(zip(pos_cpu, rot_cpu))
 
-    visualizer = Visualizer(mesh, target_points, normals, frustum_params)
+    viz = VisibilityVisualizer(mesh, target_points, frustum_params)
     if args.separate:
         print("\nOpening visualization windows (close each to advance)...")
         for i in range(n_vp):
-            visualizer.visualize_visibility_results(visibility_map, i, candidates=candidates)
+            viz.visualize_single(visibility_map[i], pos_cpu[i], rot_cpu[i])
     else:
-        visualizer.visualize_all_visibility_results(visibility_map, candidates=candidates)
+        viz.visualize_all(visibility_map, candidates=candidates)
 
 
 if __name__ == "__main__":

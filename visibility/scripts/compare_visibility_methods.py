@@ -16,7 +16,7 @@ from visibility.core import orient_normals_outward
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.set_cover import GreedySetCover
-from visibility.visualization import Visualizer
+from visualization import SetCoverVisualizer
 
 
 # ===========================================================================
@@ -212,7 +212,7 @@ def run_comparison_pipeline():
         NUM_CANDIDATE_VPs,
     )
 
-    visualizer = Visualizer(mesh, target_points, normals, frustum_params)
+    set_cover_viz = SetCoverVisualizer(mesh, target_points, frustum_params)
     sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
@@ -257,7 +257,7 @@ def run_comparison_pipeline():
         )
 
         snap_name = os.path.join(viz_output_dir, f"Raycast_{int(TARGET_COVERAGE * 100)}cov.gif")
-        visualizer.save_solution_animation(optimization_result_raycast, snap_name, frames=210)
+        set_cover_viz.save_animation(optimization_result_raycast, snap_name, frames=210)
 
         comparison_data[TARGET_COVERAGE]["Raycast Visibility"] = {
             "Optimization_Time": optimization_result_raycast.optimization_time,
@@ -277,7 +277,7 @@ def run_comparison_pipeline():
         )
 
         snap_name = os.path.join(viz_output_dir, f"Epsilon_{int(TARGET_COVERAGE * 100)}cov.gif")
-        visualizer.save_solution_animation(optimization_result_epsilon, snap_name, frames=210)
+        set_cover_viz.save_animation(optimization_result_epsilon, snap_name, frames=210)
 
         actual_coverage_eps = check_epsilon_solution_with_raycast(
             raycast_query=visibility_query_raycast,

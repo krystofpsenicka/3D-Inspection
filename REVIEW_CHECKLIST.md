@@ -46,16 +46,16 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 
 ### Optimizers (read CPU/GPU pairs together)
 - [ x ] 29. `visibility/optimizers/greedy.py` (117 lines) — CPU greedy set-cover
-- [ ] 30. `visibility/optimizers/greedy_cuda.py` (117 lines) — GPU greedy set-cover
-- [ ] 31. `visibility/optimizers/lazy_greedy.py` (155 lines) — CPU lazy greedy
-- [ ] 32. `visibility/optimizers/lazy_greedy_cuda.py` (156 lines) — GPU lazy greedy
-- [ ] 33. `visibility/optimizers/kernel_greedy.py` (138 lines) — CPU kernel greedy
-- [ ] 34. `visibility/optimizers/kernel_greedy_cuda.py` (155 lines) — GPU kernel greedy
+- [ x ] 30. `visibility/optimizers/greedy_cuda.py` (117 lines) — GPU greedy set-cover
+- [ x ] 31. `visibility/optimizers/lazy_greedy.py` (155 lines) — CPU lazy greedy
+- [ x ] 32. `visibility/optimizers/lazy_greedy_cuda.py` (156 lines) — GPU lazy greedy
+- [ x ] 33. `visibility/optimizers/kernel_greedy.py` (138 lines) — CPU kernel greedy
+- [ x ] 34. `visibility/optimizers/kernel_greedy_cuda.py` (155 lines) — GPU kernel greedy
 - [ x ] 35. `visibility/optimizers/__init__.py` (6 lines)
 
 ### Visualization + top-level init
 - [ ] 36. `visibility/visualization.py` (808 lines)
-- [ ] 37. `visibility/__init__.py` (15 lines)
+- [ x ] 37. `visibility/__init__.py` (15 lines)
 
 ---
 

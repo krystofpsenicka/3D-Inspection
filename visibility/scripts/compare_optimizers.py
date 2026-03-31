@@ -15,7 +15,6 @@ from visibility.sampling import WeightedViewpointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.set_cover import GreedySetCover
-from visibility.visualization import Visualizer
 
 
 # ===========================================================================
@@ -176,7 +175,6 @@ def run_comparison_pipeline():
         NUM_CANDIDATE_VPs,
     )
 
-    visualizer = Visualizer(mesh, target_points, normals, frustum_params)
     sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")

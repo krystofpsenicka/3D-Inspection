@@ -19,7 +19,7 @@ import open3d as o3d
 from visibility.core import FrustumParams, orient_normals_outward
 from visibility.sampling import TargetedViewpointSampler, OptimizingSampler, CMAESBackend
 from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
-from visibility.visualization import Visualizer
+from visualization import VisibilityVisualizer, SamplingVisualizer
 
 
 def _V_to_vis_map(V_gpu):
@@ -122,8 +122,8 @@ def main():
     mode_labels = {"normal": "SDF\u00b2", "curvature": "Curvature-Weighted", "resampling": "SDF\u00b2"}
     window_name = f"Free-Space Sampling Heatmap ({mode_labels[args.mode]})"
 
-    visualizer = Visualizer(mesh, target_points, normals, frustum_params)
-    visualizer.visualize_free_space(
+    sampling_viz = SamplingVisualizer(mesh, target_points, normals, frustum_params)
+    sampling_viz.visualize_free_space(
         outside_pos, outside_w,
         inside_pos, inside_w,
         point_size=args.point_size,
@@ -155,7 +155,8 @@ def main():
         candidates = list(zip(pos_cpu, rot_cpu))
 
         print_coverage_summary(visibility_map, len(target_points), vis_time)
-        visualizer.visualize_all_visibility_results(visibility_map, candidates)
+        vis_viz = VisibilityVisualizer(mesh, target_points, frustum_params)
+        vis_viz.visualize_all(visibility_map, candidates)
 
     else:
         # --- Resampling mode: two-phase sampling ---
@@ -196,7 +197,8 @@ def main():
 
         if len(uncovered_indices) == 0 or n_targeted == 0:
             print("  No targeted resampling needed.")
-            visualizer.visualize_all_visibility_results(normal_vis_map, normal_candidates)
+            VisibilityVisualizer(mesh, target_points, frustum_params).visualize_all(
+                normal_vis_map, normal_candidates)
             return
 
         if args.resampling_strategy == "optimal":
@@ -267,7 +269,7 @@ def main():
               f"({combined_coverage:.1f}%)")
 
         # Visualize resampling progression
-        visualizer.visualize_resampling_progression(
+        sampling_viz.visualize_resampling_progression(
             normal_vis_map, normal_candidates,
             targeted_vis_map, targeted_candidates)
 

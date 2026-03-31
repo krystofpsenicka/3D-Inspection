@@ -9,6 +9,7 @@ import math
 from typing import List, Tuple
 
 import numpy as np
+import matplotlib.cm as _cm
 
 logger = logging.getLogger(__name__)
 
@@ -101,4 +102,12 @@ def downsample_occupancy_grid(
         fine_grid.shape, coarse.shape, factor, actual_res,
     )
     return coarse, coarse_origin, actual_res
+
+
+# ── ESDF colour mapping ─────────────────────────────────────────────────────
+
+def esdf_to_rgb(values: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
+    """Map ESDF float values to (N, 3) RGB via the RdBu_r colourmap."""
+    norm = np.clip((values - vmin) / (vmax - vmin + 1e-9), 0.0, 1.0)
+    return _cm.get_cmap("RdBu_r")(norm)[:, :3].astype(np.float64)
 
