@@ -223,19 +223,11 @@ def main() -> None:
     # STAGE 2 – Sample surface points
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[2/9] Sampling %d surface points …", args.num_surface_points)
-    pcd = o3d_mesh.sample_points_poisson_disk(
-        number_of_points=args.num_surface_points
+    from shared.surface_sampler import SurfacePointSampler
+    surface_sampler = SurfacePointSampler()
+    target_points, normals = surface_sampler.sample(
+        o3d_mesh, args.num_surface_points, seed=args.seed,
     )
-    # Estimate outward normals.  Radius scaled for the 50 m mesh.
-    pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30)
-    )
-    # Orient normals to point outward (away from mesh interior).
-    pcd.orient_normals_consistent_tangent_plane(k=15)
-    target_points = np.asarray(pcd.points)
-    normals = np.asarray(pcd.normals)
-    from visibility.core import orient_normals_outward
-    normals = orient_normals_outward(target_points, normals)
     logger.info("  Sampled %d points.  Normal estimation done.", len(target_points))
 
     # ══════════════════════════════════════════════════════════════════════
@@ -307,6 +299,7 @@ def main() -> None:
         logger.info("[3–5/9] Sampling %d uniform + %d targeted (%s) …",
                     n_uniform, n_targeted, args.resampling_strategy)
         pos_gpu, rot_gpu = sampler.sample(
+            np.arange(len(target_points)),
             n_uniform, side="outside",
             curvature_weighting=args.curvature_weighting)
         V, _ = raycast_query.compute_visibility_batch(pos_gpu, rot_gpu)
@@ -353,6 +346,7 @@ def main() -> None:
         logger.info("  Total candidates after resampling: %d", len(pos_gpu))
     else:
         pos_gpu, rot_gpu = sampler.sample(
+            np.arange(len(target_points)),
             num_candidates=args.num_candidates,
             side="outside",
             curvature_weighting=args.curvature_weighting,

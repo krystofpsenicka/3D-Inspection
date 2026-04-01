@@ -9,16 +9,15 @@ logger = logging.getLogger(__name__)
 
 
 class ModelVisualizer:
-    """Flexible visualizer for mesh, target points, and/or normals.
+    """Visualizer for mesh, target points, and/or normals.
 
     Parameters
     ----------
     mesh : Open3D TriangleMesh.
     target_points : (N, 3) array of surface sample points (optional).
     normals : (N, 3) outward surface normals (optional).
-    scale : If provided, the mesh (and target points) are scaled by this
-        factor for display — useful for showing raw unscaled meshes at the
-        pipeline's working scale.
+    scale : If provided, the mesh (and target points) is scaled by this
+        factor.
     """
 
     def __init__(self, mesh: o3d.geometry.TriangleMesh,
@@ -30,44 +29,83 @@ class ModelVisualizer:
         self.normals = normals
         self.scale = scale
 
+    # ------------------------------------------------------------------
+    # Geometry builders
+    # ------------------------------------------------------------------
+
+    def create_mesh_geometry(self) -> o3d.geometry.TriangleMesh:
+        """Return a grey copy of the mesh (optionally scaled)."""
+        mesh_vis = o3d.geometry.TriangleMesh(self.mesh)
+        if self.scale is not None:
+            mesh_vis.scale(self.scale, center=mesh_vis.get_center())
+        mesh_vis.paint_uniform_color([0.8, 0.8, 0.8])
+        mesh_vis.compute_vertex_normals()
+        return mesh_vis
+
+    def create_wireframe_geometry(
+            self, color: tuple = (0.7, 0.7, 0.7)) -> o3d.geometry.LineSet:
+        """Return a wireframe LineSet from the mesh."""
+        wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.mesh)
+        wireframe.paint_uniform_color(list(color))
+        return wireframe
+
+    def create_points_geometry(
+            self, color: tuple = (1.0, 0.0, 0.0)) -> o3d.geometry.PointCloud | None:
+        """Return a coloured PointCloud of target points, or None."""
+        if self.target_points is None:
+            return None
+        points = self.target_points
+        if self.scale is not None:
+            points = points * self.scale
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        pcd.paint_uniform_color(list(color))
+        return pcd
+
+    def create_normals_geometry(
+            self, normal_scale: float = 0.05) -> o3d.geometry.LineSet | None:
+        """Return a LineSet of normal vectors, or None."""
+        if self.target_points is None or self.normals is None:
+            return None
+        points = self.target_points
+        if self.scale is not None:
+            points = points * self.scale
+        normal_endpoints = points + (self.normals * normal_scale)
+        normal_vertices = np.concatenate((points, normal_endpoints), axis=0)
+
+        indices = np.arange(len(points))
+        normal_lines_indices = np.vstack((indices, indices + len(points))).T
+
+        normal_lines = o3d.geometry.LineSet(
+            points=o3d.utility.Vector3dVector(normal_vertices),
+            lines=o3d.utility.Vector2iVector(normal_lines_indices),
+        )
+        normal_lines.colors = o3d.utility.Vector3dVector(
+            [[0, 0, 0] for _ in range(len(normal_lines_indices))]
+        )
+        return normal_lines
+
+    # ------------------------------------------------------------------
+    # Display
+    # ------------------------------------------------------------------
+
     def visualize(self, show_mesh: bool = True, show_points: bool = True,
                   show_normals: bool = True, normal_scale: float = 0.05):
         """Show any combination of mesh, point cloud, and normals."""
         geometries = []
 
         if show_mesh:
-            mesh_vis = o3d.geometry.TriangleMesh(self.mesh)
-            if self.scale is not None:
-                mesh_vis.scale(self.scale, center=mesh_vis.get_center())
-            mesh_vis.paint_uniform_color([0.8, 0.8, 0.8])
-            mesh_vis.compute_vertex_normals()
-            geometries.append(mesh_vis)
+            geometries.append(self.create_mesh_geometry())
 
-        points = self.target_points
-        if points is not None and self.scale is not None:
-            points = points * self.scale
+        if show_points:
+            pcd = self.create_points_geometry()
+            if pcd is not None:
+                geometries.append(pcd)
 
-        if show_points and points is not None:
-            pcd_vis = o3d.geometry.PointCloud()
-            pcd_vis.points = o3d.utility.Vector3dVector(points)
-            pcd_vis.paint_uniform_color([1.0, 0.0, 0.0])
-            geometries.append(pcd_vis)
-
-        if show_normals and points is not None and self.normals is not None:
-            normal_endpoints = points + (self.normals * normal_scale)
-            normal_vertices = np.concatenate((points, normal_endpoints), axis=0)
-
-            indices = np.arange(len(points))
-            normal_lines_indices = np.vstack((indices, indices + len(points))).T
-
-            normal_lines = o3d.geometry.LineSet(
-                points=o3d.utility.Vector3dVector(normal_vertices),
-                lines=o3d.utility.Vector2iVector(normal_lines_indices),
-            )
-            normal_lines.colors = o3d.utility.Vector3dVector(
-                [[0, 0, 0] for _ in range(len(normal_lines_indices))]
-            )
-            geometries.append(normal_lines)
+        if show_normals:
+            normals_geom = self.create_normals_geometry(normal_scale)
+            if normals_geom is not None:
+                geometries.append(normals_geom)
 
         if not geometries:
             logger.warning("[ModelVisualizer] Nothing to show.")

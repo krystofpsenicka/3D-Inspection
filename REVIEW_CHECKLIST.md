@@ -54,7 +54,7 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 - [ x ] 35. `visibility/optimizers/__init__.py` (6 lines)
 
 ### Visualization + top-level init
-- [ ] 36. `visibility/visualization.py` (808 lines)
+- [ x ] 36. `visibility/visualization.py` (808 lines)
 - [ x ] 37. `visibility/__init__.py` (15 lines)
 
 ---

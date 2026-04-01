@@ -16,7 +16,7 @@ from typing import List, Tuple
 
 from visibility.core.types import FrustumParams
 from visibility.sampling import WeightedViewpointSampler
-from visibility.core import orient_normals_outward
+from shared.surface_sampler import SurfacePointSampler
 
 # CPU methods
 from visibility.methods.raycast import RaycastingVisibilityQuery
@@ -58,14 +58,10 @@ def load_scene(mesh_path=None):
         mesh = o3d.geometry.TriangleMesh.create_sphere(radius=5.0, resolution=100)
     mesh.compute_vertex_normals()
 
-    pcd = mesh.sample_points_poisson_disk(number_of_points=NUM_TARGET_POINTS)
-    target_points = np.asarray(pcd.points)
-    pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+    surface_sampler = SurfacePointSampler()
+    target_points, normals = surface_sampler.sample(
+        mesh, NUM_TARGET_POINTS, normal_radius=0.1, tangent_plane_k=10,
     )
-    pcd.orient_normals_consistent_tangent_plane(k=10)
-    normals = np.asarray(pcd.normals)
-    normals = orient_normals_outward(target_points, normals)
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7)
 

@@ -5,3 +5,4 @@ from .grid_builder_utils import (
     voxelize_mesh,
     build_occupancy_grid,
 )
+from .surface_sampler import SurfacePointSampler

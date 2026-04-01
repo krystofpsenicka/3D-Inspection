@@ -12,6 +12,12 @@ from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
+# Named constants — chosen to avoid overlap with RdBu_r (red=inside, blue=free).
+MESH_COLOR = (0.6, 0.6, 0.6)
+OCCUPIED_COLOR = (1.0, 0.7, 0.0)    # yellow-orange — distinct from RdBu_r red
+INFLATED_COLOR = (0.0, 0.7, 0.3)    # green — distinct from RdBu_r blue
+COORD_FRAME_SIZE = 2.0
+
 
 class EsdfVisualizer:
     """Shared ESDF visualizer used by both VRP and visibility ESDF scripts.
@@ -40,14 +46,13 @@ class EsdfVisualizer:
                      show_inflated: bool = False,
                      show_mesh: bool = True,
                      max_points: int = 300_000):
-        """Open an interactive Open3D viewer of the ESDF voxel cloud."""
         geometries: list = []
 
         # 1. Ship mesh (grey)
         if show_mesh and self.scaled_mesh is not None:
             try:
                 self.scaled_mesh.compute_vertex_normals()
-                self.scaled_mesh.paint_uniform_color([0.6, 0.6, 0.6])
+                self.scaled_mesh.paint_uniform_color(list(MESH_COLOR))
                 geometries.append(self.scaled_mesh)
                 print(f"Mesh: {len(self.scaled_mesh.vertices):,} verts, "
                       f"{len(self.scaled_mesh.faces):,} faces")
@@ -84,7 +89,7 @@ class EsdfVisualizer:
                    + (occ_ijk.astype(np.float64) + 0.5) * self.og.resolution)
             pcd2 = o3d.geometry.PointCloud()
             pcd2.points = o3d.utility.Vector3dVector(pts)
-            pcd2.paint_uniform_color([1.0, 0.3, 0.3])
+            pcd2.paint_uniform_color(list(OCCUPIED_COLOR))
             geometries.append(pcd2)
             print(f"Occupied voxels      : {len(occ_ijk):,} points")
 
@@ -100,22 +105,22 @@ class EsdfVisualizer:
                    + (shell_ijk.astype(np.float64) + 0.5) * self.og.resolution)
             pcd3 = o3d.geometry.PointCloud()
             pcd3.points = o3d.utility.Vector3dVector(pts)
-            pcd3.paint_uniform_color([0.3, 0.3, 1.0])
+            pcd3.paint_uniform_color(list(INFLATED_COLOR))
             geometries.append(pcd3)
             print(f"Inflation shell      : {len(shell_ijk):,} points")
 
         # 5. Coordinate frame
         geometries.append(
-            o3d.geometry.TriangleMesh.create_coordinate_frame(size=2.0))
+            o3d.geometry.TriangleMesh.create_coordinate_frame(size=COORD_FRAME_SIZE))
 
         print()
         print("Opening Open3D viewer ...")
         print("  Grey mesh  ")
         print("  Red -> White -> Blue = ESDF  (red = inside obstacle, blue = free space)")
         if show_occupied:
-            print("  Red points          = raw occupied voxels")
+            print("  Yellow-orange points = raw occupied voxels")
         if show_inflated:
-            print("  Blue points         = inflation shell")
+            print("  Green points         = inflation shell")
         print("  Controls: left-drag = rotate | scroll = zoom | middle-drag = pan")
 
         o3d.visualization.draw_geometries(

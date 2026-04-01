@@ -3,12 +3,13 @@
 import logging
 
 import numpy as np
-import matplotlib.pyplot as plt
 import PIL.Image
 import open3d as o3d
 
 from visibility.core.types import FrustumParams, OptimizationResult
-from .frustum_utils import create_frustum_lineset
+from .frustum_utils import create_viewpoint_geometry
+from .model import ModelVisualizer
+from ._helpers import generate_tab20_colors, show_geometries
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +35,7 @@ class SetCoverVisualizer:
 
     def _create_solution_geometries(self, result: OptimizationResult):
         """Build the list of Open3D geometries for a solution."""
-        geometries = []
-
-        base_mesh = o3d.geometry.TriangleMesh(self.mesh)
-        base_mesh.paint_uniform_color([0.8, 0.8, 0.8])
-        base_mesh.compute_vertex_normals()
-        geometries.append(base_mesh)
+        geometries = [ModelVisualizer(self.mesh).create_mesh_geometry()]
 
         # Transfer GPU arrays to CPU
         positions_np = result.positions.get()
@@ -56,23 +52,16 @@ class SetCoverVisualizer:
             uncovered_pcd.paint_uniform_color([1.0, 0.0, 0.0])
             geometries.append(uncovered_pcd)
 
-        colors = plt.cm.tab20(np.linspace(0, 1, max(20, result.num_viewpoints)))
+        colors = generate_tab20_colors(result.num_viewpoints)
 
         for i in range(result.num_viewpoints):
-            color = colors[i % len(colors)][:3]
+            color = list(colors[i % len(colors)])
             pos = positions_np[i]
             rot = orientations_np[i]
             vis = np.where(vis_map_np[i])[0]
 
-            viewpoint_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.15)
-            viewpoint_sphere.translate(pos)
-            viewpoint_sphere.paint_uniform_color(color)
-            viewpoint_sphere.compute_vertex_normals()
-            geometries.append(viewpoint_sphere)
-
-            frustum = create_frustum_lineset(pos, rot, self.frustum_params)
-            frustum.paint_uniform_color(color)
-            geometries.append(frustum)
+            geometries += create_viewpoint_geometry(
+                pos, rot, self.frustum_params, color)
 
             if len(vis) > 0:
                 visible_pcd = o3d.geometry.PointCloud()
@@ -80,15 +69,6 @@ class SetCoverVisualizer:
                     self.target_points[vis])
                 visible_pcd.paint_uniform_color(color)
                 geometries.append(visible_pcd)
-
-            arrow_length = 0.5
-            forward = rot[:, 0]
-            arrow_end = pos + forward * arrow_length
-            arrow = o3d.geometry.LineSet()
-            arrow.points = o3d.utility.Vector3dVector(np.array([pos, arrow_end]))
-            arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
-            arrow.paint_uniform_color(color)
-            geometries.append(arrow)
 
         return geometries
 
@@ -103,20 +83,8 @@ class SetCoverVisualizer:
 
         geometries = self._create_solution_geometries(result)
 
-        vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name=title, width=1920, height=1080)
-
-        render_option = vis.get_render_option()
-        render_option.point_size = 4.0
-        render_option.line_width = 2.0
-        render_option.mesh_show_back_face = True
-
-        for geom in geometries:
-            vis.add_geometry(geom)
-
         logger.info("Press Q to close visualization")
-        vis.run()
-        vis.destroy_window()
+        show_geometries(geometries, window_name=title)
 
     # ------------------------------------------------------------------
 

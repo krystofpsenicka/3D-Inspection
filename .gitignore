@@ -44,6 +44,9 @@ benchmark_results/
 .DS_Store
 Thumbs.db
 
+# Cache
+.cache/
+
 # Logs / misc
 *.log
 .env

@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 
 from visibility.core.types import FrustumParams, OptimizationResult
 from visibility.sampling import WeightedViewpointSampler
+from shared.surface_sampler import SurfacePointSampler
 from visibility.methods.raycast import RaycastingVisibilityQuery
 from visibility.methods.epsilon import EpsilonVisibilityQuery
 from visibility.set_cover import GreedySetCover
@@ -140,10 +141,10 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
         mesh = o3d.geometry.TriangleMesh.create_sphere()
     mesh.compute_vertex_normals()
 
-    pcd = mesh.sample_points_poisson_disk(number_of_points=num_points)
-    target_points = np.asarray(pcd.points)
-    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    normals = np.asarray(pcd.normals)
+    surface_sampler = SurfacePointSampler()
+    target_points, normals = surface_sampler.sample(
+        mesh, num_points, normal_radius=0.1, tangent_plane_k=10,
+    )
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7)
 

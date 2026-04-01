@@ -1,23 +1,35 @@
-"""Shared frustum geometry utility."""
+"""Shared frustum geometry utility (Isaac Sim / USD variant)."""
 
 import numpy as np
-import open3d as o3d
 
 from visibility.core.types import FrustumParams
+from ._usd_primitives import create_lineset_prim, create_sphere_prim
 
 
-def create_frustum_lineset(
+def add_frustum_lineset(
+    stage,
+    path: str,
     viewpoint: np.ndarray,
     orientation: np.ndarray,
     params: FrustumParams,
-) -> o3d.geometry.LineSet:
-    """Create a LineSet representing the frustum.
+    color: tuple = (1.0, 1.0, 0.0),
+    width: float = 2.0,
+) -> str:
+    """Create a frustum wireframe as a ``BasisCurves`` prim.
 
     Parameters
     ----------
+    stage : Usd.Stage
+    path : USD prim path.
     viewpoint : (3,) array — camera position.
     orientation : (3, 3) rotation matrix — columns are [forward, right, up].
     params : FrustumParams defining FOV, near/far planes.
+    color : RGB colour.
+    width : Line width.
+
+    Returns
+    -------
+    The prim path string.
     """
     half_angle_rad = params.fov_y / 2.0
     far_half_size = params.far * np.tan(half_angle_rad)
@@ -29,37 +41,38 @@ def create_frustum_lineset(
     r = right * far_half_size
     u = up * far_half_size
 
-    corners = [
+    corners = np.array([
         viewpoint,
         far_center + r + u,
         far_center - r + u,
         far_center - r - u,
         far_center + r - u,
-    ]
+    ])
 
-    lines = [
+    lines = np.array([
         [1, 2], [2, 3], [3, 4], [4, 1],
         [0, 1], [0, 2], [0, 3], [0, 4],
-    ]
+    ])
 
-    line_set = o3d.geometry.LineSet()
-    line_set.points = o3d.utility.Vector3dVector(np.array(corners))
-    line_set.lines = o3d.utility.Vector2iVector(np.array(lines))
-    return line_set
+    return create_lineset_prim(stage, path, corners, lines, color=color, width=width)
 
 
-def create_viewpoint_geometry(
+def add_viewpoint_geometry(
+    stage,
+    base_path: str,
     position: np.ndarray,
     orientation: np.ndarray,
     frustum_params: FrustumParams,
     color: tuple | list,
     sphere_radius: float = 0.15,
     arrow_length: float = 0.5,
-) -> list[o3d.geometry.Geometry]:
+) -> list[str]:
     """Create the standard viewpoint geometry: sphere + frustum + direction arrow.
 
     Parameters
     ----------
+    stage : Usd.Stage
+    base_path : Parent prim path — children are created beneath it.
     position : (3,) camera position.
     orientation : (3, 3) rotation matrix — columns are [forward, right, up].
     frustum_params : Camera frustum geometry.
@@ -69,23 +82,26 @@ def create_viewpoint_geometry(
 
     Returns
     -------
-    List of [sphere, frustum_lineset, arrow_lineset].
+    List of created prim paths [sphere, frustum, arrow].
     """
-    color = list(color)
+    color = tuple(color)
+    paths = []
 
-    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=sphere_radius)
-    sphere.translate(position)
-    sphere.paint_uniform_color(color)
-    sphere.compute_vertex_normals()
+    paths.append(create_sphere_prim(
+        stage, f"{base_path}/sphere",
+        position=position, radius=sphere_radius, color=color))
 
-    frustum = create_frustum_lineset(position, orientation, frustum_params)
-    frustum.paint_uniform_color(color)
+    paths.append(add_frustum_lineset(
+        stage, f"{base_path}/frustum",
+        viewpoint=position, orientation=orientation,
+        params=frustum_params, color=color))
 
     forward = orientation[:, 0]
     arrow_end = position + forward * arrow_length
-    arrow = o3d.geometry.LineSet()
-    arrow.points = o3d.utility.Vector3dVector(np.array([position, arrow_end]))
-    arrow.lines = o3d.utility.Vector2iVector(np.array([[0, 1]]))
-    arrow.paint_uniform_color(color)
+    arrow_pts = np.array([position, arrow_end])
+    arrow_lines = np.array([[0, 1]])
+    paths.append(create_lineset_prim(
+        stage, f"{base_path}/arrow",
+        points=arrow_pts, lines=arrow_lines, color=color, width=2.0))
 
-    return [sphere, frustum, arrow]
+    return paths

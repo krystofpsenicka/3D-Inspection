@@ -16,7 +16,8 @@ import numpy as np
 import cupy as cp
 import open3d as o3d
 
-from visibility.core import FrustumParams, orient_normals_outward
+from visibility.core import FrustumParams
+from shared.surface_sampler import SurfacePointSampler
 from visibility.sampling import TargetedViewpointSampler, OptimizingSampler, CMAESBackend
 from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
 from visualization import VisibilityVisualizer, SamplingVisualizer
@@ -90,14 +91,8 @@ def main():
     # --- Setup (same pattern as other scripts) ---
     mesh = load_mesh(args.mesh_path)
 
-    pcd = mesh.sample_points_poisson_disk(number_of_points=args.num_points)
-    target_points = np.asarray(pcd.points)
-    pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30)
-    )
-    pcd.orient_normals_consistent_tangent_plane(k=10)
-    normals = np.asarray(pcd.normals)
-    normals = orient_normals_outward(target_points, normals)
+    surface_sampler = SurfacePointSampler()
+    target_points, normals = surface_sampler.sample(mesh, args.num_points)
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
