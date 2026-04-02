@@ -51,7 +51,7 @@ VISIBILITY_DIR = os.path.join(REPO_ROOT, "visibility")
 if VISIBILITY_DIR not in sys.path:
     sys.path.insert(0, os.path.dirname(VISIBILITY_DIR))
 
-import VRP.config as _vrp_cfg
+from VRP.core import constants as _vrp_cfg
 
 # The GLB file stores vertices in Y-up convention (glTF standard).
 # Isaac Sim's GLB→USD converter implicitly prepends a Y-up→Z-up rotation
@@ -99,7 +99,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--frustum_aspect", type=float, default=1.0,
                    help="Frustum aspect ratio (width/height).")
     p.add_argument("--solver", choices=["auto", "cuopt", "ortools"],
-                   default="cuopt", help="VRP solver backend.")
+                   default="cuopt", help="MIP solver backend.")
+    p.add_argument("--alpha", type=float, default=1.0,
+                   help="Objective blending: 1.0=makespan, 0.0=total distance.")
     p.add_argument("--seed", type=int, default=42, help="Random seed.")
     p.add_argument("--curvature_weighting", action="store_true",
                    help="Enable curvature-weighted sampling (bias toward complex regions).")
@@ -127,7 +129,7 @@ def _save_pipeline_data(pipeline_data: dict, path: str) -> None:
     ExecutionResult is saved separately via :func:`VRP.utils.save_solution`.
     """
     import json as _json
-    from VRP.utils import save_solution
+    from VRP.core.serialization import save_solution
 
     base = path.rsplit(".", 1)[0] if "." in path else path
     os.makedirs(os.path.dirname(os.path.abspath(base)) or ".", exist_ok=True)
@@ -389,7 +391,7 @@ def main() -> None:
 
     from VRP.core.occupancy_grid import get_mesh_world_bounds, OccupancyGrid
     from VRP.scripts.vrp_planner import _compute_start_grid
-    from VRP.core.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
+    from VRP.core.distance_matrix import compute_distance_matrix, build_route_path_cache
 
     mesh_bmin, mesh_bmax = get_mesh_world_bounds(
         mesh_target_length=MESH_TARGET_LENGTH,
@@ -419,7 +421,7 @@ def main() -> None:
     # cuGraph graph memory scales with free-voxel count (~12 B/edge × 26 adj).
     # Find the finest integer downsampling factor that keeps free voxels under
     # budget so the distance matrix is as accurate as VRAM allows.
-    from VRP.routing.space_time_astar import downsample_occupancy_grid
+    from shared.grid_utils import downsample_occupancy_grid
     _MAX_FREE_VOXELS = 5_000_000   # ~1.6 GB edge list → safe on 8-GB cards
 
     def _pick_distmatrix_og(fine_og, max_free: int):
@@ -461,14 +463,16 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[8/9] Solving VRP (%s) and executing routes …", args.solver)
 
-    from VRP.solver.vrp_solver import solve_vrp, VRPResult
-    from VRP.routing.route_executor import RouteExecutor, ExecutionResult
-    from VRP.utils import load_local_robot_config
+    from VRP.vrp.vrp_solver import solve_vrp
+    from VRP.core.types import VRPResult, ExecutionResult
+    from VRP.mapf.route_executor import RouteExecutor
+    from VRP.core.robot_config import load_local_robot_config
 
     vrp_result: VRPResult = solve_vrp(
         dist_matrix=dist_matrix,
         num_vehicles=args.num_robots,
         depot=home_indices,
+        alpha=args.alpha,
         backend=args.solver,
     )
     logger.info("  VRP status=%s  cost=%.2f  solver=%s",

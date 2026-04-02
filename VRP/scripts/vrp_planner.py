@@ -17,34 +17,30 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
 
-from ..config import (
+from ..core.constants import (
     ASSETS_PATH,
     CONFIGS_PATH,
-    CUOPT_SERVICE_TIME,
     MIP_GAP,
     MIP_TIME_LIMIT,
     RAPIDS_PYTHON,
     ROBOT_RADIUS,
+    VRP_ALPHA,
     VRP_FEEDBACK_ITERATIONS,
     VRP_FEEDBACK_THRESHOLD,
-    VRP_OBJECTIVE,
 )
-from ..core.gpu_distance_matrix import build_route_path_cache, compute_distance_matrix
+from ..core.types import ExecutionResult, PipelineConfig, VRPResult
+from ..core.distance_matrix import build_route_path_cache, compute_distance_matrix
 from ..core.occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
-from ..routing.route_executor import ExecutionResult, RouteExecutor
-from ..utils import load_local_robot_config
-from ..solver.vrp_solver import VRPResult, solve_vrp
+from ..mapf.route_executor import RouteExecutor
+from ..core.robot_config import load_local_robot_config
+from ..vrp.vrp_solver import solve_vrp
 from ..core.waypoint_loader import load_waypoints
 
 logger = logging.getLogger(__name__)
-
-
-# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _compute_start_grid(
     num_robots: int,
@@ -101,28 +97,6 @@ def _compute_start_grid(
         start_positions.append(np.array([x, y, z], dtype=np.float32))
 
     return start_positions
-
-
-@dataclass
-class PipelineConfig:
-    """All user-facing settings for one VRP planning run."""
-    num_robots:           int            = 2
-    solver_backend:       str            = "auto"      # "auto" | "cuopt" | "ortools"
-    objective:            str            = VRP_OBJECTIVE  # "makespan" | "total_distance"
-    rapids_python:        str            = RAPIDS_PYTHON
-    service_time:         float          = CUOPT_SERVICE_TIME
-    gpu_timeout:          int            = 300
-    ortools_time_limit:   int            = 60
-    mip_time_limit:       int            = MIP_TIME_LIMIT
-    mip_gap:              float          = MIP_GAP
-    feedback_iterations:  int            = VRP_FEEDBACK_ITERATIONS
-    feedback_threshold:   float          = VRP_FEEDBACK_THRESHOLD
-    waypoint_source:      str            = "random"    # path or "random"
-    n_random_waypoints:   int            = 5
-    random_seed:          int            = 42
-    headless:             bool           = True
-    replay_in_isaac:      bool           = False
-    save_solution_path:   Optional[str]  = None        # if set, pickle solution here
 
 
 class VRPPipeline:
@@ -236,20 +210,18 @@ class VRPPipeline:
 
         for iteration in range(max_iters):
             # ── Stage 4: VRP solve ───────────────────────────────────
-            logger.info("[4/5] Solving VRP (%s, objective=%s, iter=%d/%d) …",
-                        cfg.solver_backend, cfg.objective,
+            logger.info("[4/5] Solving VRP (%s, alpha=%.2f, iter=%d/%d) …",
+                        cfg.solver_backend, cfg.alpha,
                         iteration + 1, max_iters)
             vrp_result: VRPResult = solve_vrp(
                 dist_matrix    = current_dist,
                 num_vehicles   = cfg.num_robots,
                 depot          = home_indices,
-                objective      = cfg.objective,
+                alpha          = cfg.alpha,
                 backend        = cfg.solver_backend,
                 rapids_python  = cfg.rapids_python,
-                service_time   = cfg.service_time,
-                time_limit     = cfg.ortools_time_limit,
+                time_limit     = cfg.mip_time_limit,
                 gpu_timeout    = cfg.gpu_timeout,
-                mip_time_limit = cfg.mip_time_limit,
                 mip_gap        = cfg.mip_gap,
             )
             logger.info("      VRP status=%s  total_cost=%.2f  makespan=%.2f  "
@@ -336,13 +308,13 @@ class VRPPipeline:
 
         # ── Optional: save solution for later Isaac Sim replay ────────
         if cfg.save_solution_path:
-            from ..utils import save_solution
+            from ..core.serialization import save_solution
             save_solution(exec_result, cfg.save_solution_path)
             logger.info("Solution saved to: %s", cfg.save_solution_path)
 
         # ── Optional: Isaac Sim replay (same-env mode) ────────────────
         if cfg.replay_in_isaac and not cfg.save_solution_path:
-            from ..viz.visualization import replay_in_isaac_sim
+            from ._isaac_replay import replay_in_isaac_sim
             replay_in_isaac_sim(exec_result, headless=cfg.headless)
 
         return exec_result

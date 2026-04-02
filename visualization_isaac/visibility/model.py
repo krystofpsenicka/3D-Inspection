@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import trimesh
 
-from ._usd_primitives import (
+from .._usd_primitives import (
     create_mesh_prim,
     create_points_prim,
     create_lineset_prim,

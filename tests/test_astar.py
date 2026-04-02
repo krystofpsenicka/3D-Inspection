@@ -1,10 +1,9 @@
 """Tests for CPU A* pathfinding."""
 import numpy as np
 import pytest
-from VRP.core.gpu_distance_matrix import (
-    _astar_single,
-    compute_distance_matrix_cpu,
-    extract_astar_path,
+from VRP.core.astar import (
+    astar_distance as _astar_single,
+    astar_path as extract_astar_path,
 )
 
 

@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from ..config import (
+from .constants import (
     INFLATION_VOXELS,
     MESH_PATH,
     MESH_POSE,

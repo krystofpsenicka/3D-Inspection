@@ -9,8 +9,8 @@ import trimesh
 from visibility.core.types import FrustumParams
 from .frustum_utils import add_viewpoint_geometry
 from .model import ModelVisualizer
-from ._usd_primitives import create_points_prim, create_sphere_prim
-from ._helpers import generate_tab20_colors
+from .._usd_primitives import create_points_prim, create_sphere_prim
+from .._helpers import generate_tab20_colors
 
 logger = logging.getLogger(__name__)
 

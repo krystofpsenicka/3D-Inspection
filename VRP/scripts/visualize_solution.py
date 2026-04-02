@@ -12,10 +12,10 @@ Usage
 -----
 Activate the Isaac Sim environment first, then::
 
-    python VRP/visualize_solution.py --solution_file vrp_solution.pkl
+    python VRP/scripts/visualize_solution.py --solution_file vrp_solution.pkl
 
     # Headless (no GUI) mode:
-    python VRP/visualize_solution.py --solution_file vrp_solution.pkl --headless
+    python VRP/scripts/visualize_solution.py --solution_file vrp_solution.pkl --headless
 
 Generating the solution file
 -----------------------------
@@ -35,7 +35,7 @@ import os
 import sys
 
 # Allow running as a top-level script as well as from inside the VRP package
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
@@ -85,11 +85,11 @@ def main() -> None:
         sys.exit(1)
 
     log.info("Loading solution from: %s", solution_path)
-    from VRP.utils import load_solution
+    from VRP.core.serialization import load_solution
     exec_result = load_solution(solution_path)
 
     num_robots = len(exec_result.all_waypoints)
-    total_wps  = sum(len(r) for r in exec_result.all_waypoints)
+    total_wps = sum(len(r) for r in exec_result.all_waypoints)
     total_steps = len(exec_result.all_traj_positions[0]) if exec_result.all_traj_positions else 0
     log.info(
         "Solution loaded: %d robot(s), %d total waypoints, %d trajectory steps",
@@ -98,7 +98,7 @@ def main() -> None:
 
     # ── Replay in Isaac Sim ──────────────────────────────────────────
     log.info("Launching Isaac Sim replay (headless=%s) …", args.headless)
-    from VRP.viz.visualization import replay_in_isaac_sim
+    from VRP.scripts._isaac_replay import replay_in_isaac_sim
     replay_in_isaac_sim(exec_result, headless=args.headless)
 
 

@@ -1,65 +1,20 @@
-"""
-MIP Makespan Solver – Min-Max VRP via Mixed-Integer Programming
-===============================================================
+"""Combined-objective VRP via Mixed-Integer Programming.
 
-Minimises the **makespan** (longest individual route) rather than total
-distance.  Both GPU (cuOpt MILP) and CPU (OR-Tools pywraplp) backends
-share the same MIP formulation built here.
+Minimises ``alpha * T/T_norm + (1-alpha) * total_cost/C_norm`` where T is
+the makespan and total_cost is the sum of all arc costs. Uses lifted MTZ
+subtour elimination (Desrochers & Laporte, 1991) and variable reduction
+(Lalla-Ruiz & Mes, 2021). Both GPU (cuOpt) and CPU (PuLP/CBC) backends
+share the same MIP formulation.
 
-MIP Formulation (Carlsson et al.; Lalla-Ruiz & Mes 2021; Toth & Vigo 2014)
----------------------------------------------------------------------------
-
-Sets & parameters::
-
-    C = {1,...,n}      — customer (inspection waypoint) nodes
-    D = {d_1,...,d_K}  — depot nodes (one per vehicle, each distinct)
-    V = {1,...,K}      — vehicles
-    N = C ∪ D          — all nodes
-    c[i,j]             — arc cost from distance matrix
-    Q                  — max customers per vehicle (balanced capacity)
-
-Decision variables::
-
-    x[i,j,v] ∈ {0,1}  — vehicle v traverses arc (i,j)
-    u[i] ∈ [1, |C|]   — visit order of customer i  (single-indexed; valid
-                         because constraint 1 ensures each customer is served
-                         by exactly one vehicle — Toth & Vigo 2014, §2.3)
-    T ∈ ℝ+             — makespan (continuous)
-
-Objective::
-
-    minimise T
-
-Constraints:
-
-1. Each customer visited exactly once.
-2. Flow conservation for customers.
-3. Each vehicle departs its depot at most once.
-4. Depot return count = departure count.
-5. Makespan bound: each vehicle's route cost ≤ T.
-6. Lifted MTZ (Desrochers & Laporte 1991) — tighter than standard MTZ
-   at no extra variable cost.
-7. Capacity: max customers per vehicle ≤ Q.
-
-Variable reduction (Lalla-Ruiz & Mes 2021):
-
-* No self-loops (i = j).
-* Vehicle v can only use arcs from/to its own depot d_v.
-* No depot-to-depot arcs.
-
-Closed VRP (return to depot):
-
-Vehicles must return to their depots and the full round-trip cost
-(including the return leg) is accounted for in the makespan bound
-(constraint 5).  This matches the physical requirement that AUVs
-return to their starting positions.
-
-Bound tightening:
-
-* Lower bound on T: max over v of min(c[d_v, j] + c[j, d_v]) for any
-  customer j — shortest possible round-trip from each depot.
-* Upper bound on T: max per-vehicle cost from a total-distance warm-start.
-* Arc fixing: if c[i,j] > best_known_T then x[i,j,v] = 0 for all v.
+References:
+    Desrochers, M. & Laporte, G. (1991). Improvements and Extensions to
+        the Miller-Tucker-Zemlin Subtour Elimination Constraints.
+        Operations Research Letters.
+    Lalla-Ruiz, E. & Mes, M.R.K. (2021). Mathematical Formulations and
+        Improvements for the Multi-Depot Open Vehicle Routing Problem.
+        Optimization Letters.
+    Toth, P. & Vigo, D. (2014). Vehicle Routing: Problems, Methods, and
+        Applications. MOS-SIAM Series on Optimization.
 """
 
 from __future__ import annotations
@@ -72,35 +27,9 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
+from ._helpers import normalise_depot as _normalise_depot, per_vehicle_costs as _per_vehicle_costs
+
 logger = logging.getLogger(__name__)
-
-
-# ─── Shared helpers (imported from vrp_solver) ────────────────────────────────
-
-def _normalise_depot(
-    depot: Union[int, List[int]], num_vehicles: int
-) -> List[int]:
-    if isinstance(depot, (list, tuple)):
-        return [int(d) for d in depot]
-    return [int(depot)] * num_vehicles
-
-
-def _per_vehicle_costs(
-    routes: List[List[int]],
-    dist_matrix: np.ndarray,
-    depot: Union[int, List[int]] = 0,
-) -> List[float]:
-    depots = _normalise_depot(depot, len(routes))
-    costs: List[float] = []
-    for v, route in enumerate(routes):
-        c = 0.0
-        if route:
-            d = depots[v]
-            full = [d] + list(route) + [d]
-            for a, b in zip(full[:-1], full[1:]):
-                c += float(dist_matrix[a, b])
-        costs.append(c)
-    return costs
 
 
 # ─── MIP model builder ───────────────────────────────────────────────────────
@@ -110,6 +39,7 @@ def build_makespan_mip(
     num_vehicles: int,
     depot: Union[int, List[int]],
     capacity: int,
+    alpha: float = 1.0,
     warm_start_routes: Optional[List[List[int]]] = None,
     mip_gap: float = 0.05,
 ) -> Tuple[str, Optional[Dict]]:
@@ -125,8 +55,11 @@ def build_makespan_mip(
         Per-vehicle depot indices.
     capacity : int
         Max customers per vehicle (Q).
+    alpha : float
+        Objective blending parameter in [0, 1].  1.0 = pure makespan,
+        0.0 = pure total distance, intermediate = normalised blend.
     warm_start_routes : list[list[int]], optional
-        Feasible solution from a total-distance solver for warm-starting.
+        Feasible solution for warm-starting (e.g. from nearest-neighbor).
     mip_gap : float
         Relative optimality gap passed to the solver later (used here
         only for logging).
@@ -201,8 +134,10 @@ def build_makespan_mip(
                 # No depot-to-depot arcs
                 if i in depot_set and j in depot_set:
                     continue
-                # Arc fixing: if cost exceeds best known T, skip
-                if T_ub < float("inf") and cost[i, j] > T_ub:
+                # Arc fixing: if cost exceeds best known T, skip.
+                # Only valid for pure makespan (alpha=1); for blended
+                # objectives the optimal T may exceed T_ub.
+                if alpha >= 1.0 and T_ub < float("inf") and cost[i, j] > T_ub:
                     continue
                 x[i, j, v] = pulp.LpVariable(
                     f"x_{i}_{j}_{v}", cat=pulp.LpBinary,
@@ -222,7 +157,21 @@ def build_makespan_mip(
         T.upBound = T_ub * 1.01  # tiny slack for numerical safety
 
     # ── Objective ────────────────────────────────────────────────────
-    prob += T, "Makespan"
+    total_cost_expr = pulp.lpSum(
+        cost[i, j] * x[i, j, v] for (i, j, v) in x
+    )
+    if alpha >= 1.0:
+        prob += T, "Makespan"
+    elif alpha <= 0.0:
+        prob += total_cost_expr, "TotalCost"
+    else:
+        T_norm = T_lb if T_lb > 0 else 1.0
+        C_norm = K * T_lb if T_lb > 0 else 1.0
+        prob += (
+            alpha * (T / T_norm)
+            + (1 - alpha) * (total_cost_expr / C_norm),
+            "Combined",
+        )
 
     # ── Constraint 1: each customer visited exactly once ─────────────
     for i in customers:
@@ -382,9 +331,10 @@ class MIPMakespanCPU:
         dist_matrix: np.ndarray,
         num_vehicles: int,
         depot: Union[int, List[int]] = 0,
+        alpha: float = 1.0,
         warm_start_routes: Optional[List[List[int]]] = None,
     ):
-        from .vrp_solver import VRPResult
+        from ..core.types import VRPResult
 
         depots = _normalise_depot(depot, num_vehicles)
         depot_set = set(depots)
@@ -402,6 +352,7 @@ class MIPMakespanCPU:
 
         prob, warm_start = build_makespan_mip(
             dist_matrix, num_vehicles, depot, capacity,
+            alpha=alpha,
             warm_start_routes=warm_start_routes,
             mip_gap=self.mip_gap,
         )
@@ -483,7 +434,7 @@ class MIPMakespanGPU:
         timeout: int = 300,
     ):
         import os
-        from ..config import RAPIDS_PYTHON, VRP_ROOT
+        from ..core.constants import RAPIDS_PYTHON, VRP_ROOT
         self.rapids_python = os.path.expanduser(rapids_python or RAPIDS_PYTHON)
         self.time_limit = time_limit
         self.mip_gap = mip_gap
@@ -495,13 +446,14 @@ class MIPMakespanGPU:
         dist_matrix: np.ndarray,
         num_vehicles: int,
         depot: Union[int, List[int]] = 0,
+        alpha: float = 1.0,
         warm_start_routes: Optional[List[List[int]]] = None,
     ):
         import json
         import os
         import subprocess
 
-        from .vrp_solver import VRPResult
+        from ..core.types import VRPResult
 
         depots = _normalise_depot(depot, num_vehicles)
         depot_set = set(depots)
@@ -513,6 +465,7 @@ class MIPMakespanGPU:
         # Build MIP and export MPS
         prob, warm_start = build_makespan_mip(
             dist_matrix, num_vehicles, depot, capacity,
+            alpha=alpha,
             warm_start_routes=warm_start_routes,
             mip_gap=self.mip_gap,
         )

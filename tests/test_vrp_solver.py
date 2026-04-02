@@ -1,11 +1,11 @@
 """Tests for VRP solver pure functions."""
 import numpy as np
 import pytest
-from VRP.solver.vrp_solver import (
-    VRPResult,
-    _normalise_depot,
-    _compute_route_cost,
-    _per_vehicle_costs,
+from VRP.core.types import VRPResult
+from VRP.vrp._helpers import (
+    normalise_depot as _normalise_depot,
+    compute_route_cost as _compute_route_cost,
+    per_vehicle_costs as _per_vehicle_costs,
 )
 
 
@@ -61,12 +61,9 @@ class TestVRPResult:
         assert r.status == "success"
 
 
-class TestORToolsSolver:
+class TestNearestNeighborWarmstart:
     def test_tiny_problem(self):
-        try:
-            from VRP.solver.vrp_solver import ORToolsSolver
-        except ImportError:
-            pytest.skip("ortools not available")
+        from VRP.vrp._helpers import nearest_neighbor_warmstart as _nearest_neighbor_warmstart
 
         dm = np.array([
             [0, 1, 2, 3, 4],
@@ -75,11 +72,9 @@ class TestORToolsSolver:
             [3, 2, 1, 0, 1],
             [4, 3, 2, 1, 0],
         ], dtype=np.float32)
-        solver = ORToolsSolver(time_limit=5)
-        result = solver.solve(dm, num_vehicles=2, depot=0)
-        if result.status == "success":
-            # All non-depot nodes visited
-            visited = set()
-            for route in result.routes:
-                visited.update(route)
-            assert visited == {1, 2, 3, 4}
+        routes = _nearest_neighbor_warmstart(dm, num_vehicles=2, depot=0)
+        # All non-depot nodes visited
+        visited = set()
+        for route in routes:
+            visited.update(route)
+        assert visited == {1, 2, 3, 4}

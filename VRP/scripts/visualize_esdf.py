@@ -21,8 +21,15 @@ Colour convention (both modes):
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 
 import numpy as np
+
+# Allow running as a top-level script
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from visualization import EsdfVisualizer
 
@@ -33,7 +40,7 @@ from visualization import EsdfVisualizer
 
 def _build_og_and_esdf():
     """Build occupancy grid and compute ESDF.  Returns (og, raw, esdf_3d)."""
-    from occupancy_grid import build_occupancy_grid
+    from VRP.core.occupancy_grid import build_occupancy_grid
     from scipy.ndimage import distance_transform_edt
 
     print("Building occupancy grid …")
@@ -53,7 +60,7 @@ def _load_scaled_mesh():
     """Load the ship mesh with the same scale + pose applied in occupancy_grid."""
     import trimesh
     from scipy.spatial.transform import Rotation as R
-    from config import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
+    from VRP.core.constants import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
 
     raw_mesh = trimesh.load(MESH_PATH, force="mesh")
     if isinstance(raw_mesh, trimesh.Scene):

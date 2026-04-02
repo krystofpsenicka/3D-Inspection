@@ -1,51 +1,45 @@
 """VRP Planner package."""
 
+# Types
+from VRP.core.types import VRPResult, ExecutionResult, PlanningStats, PipelineConfig
+
 # Configuration
-from VRP.config import (
+from VRP.core.constants import (
     VOXEL_RESOLUTION,
     ROBOT_RADIUS,
     INFLATION_VOXELS,
     BROV_CUBOID_DIMS,
     STATIC_OBSTACLES,
-    RAPIDS_PYTHON,
 )
 
 # Core
 from VRP.core.occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
-from VRP.core.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
-from VRP.core.waypoint_loader import load_waypoints
+from VRP.core.distance_matrix import compute_distance_matrix, build_route_path_cache
+from VRP.core.waypoint_loader import load_waypoints, load_viewpoints_gpu
 
 # Solver
-from VRP.solver.vrp_solver import VRPResult, solve_vrp
+from VRP.vrp.vrp_solver import solve_vrp
 
 # Routing
-from VRP.routing.route_executor import ExecutionResult, RouteExecutor
+from VRP.mapf.route_executor import RouteExecutor
 
 # Helpers
-from VRP.utils import save_solution, load_solution
+from VRP.core.serialization import save_solution, load_solution
 
 __all__ = [
+    # Types
+    "VRPResult", "ExecutionResult", "PlanningStats", "PipelineConfig",
     # Configuration
-    "config",
-    # Subpackages
-    "core",
-    "solver",
-    "routing",
-    "viz",
-    "scripts",
-    # Re-exports
-    "OccupancyGrid",
-    "build_occupancy_grid",
-    "get_mesh_world_bounds",
-    "compute_distance_matrix",
-    "build_route_path_cache",
-    "load_waypoints",
-    "VRPResult",
+    "VOXEL_RESOLUTION", "ROBOT_RADIUS", "INFLATION_VOXELS",
+    "BROV_CUBOID_DIMS", "STATIC_OBSTACLES",
+    # Core
+    "OccupancyGrid", "build_occupancy_grid", "get_mesh_world_bounds",
+    "compute_distance_matrix", "build_route_path_cache",
+    "load_waypoints", "load_viewpoints_gpu",
+    # Solver
     "solve_vrp",
-    "ExecutionResult",
+    # Routing
     "RouteExecutor",
-    "save_solution",
-    "load_solution",
     # Helpers
-    "utils",
+    "save_solution", "load_solution",
 ]

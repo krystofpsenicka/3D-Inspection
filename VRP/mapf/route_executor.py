@@ -26,12 +26,11 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
 
-from ..config import (
+from ..core.constants import (
     AUV_CRUISE_SPEED,
     BROV_CUBOID_DIMS,
     ROBOT_RADIUS,
@@ -42,54 +41,13 @@ from ..config import (
     SPLINE_SAFETY_VOXELS,
     TRAJ_DT,
 )
-from .space_time_astar import (
-    ReservationTable,
-    downsample_occupancy_grid,
-    plan_robot_route_st,
-)
-from ..utils import find_trajectory_collisions
+from ..core.types import ExecutionResult
+from shared.grid_utils import downsample_occupancy_grid
+from .space_time_search import ReservationTable
+from .route_planner import plan_robot_route_st
+from ..core.collision import find_trajectory_collisions
 
 logger = logging.getLogger(__name__)
-
-
-# ─── Result dataclass ────────────────────────────────────────────────────────
-
-@dataclass
-class ExecutionResult:
-    """Full trajectory for every robot after route execution.
-
-    Attributes
-    ----------
-    all_traj_positions:
-        ``[num_robots][num_steps]`` – joint position arrays (8-DOF).
-    all_traj_velocities:
-        ``[num_robots][num_steps]`` – joint velocity arrays (8-DOF).
-    all_waypoints:
-        ``[num_robots][num_waypoints]`` – original waypoint lists sent to
-        the executor (replicated for the Isaac Sim visualisation phase).
-    initial_positions:
-        ``[num_robots]`` – start XYZ.
-    joint_names:
-        List of joint name strings.
-    fail_counts:
-        Per-robot count of completely failed waypoints.
-    actual_makespan:
-        Actual makespan from path planning (seconds).
-    actual_per_vehicle_times:
-        Per-vehicle travel times from path planning (seconds).
-    """
-    all_traj_positions:       List[List[np.ndarray]]
-    all_traj_velocities:      List[List[np.ndarray]]
-    all_waypoints:            List[List[List[float]]]
-    initial_positions:        List[np.ndarray]
-    joint_names:              List[str]
-    fail_counts:              List[int]
-    actual_makespan:          float       = 0.0
-    actual_per_vehicle_times: List[float] = None  # type: ignore[assignment]
-
-    def __post_init__(self):
-        if self.actual_per_vehicle_times is None:
-            self.actual_per_vehicle_times = []
 
 
 # ─── Executor ────────────────────────────────────────────────────────────────
@@ -139,7 +97,7 @@ class RouteExecutor:
         Returns (robot_world_paths, robot_coarse_times, robot_wp_schedules,
                  makespan, per_robot_stats).
         """
-        from .space_time_astar import PlanningStats
+        from ..core.types import PlanningStats
 
         n_robots = self.num_robots
         reservation = ReservationTable(coarse_grid.shape, T_max, half_v)

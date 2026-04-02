@@ -3,8 +3,8 @@ import numpy as np
 import pytest
 from shared.occupancy_grid import OccupancyGrid
 from visibility.sampling.utils.sampling_occupancy_grid import SamplingOccupancyGrid
-from VRP.routing.route_executor import ExecutionResult
-from VRP.utils import save_solution, load_solution
+from VRP.core.types import ExecutionResult
+from VRP.core.serialization import save_solution, load_solution
 
 
 class TestOccupancyGridSerialization:

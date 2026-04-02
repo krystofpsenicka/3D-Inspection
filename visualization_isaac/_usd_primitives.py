@@ -248,6 +248,99 @@ def create_coordinate_frame_prim(
 # Wireframe from trimesh
 # ---------------------------------------------------------------------------
 
+def set_prim_pose(prim, xyz: np.ndarray, qwxyz: np.ndarray) -> None:
+    """Teleport a USD prim by setting xformOp:translate and xformOp:orient.
+
+    Parameters
+    ----------
+    prim : Usd.Prim
+    xyz : (3,) position array.
+    qwxyz : (4,) quaternion [w, x, y, z].
+    """
+    from pxr import Gf
+
+    x, y, z = float(xyz[0]), float(xyz[1]), float(xyz[2])
+    qw, qx, qy, qz = float(qwxyz[0]), float(qwxyz[1]), float(qwxyz[2]), float(qwxyz[3])
+
+    translate_attr = prim.GetAttribute("xformOp:translate")
+    orient_attr = prim.GetAttribute("xformOp:orient")
+
+    if translate_attr and translate_attr.IsValid():
+        try:
+            translate_attr.Set(Gf.Vec3f(x, y, z))
+        except Exception:
+            try:
+                translate_attr.Set(Gf.Vec3d(x, y, z))
+            except Exception:
+                pass
+    else:
+        from pxr import UsdGeom
+        UsdGeom.Xformable(prim).AddTranslateOp().Set(Gf.Vec3f(x, y, z))
+
+    if orient_attr and orient_attr.IsValid():
+        try:
+            orient_attr.Set(Gf.Quatf(qw, qx, qy, qz))
+        except Exception:
+            try:
+                orient_attr.Set(Gf.Quatd(qw, qx, qy, qz))
+            except Exception:
+                pass
+    else:
+        from pxr import UsdGeom
+        UsdGeom.Xformable(prim).AddOrientOp().Set(Gf.Quatf(qw, qx, qy, qz))
+
+
+# ---------------------------------------------------------------------------
+# Cuboid
+# ---------------------------------------------------------------------------
+
+def create_cuboid_prim(
+    stage,
+    path: str,
+    position: np.ndarray,
+    orientation: np.ndarray,
+    color: tuple = (1.0, 1.0, 1.0),
+    size: float = 0.1,
+) -> str:
+    """Create a visual cuboid prim.
+
+    Tries ``omni.isaac.core.objects.cuboid.VisualCuboid`` first; falls back
+    to raw ``UsdGeom.Cube`` with xformOps.
+
+    Returns
+    -------
+    The prim path string.
+    """
+    position = np.asarray(position, dtype=np.float64)
+    orientation = np.asarray(orientation, dtype=np.float64)
+    try:
+        from omni.isaac.core.objects import cuboid as cuboid_mod
+        cuboid_mod.VisualCuboid(
+            path,
+            position=position,
+            orientation=orientation,
+            color=np.array(color, dtype=np.float32),
+            size=float(size),
+        )
+    except Exception:
+        from pxr import UsdGeom, Gf
+        cube = UsdGeom.Cube.Define(stage, path)
+        cube.GetSizeAttr().Set(float(size))
+        cube.GetDisplayColorAttr().Set([Gf.Vec3f(*color)])
+        xformable = UsdGeom.Xformable(cube.GetPrim())
+        xformable.AddTranslateOp().Set(Gf.Vec3d(*position.tolist()))
+        if len(orientation) == 4:
+            qw, qx, qy, qz = orientation
+            xformable.AddOrientOp().Set(
+                Gf.Quatd(float(qw), float(qx), float(qy), float(qz)))
+
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Wireframe from trimesh
+# ---------------------------------------------------------------------------
+
 def create_wireframe_from_trimesh(
     stage,
     path: str,

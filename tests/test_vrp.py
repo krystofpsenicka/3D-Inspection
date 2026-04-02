@@ -17,25 +17,21 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pytest
 
-from VRP.solver.vrp_solver import (
-    VRPResult,
-    ORToolsSolver,
-    GPUSolver,
-    _compute_route_cost,
-    _normalise_depot,
-    _per_vehicle_costs,
-    solve_vrp,
+from VRP.core.types import VRPResult
+from VRP.vrp._helpers import (
+    compute_route_cost as _compute_route_cost,
+    nearest_neighbor_warmstart as _nearest_neighbor_warmstart,
+    normalise_depot as _normalise_depot,
+    per_vehicle_costs as _per_vehicle_costs,
 )
-from VRP.config import RAPIDS_PYTHON, MIP_GAP
+from VRP.vrp.vrp_solver import solve_vrp
+from VRP.core.constants import RAPIDS_PYTHON, MIP_GAP
 
 # ── Skip conditions ──────────────────────────────────────────────────────────
 
-ortools_available = pytest.importorskip(
-    "ortools.constraint_solver", reason="OR-Tools not installed"
-)
 pulp = pytest.importorskip("pulp", reason="PuLP not installed")
 
-from VRP.solver.mip_makespan_solver import MIPMakespanCPU, MIPMakespanGPU
+from VRP.vrp.mip_makespan_solver import MIPMakespanCPU, MIPMakespanGPU
 
 _HAS_RAPIDS = os.path.isfile(RAPIDS_PYTHON)
 requires_rapids = pytest.mark.skipif(
@@ -176,18 +172,12 @@ def _eilon22_dist_matrix() -> Tuple[np.ndarray, int]:
 
 # ─── Helper: solver factory ─────────────────────────────────────────────────
 
-def _make_solver(name: str):
+def _make_solver(name: str, alpha: float = 1.0):
     """Instantiate a solver by name."""
-    if name == "ortools":
-        return ORToolsSolver(time_limit=10, span_cost_coefficient=0)
-    elif name == "ortools_balanced":
-        return ORToolsSolver(time_limit=10, span_cost_coefficient=100)
-    elif name == "gpu":
-        return GPUSolver(timeout=120)
-    elif name == "mip_cpu":
-        return MIPMakespanCPU(time_limit=60, mip_gap=MIP_GAP)
+    if name == "mip_cpu":
+        return MIPMakespanCPU(time_limit=60, mip_gap=MIP_GAP), alpha
     elif name == "mip_gpu":
-        return MIPMakespanGPU(time_limit=60, mip_gap=MIP_GAP, timeout=120)
+        return MIPMakespanGPU(time_limit=60, mip_gap=MIP_GAP, timeout=120), alpha
     else:
         raise ValueError(f"Unknown solver: {name}")
 
@@ -206,14 +196,12 @@ def _solver_ids(solvers):
 
 
 # Solver groups
-TOTAL_DIST_SOLVERS = ["ortools"]
 MAKESPAN_SOLVERS = ["mip_cpu"]
-ALL_CPU_SOLVERS = ["ortools", "mip_cpu"]
+ALL_CPU_SOLVERS = ["mip_cpu"]
 
 if _HAS_RAPIDS:
-    TOTAL_DIST_SOLVERS.append("gpu")
     MAKESPAN_SOLVERS.append("mip_gpu")
-    ALL_CPU_SOLVERS = ["ortools", "mip_cpu", "gpu", "mip_gpu"]
+    ALL_CPU_SOLVERS.append("mip_gpu")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -223,24 +211,6 @@ if _HAS_RAPIDS:
 class TestSolverOptimality:
     """Verify solvers find solutions within tolerance of brute-force optimal."""
 
-    # ── Eilon 7-node, total distance ──────────────────────────────────
-
-    @pytest.mark.parametrize("solver_name", TOTAL_DIST_SOLVERS,
-                             ids=_solver_ids(TOTAL_DIST_SOLVERS))
-    def test_eilon7_total_distance(self, solver_name):
-        dm = _eilon7_dist_matrix()
-        # capacity same as ORToolsSolver computes:
-        # 6 customers / 2 vehicles = 3, +15% slack → 4
-        bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-
-        solver = _make_solver(solver_name)
-        result = solver.solve(dm, num_vehicles=2, depot=0)
-        _skip_on_subprocess_error(result, solver_name)
-        assert result.total_cost <= bf_total * 1.05, (
-            f"{solver_name}: total_cost={result.total_cost:.2f} > "
-            f"brute_force={bf_total:.2f} * 1.05"
-        )
-
     # ── Eilon 7-node, makespan ────────────────────────────────────────
 
     @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS,
@@ -249,8 +219,8 @@ class TestSolverOptimality:
         dm = _eilon7_dist_matrix()
         _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
 
-        solver = _make_solver(solver_name)
-        result = solver.solve(dm, num_vehicles=2, depot=0)
+        solver, alpha = _make_solver(solver_name, alpha=1.0)
+        result = solver.solve(dm, num_vehicles=2, depot=0, alpha=alpha)
         _skip_on_subprocess_error(result, solver_name)
         tol = MIP_GAP + 0.01  # MIP gap + small numerical margin
         assert result.makespan <= bf_makespan * (1 + tol), (
@@ -258,36 +228,21 @@ class TestSolverOptimality:
             f"brute_force={bf_makespan:.2f} * {1 + tol:.2f}"
         )
 
-    # ── Asymmetric TSP (1 vehicle) ───────────────────────────────────
+    # ── Eilon 7-node, total distance (alpha=0) ──────────────────────
 
-    @pytest.mark.parametrize("solver_name", TOTAL_DIST_SOLVERS,
-                             ids=_solver_ids(TOTAL_DIST_SOLVERS))
-    def test_asymmetric_tsp(self, solver_name):
-        dm = _asymmetric4_dist_matrix()
-        bf_total, _ = brute_force_vrp(dm, 1, [0])
+    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS,
+                             ids=_solver_ids(MAKESPAN_SOLVERS))
+    def test_eilon7_total_distance(self, solver_name):
+        dm = _eilon7_dist_matrix()
+        bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
 
-        solver = _make_solver(solver_name)
-        result = solver.solve(dm, num_vehicles=1, depot=0)
+        solver, alpha = _make_solver(solver_name, alpha=0.0)
+        result = solver.solve(dm, num_vehicles=2, depot=0, alpha=alpha)
         _skip_on_subprocess_error(result, solver_name)
-        assert result.total_cost <= bf_total * 1.05, (
-            f"{solver_name}: cost={result.total_cost:.2f} > "
-            f"brute_force={bf_total:.2f} * 1.05"
-        )
-
-    # ── Multi-depot, total distance ──────────────────────────────────
-
-    @pytest.mark.parametrize("solver_name", TOTAL_DIST_SOLVERS,
-                             ids=_solver_ids(TOTAL_DIST_SOLVERS))
-    def test_multi_depot_total_distance(self, solver_name):
-        dm, depots = _multi_depot_line()
-        bf_total, _ = brute_force_vrp(dm, 2, depots, max_stops_per_vehicle=4)
-
-        solver = _make_solver(solver_name)
-        result = solver.solve(dm, num_vehicles=2, depot=depots)
-        _skip_on_subprocess_error(result, solver_name)
-        assert result.total_cost <= bf_total * 1.05, (
-            f"{solver_name}: cost={result.total_cost:.2f} > "
-            f"brute_force={bf_total:.2f} * 1.05"
+        tol = MIP_GAP + 0.01
+        assert result.total_cost <= bf_total * (1 + tol), (
+            f"{solver_name}: total_cost={result.total_cost:.2f} > "
+            f"brute_force={bf_total:.2f} * {1 + tol:.2f}"
         )
 
     # ── Multi-depot, makespan ────────────────────────────────────────
@@ -298,8 +253,8 @@ class TestSolverOptimality:
         dm, depots = _multi_depot_line()
         _, bf_makespan = brute_force_vrp(dm, 2, depots, max_stops_per_vehicle=4)
 
-        solver = _make_solver(solver_name)
-        result = solver.solve(dm, num_vehicles=2, depot=depots)
+        solver, alpha = _make_solver(solver_name, alpha=1.0)
+        result = solver.solve(dm, num_vehicles=2, depot=depots, alpha=alpha)
         _skip_on_subprocess_error(result, solver_name)
         tol = MIP_GAP + 0.01
         assert result.makespan <= bf_makespan * (1 + tol), (
@@ -315,23 +270,11 @@ class TestSolverOptimality:
 class TestCVRPLIBBenchmark:
     """Regression tests against published CVRPLIB benchmarks."""
 
-    def test_eilon22_total_distance(self):
-        """ORTools on E-n22-k4 should be within 10% of published optimal 375."""
-        dm, k = _eilon22_dist_matrix()
-        solver = ORToolsSolver(time_limit=30, span_cost_coefficient=0)
-        result = solver.solve(dm, num_vehicles=k, depot=0)
-        assert result.status == "success"
-        # Our stop-count capacity is less constrained than CVRP demand-weighted
-        # capacity, so 375 is an upper bound for our problem.
-        assert result.total_cost <= 375 * 1.10, (
-            f"total_cost={result.total_cost:.2f} > 375 * 1.10 = 412.5"
-        )
-
     def test_eilon22_makespan(self):
         """MIP on E-n22-k4 should produce a feasible solution with consistent costs."""
         dm, k = _eilon22_dist_matrix()
         solver = MIPMakespanCPU(time_limit=60, mip_gap=0.10)
-        result = solver.solve(dm, num_vehicles=k, depot=0)
+        result = solver.solve(dm, num_vehicles=k, depot=0, alpha=1.0)
         assert result.status == "success"
         assert result.makespan > 0
         # Recompute and verify consistency
@@ -345,14 +288,14 @@ class TestCVRPLIBBenchmark:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestSolverFeasibility:
-    """Run all available solvers on Eilon 7 and verify structural invariants."""
+    """Run MIP solver and verify structural invariants."""
 
     @pytest.fixture(params=ALL_CPU_SOLVERS, ids=_solver_ids(ALL_CPU_SOLVERS))
     def solved(self, request):
         solver_name = request.param
         dm = _eilon7_dist_matrix()
-        solver = _make_solver(solver_name)
-        result = solver.solve(dm, num_vehicles=2, depot=0)
+        solver, alpha = _make_solver(solver_name, alpha=1.0)
+        result = solver.solve(dm, num_vehicles=2, depot=0, alpha=alpha)
         if result.status != "success":
             pytest.skip(f"{solver_name} did not find a solution")
         return result, dm
@@ -418,29 +361,13 @@ class TestSolverEdgeCases:
     def test_single_customer(self):
         """2 nodes, 1 vehicle → should visit the only customer."""
         dm = np.array([[0, 5], [5, 0]], dtype=np.float64)
-        solver = ORToolsSolver(time_limit=5, span_cost_coefficient=0)
-        result = solver.solve(dm, num_vehicles=1, depot=0)
+        solver = MIPMakespanCPU(time_limit=30, mip_gap=0.05)
+        result = solver.solve(dm, num_vehicles=1, depot=0, alpha=1.0)
         assert result.status == "success"
         assert result.routes == [[1]]
         assert abs(result.total_cost - 10.0) < 1e-6  # 5 out + 5 back
 
     def test_more_vehicles_than_customers(self):
-        """3 customers, 5 vehicles → some routes empty, all customers visited."""
-        dm = np.array([
-            [0, 1, 2, 3],
-            [1, 0, 1, 2],
-            [2, 1, 0, 1],
-            [3, 2, 1, 0],
-        ], dtype=np.float64)
-        solver = ORToolsSolver(time_limit=5, span_cost_coefficient=0)
-        result = solver.solve(dm, num_vehicles=5, depot=0)
-        assert result.status == "success"
-        visited = set()
-        for route in result.routes:
-            visited.update(route)
-        assert visited == {1, 2, 3}
-
-    def test_more_vehicles_than_customers_mip(self):
         """3 customers, 5 vehicles via MIP."""
         dm = np.array([
             [0, 1, 2, 3],
@@ -449,30 +376,12 @@ class TestSolverEdgeCases:
             [3, 2, 1, 0],
         ], dtype=np.float64)
         solver = MIPMakespanCPU(time_limit=30, mip_gap=0.05)
-        result = solver.solve(dm, num_vehicles=5, depot=0)
+        result = solver.solve(dm, num_vehicles=5, depot=0, alpha=1.0)
         assert result.status == "success"
         visited = set()
         for route in result.routes:
             visited.update(route)
         assert visited == {1, 2, 3}
-
-    def test_large_distance_spread(self):
-        """Mix of very small (0.001) and large (1000.0) distances.
-
-        OR-Tools uses ×1000 integer scaling internally; this test verifies
-        precision is maintained.
-        """
-        dm = np.array([
-            [0,       0.001,   1000.0],
-            [0.001,   0,       1000.0],
-            [1000.0,  1000.0,  0],
-        ], dtype=np.float64)
-        solver = ORToolsSolver(time_limit=5, span_cost_coefficient=0)
-        result = solver.solve(dm, num_vehicles=1, depot=0)
-        assert result.status == "success"
-        # Optimal tour: 0→1→2→0 = 0.001 + 1000 + 1000 = 2000.001
-        # or 0→2→1→0 = 1000 + 1000 + 0.001 = 2000.001
-        assert abs(result.total_cost - 2000.001) < 0.01
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -481,15 +390,28 @@ class TestSolverEdgeCases:
 
 class TestSolveVRPEntryPoint:
 
-    def test_total_distance_objective(self):
-        """solve_vrp with objective='total_distance' returns valid result."""
+    def test_alpha_1_makespan(self):
+        """solve_vrp with alpha=1.0 returns valid makespan-optimised result."""
         dm = _eilon7_dist_matrix()
         result = solve_vrp(
             dm, num_vehicles=2, depot=0,
-            objective="total_distance",
+            alpha=1.0,
             backend="ortools",
-            time_limit=10,
-            span_cost_coefficient=0,
+            time_limit=60,
+            mip_gap=0.05,
+        )
+        assert result.status == "success"
+        assert result.makespan > 0
+
+    def test_alpha_0_total_distance(self):
+        """solve_vrp with alpha=0.0 returns valid total-distance result."""
+        dm = _eilon7_dist_matrix()
+        result = solve_vrp(
+            dm, num_vehicles=2, depot=0,
+            alpha=0.0,
+            backend="ortools",
+            time_limit=60,
+            mip_gap=0.05,
         )
         assert result.status == "success"
         assert result.total_cost < float("inf")
@@ -498,37 +420,22 @@ class TestSolveVRPEntryPoint:
             visited.update(r)
         assert visited == set(range(1, 7))
 
-    def test_makespan_objective(self):
-        """solve_vrp with objective='makespan' returns valid result."""
-        dm = _eilon7_dist_matrix()
-        result = solve_vrp(
-            dm, num_vehicles=2, depot=0,
-            objective="makespan",
-            backend="ortools",
-            time_limit=10,
-            mip_time_limit=60,
-            mip_gap=0.05,
-        )
-        assert result.status == "success"
-        assert result.makespan > 0
-
     def test_makespan_leq_total_distance_makespan(self):
         """Makespan-objective solution should have ≤ makespan than
         total-distance-objective solution (or within tolerance)."""
         dm = _eilon7_dist_matrix()
         td_result = solve_vrp(
             dm, num_vehicles=2, depot=0,
-            objective="total_distance",
+            alpha=0.0,
             backend="ortools",
-            time_limit=10,
-            span_cost_coefficient=0,
+            time_limit=60,
+            mip_gap=0.05,
         )
         ms_result = solve_vrp(
             dm, num_vehicles=2, depot=0,
-            objective="makespan",
+            alpha=1.0,
             backend="ortools",
-            time_limit=10,
-            mip_time_limit=60,
+            time_limit=60,
             mip_gap=0.05,
         )
         assert td_result.status == "success"
@@ -542,13 +449,106 @@ class TestSolveVRPEntryPoint:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. TestReservationTable — Collision avoidance core
+# 6. TestCombinedObjective — Alpha-blended objective
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestCombinedObjective:
+    """Verify combined-objective behaviour across alpha values."""
+
+    def test_alpha_1_matches_makespan(self):
+        """alpha=1.0 should produce near-optimal makespan."""
+        dm = _eilon7_dist_matrix()
+        _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
+        result = solve_vrp(dm, num_vehicles=2, depot=0, alpha=1.0,
+                           backend="ortools", time_limit=60, mip_gap=0.05)
+        assert result.status == "success"
+        tol = MIP_GAP + 0.01
+        assert result.makespan <= bf_makespan * (1 + tol)
+
+    def test_alpha_0_minimizes_total_cost(self):
+        """alpha=0.0 should produce near-optimal total distance."""
+        dm = _eilon7_dist_matrix()
+        bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
+        result = solve_vrp(dm, num_vehicles=2, depot=0, alpha=0.0,
+                           backend="ortools", time_limit=60, mip_gap=0.05)
+        assert result.status == "success"
+        tol = MIP_GAP + 0.01
+        assert result.total_cost <= bf_total * (1 + tol)
+
+    def test_alpha_05_tradeoff(self):
+        """alpha=0.5 should produce a valid intermediate solution."""
+        dm = _eilon7_dist_matrix()
+        result = solve_vrp(dm, num_vehicles=2, depot=0, alpha=0.5,
+                           backend="ortools", time_limit=60, mip_gap=0.05)
+        assert result.status == "success"
+        assert result.alpha == 0.5
+        assert result.objective_value == pytest.approx(
+            0.5 * result.makespan + 0.5 * result.total_cost
+        )
+        # All customers visited
+        visited = set()
+        for r in result.routes:
+            visited.update(r)
+        assert visited == set(range(1, 7))
+
+    def test_alpha_out_of_range(self):
+        """alpha outside [0,1] should raise ValueError."""
+        dm = _eilon7_dist_matrix()
+        with pytest.raises(ValueError):
+            solve_vrp(dm, num_vehicles=2, depot=0, alpha=1.5)
+        with pytest.raises(ValueError):
+            solve_vrp(dm, num_vehicles=2, depot=0, alpha=-0.1)
+
+    def test_objective_value_field(self):
+        """VRPResult.objective_value should be alpha*makespan + (1-alpha)*total_cost."""
+        dm = _eilon7_dist_matrix()
+        for alpha in [0.0, 0.3, 0.7, 1.0]:
+            result = solve_vrp(dm, num_vehicles=2, depot=0, alpha=alpha,
+                               backend="ortools", time_limit=60, mip_gap=0.05)
+            if result.status == "success":
+                expected = alpha * result.makespan + (1 - alpha) * result.total_cost
+                assert result.objective_value == pytest.approx(expected)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. TestNearestNeighborWarmstart
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestNearestNeighborWarmstart:
+
+    def test_all_customers_visited(self):
+        dm = _eilon7_dist_matrix()
+        routes = _nearest_neighbor_warmstart(dm, 2, depot=0)
+        visited = set()
+        for r in routes:
+            visited.update(r)
+        assert visited == set(range(1, 7))
+
+    def test_no_depot_in_routes(self):
+        dm = _eilon7_dist_matrix()
+        routes = _nearest_neighbor_warmstart(dm, 2, depot=0)
+        for r in routes:
+            assert 0 not in r
+
+    def test_multi_depot(self):
+        dm, depots = _multi_depot_line()
+        routes = _nearest_neighbor_warmstart(dm, 2, depot=depots)
+        visited = set()
+        for r in routes:
+            visited.update(r)
+        assert visited == {2, 3, 4, 5}
+        for r in routes:
+            assert 0 not in r and 1 not in r
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. TestReservationTable — Collision avoidance core
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestReservationTable:
 
     def _make_table(self, shape=(10, 10, 10), T=20, half_extents=(0, 0, 0)):
-        from VRP.routing.space_time_astar import ReservationTable
+        from VRP.mapf.space_time_search import ReservationTable
         return ReservationTable(shape, T, np.array(half_extents, dtype=np.intp))
 
     def test_commit_and_query(self):
@@ -604,19 +604,19 @@ class TestReservationTable:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. TestSpaceTimeAStar — Pathfinding
+# 9. TestSpaceTimeAStar — Pathfinding
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestSpaceTimeAStar:
 
     def _make_grid_and_table(self, shape=(20, 20, 20), T=100):
-        from VRP.routing.space_time_astar import ReservationTable
+        from VRP.mapf.space_time_search import ReservationTable
         grid = np.zeros(shape, dtype=np.uint8)
         rt = ReservationTable(shape, T, np.array([0, 0, 0], dtype=np.intp))
         return grid, rt
 
     def test_open_grid_finds_path(self):
-        from VRP.routing.space_time_astar import space_time_astar
+        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
         grid, rt = self._make_grid_and_table()
         start = np.array([2, 2, 2], dtype=np.intp)
         goal = np.array([15, 15, 15], dtype=np.intp)
@@ -630,7 +630,7 @@ class TestSpaceTimeAStar:
 
     def test_navigates_around_wall(self):
         """A* finds a path through a gap in a wall."""
-        from VRP.routing.space_time_astar import space_time_astar
+        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
         grid, rt = self._make_grid_and_table()
         # Build a wall at x=10 for all y except y=10
         for y in range(20):
@@ -648,7 +648,7 @@ class TestSpaceTimeAStar:
 
     def test_blocked_goal_returns_none(self):
         """Occupied goal → None."""
-        from VRP.routing.space_time_astar import space_time_astar
+        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
         grid, rt = self._make_grid_and_table()
         grid[15, 15, 15] = 1  # block goal
 
@@ -660,7 +660,7 @@ class TestSpaceTimeAStar:
 
     def test_avoids_reserved_cells(self):
         """A* detours around time-reserved cells."""
-        from VRP.routing.space_time_astar import space_time_astar, ReservationTable
+        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar, ReservationTable
         grid = np.zeros((10, 10, 1), dtype=np.uint8)
         rt = ReservationTable((10, 10, 1), 50, np.array([0, 0, 0], dtype=np.intp))
 
@@ -687,7 +687,7 @@ class TestSpaceTimeAStar:
 
     def test_same_start_goal(self):
         """Returns single-point path when start == goal."""
-        from VRP.routing.space_time_astar import space_time_astar
+        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
         grid, rt = self._make_grid_and_table()
         point = np.array([5, 5, 5], dtype=np.intp)
 
@@ -699,14 +699,14 @@ class TestSpaceTimeAStar:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 8. TestCoordinateTransforms
+# 10. TestCoordinateTransforms
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestCoordinateTransforms:
 
     def test_round_trip(self):
         """world → coarse → world is within res/2 per axis."""
-        from VRP.routing.space_time_astar import world_to_coarse, coarse_to_world
+        from VRP.mapf.space_time_search import world_to_coarse, coarse_to_world
         res = 0.5
         origin = np.array([0.0, 0.0, 0.0])
         xyz = np.array([1.3, 2.7, 0.4])
@@ -722,7 +722,7 @@ class TestCoordinateTransforms:
 
     def test_known_values(self):
         """(1.0, 2.0, 3.0) at res=0.5 → voxel (2, 4, 6) → world (1.25, 2.25, 3.25)."""
-        from VRP.routing.space_time_astar import world_to_coarse, coarse_to_world
+        from VRP.mapf.space_time_search import world_to_coarse, coarse_to_world
         res = 0.5
         origin = np.array([0.0, 0.0, 0.0])
         xyz = np.array([1.0, 2.0, 3.0])
@@ -735,7 +735,7 @@ class TestCoordinateTransforms:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 9. TestHelperFunctions
+# 11. TestHelperFunctions
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestHelperFunctions:

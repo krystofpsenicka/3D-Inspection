@@ -3,7 +3,7 @@
 import numpy as np
 
 from visibility.core.types import FrustumParams
-from ._usd_primitives import create_lineset_prim, create_sphere_prim
+from .._usd_primitives import create_lineset_prim, create_sphere_prim
 
 
 def add_frustum_lineset(

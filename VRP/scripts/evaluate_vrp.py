@@ -52,17 +52,15 @@ if _VRP_ROOT not in sys.path:
 
 from VRP.core.occupancy_grid import build_occupancy_grid, OccupancyGrid, get_mesh_world_bounds
 from VRP.core.waypoint_loader import load_waypoints
-from VRP.core.gpu_distance_matrix import compute_distance_matrix, build_route_path_cache
-from VRP.solver.vrp_solver import solve_vrp, VRPResult
-from VRP.routing.route_executor import RouteExecutor, ExecutionResult
+from VRP.core.distance_matrix import compute_distance_matrix, build_route_path_cache
+from VRP.vrp.vrp_solver import solve_vrp
+from VRP.core.types import VRPResult, ExecutionResult
+from VRP.mapf.route_executor import RouteExecutor
 from VRP.scripts.vrp_planner import _compute_start_grid
-from VRP.utils import (
-    load_local_robot_config,
-    find_trajectory_collisions,
-)
-from VRP.config import (
+from VRP.core.robot_config import load_local_robot_config
+from VRP.core.collision import find_trajectory_collisions
+from VRP.core.constants import (
     RAPIDS_PYTHON,
-    CUOPT_SERVICE_TIME,
     BROV_CUBOID_DIMS,
 )
 
@@ -160,8 +158,7 @@ def run_single(
             depot=home_indices,
             backend=solver_backend,
             rapids_python=RAPIDS_PYTHON,
-            service_time=CUOPT_SERVICE_TIME,
-            time_limit=60,
+            time_limit=120,
             gpu_timeout=300,
         )
         m.t_vrp_solve = time.perf_counter() - t0

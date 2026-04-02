@@ -37,7 +37,7 @@ def _build_og_and_esdf():
     from visibility.sampling.utils.sampling_grid_builder import (
         build_sampling_occupancy_grid, build_sdf_grid,
     )
-    from VRP.config import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
+    from VRP.core.constants import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
 
     print("Loading mesh …")
     tm = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
@@ -60,7 +60,7 @@ def _load_scaled_mesh():
     """Load the ship mesh with the same scale + pose applied in occupancy_grid."""
     import trimesh
     from scipy.spatial.transform import Rotation as R
-    from VRP.config import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
+    from VRP.core.constants import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
 
     raw_mesh = trimesh.load(MESH_PATH, force="mesh")
     if isinstance(raw_mesh, trimesh.Scene):

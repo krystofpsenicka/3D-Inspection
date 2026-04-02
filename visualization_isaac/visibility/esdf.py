@@ -9,7 +9,7 @@ import trimesh
 
 from shared.grid_utils import esdf_to_rgb
 from shared.occupancy_grid import OccupancyGrid
-from ._usd_primitives import (
+from .._usd_primitives import (
     create_mesh_prim,
     create_points_prim,
     create_coordinate_frame_prim,

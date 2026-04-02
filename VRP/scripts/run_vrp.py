@@ -30,7 +30,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from VRP.scripts.vrp_planner import PipelineConfig, VRPPipeline
+from VRP.core.types import PipelineConfig
+from VRP.scripts.vrp_planner import VRPPipeline
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,23 +61,18 @@ def parse_args() -> argparse.Namespace:
                    help="Random seed for waypoint sampling.")
 
     # ── VRP solver ────────────────────────────────────────────────────
-    p.add_argument("--objective", choices=["makespan", "total_distance"],
-                   default="makespan",
-                   help="VRP objective: 'makespan' (min longest route) or "
-                        "'total_distance' (min sum of routes).")
-    p.add_argument("--solver", choices=["auto", "cuopt", "ortools"],
-                   default="auto",
-                   help="VRP backend: 'auto' tries cuOpt then falls back to OR-Tools.")
-    p.add_argument("--service_time", type=float, default=10.0,
-                   help="Service time (s) at each waypoint (temporal separation).")
-    p.add_argument("--ortools_time_limit", type=int, default=60,
-                   help="OR-Tools solver time budget (seconds).")
+    p.add_argument("--alpha", type=float, default=1.0,
+                   help="Objective blending: 1.0=pure makespan, 0.0=pure "
+                        "total distance, 0.5=balanced trade-off.")
+    p.add_argument("--solver", choices=["cuopt", "ortools"],
+                   default="ortools",
+                   help="MIP backend: 'cuopt' (GPU) or 'ortools' (CPU).")
     p.add_argument("--gpu_timeout", type=int, default=300,
                    help="cuOpt subprocess timeout (seconds).")
     p.add_argument("--rapids_python", type=str, default="",
                    help="Path to rapids_solver env Python (default: read from config).")
     p.add_argument("--mip_time_limit", type=int, default=120,
-                   help="MIP solver time budget for makespan objective (seconds).")
+                   help="MIP solver time budget (seconds).")
     p.add_argument("--mip_gap", type=float, default=0.05,
                    help="MIP solver relative optimality gap (0.05 = 5%%).")
     p.add_argument("--feedback_iterations", type=int, default=3,
@@ -113,16 +109,14 @@ def main():
         n_random = args.random_waypoints
 
     # ── Build config ──────────────────────────────────────────────────
-    from VRP.config import RAPIDS_PYTHON as DEFAULT_RAPIDS_PYTHON
+    from VRP.core.constants import RAPIDS_PYTHON as DEFAULT_RAPIDS_PYTHON
 
     cfg = PipelineConfig(
         num_robots          = args.num_robots,
         solver_backend      = args.solver,
-        objective           = args.objective,
+        alpha               = args.alpha,
         rapids_python       = args.rapids_python or DEFAULT_RAPIDS_PYTHON,
-        service_time        = args.service_time,
         gpu_timeout         = args.gpu_timeout,
-        ortools_time_limit  = args.ortools_time_limit,
         mip_time_limit      = args.mip_time_limit,
         mip_gap             = args.mip_gap,
         feedback_iterations = args.feedback_iterations,

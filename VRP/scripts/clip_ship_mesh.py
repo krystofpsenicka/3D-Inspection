@@ -20,7 +20,7 @@ import numpy as np
 import trimesh
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-from VRP.config import PROJECT_ROOT
+from VRP.core.constants import PROJECT_ROOT
 INPUT_GLB  = os.path.join(PROJECT_ROOT, "models", "duke_of_lancaster_uk.glb")
 OUTPUT_GLB = os.path.join(PROJECT_ROOT, "models", "duke_of_lancaster_uk_clipped.glb")
 
