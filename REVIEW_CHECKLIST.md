@@ -122,3 +122,14 @@ Files ordered by dependency depth (leaves first). ~11,400 lines to review + 2 de
 
 ### Main pipeline (the capstone)
 - [ ] 73. `run_full_pipeline.py` (565 lines) — end-to-end orchestration
+
+
+
+
+## Has to be finished by 6.4.
+[ ] Review VRP
+[ ] VRP: add alpha param for combining objectives
+[ ] OR-tools x cuOpt
+
+## Extra (nice to have)
+[ ] Sampling: at least one more continuous optimizer

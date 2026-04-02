@@ -31,15 +31,11 @@ class SurfacePointSampler:
       4. ``orient_normals_outward`` (global centroid flip)
 
     Results are cached as NPZ + JSON so repeated runs with the same mesh
-    and parameters return instantly.
+    and params return instantly.
     """
 
     def __init__(self, cache_dir: str | None = None):
         self._cache_dir = Path(cache_dir) if cache_dir else _DEFAULT_CACHE_DIR
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def sample(
         self,
