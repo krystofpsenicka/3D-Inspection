@@ -17,6 +17,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pytest
 
+import cupy as cp
+
 from VRP.core.types import VRPResult
 from VRP.vrp._helpers import (
     compute_route_cost as _compute_route_cost,
@@ -611,22 +613,22 @@ class TestSpaceTimeAStar:
 
     def _make_grid_and_table(self, shape=(20, 20, 20), T=100):
         from VRP.mapf.space_time_search import ReservationTable
-        grid = np.zeros(shape, dtype=np.uint8)
+        grid = cp.zeros(shape, dtype=cp.uint8)
         rt = ReservationTable(shape, T, np.array([0, 0, 0], dtype=np.intp))
         return grid, rt
 
     def test_open_grid_finds_path(self):
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
         grid, rt = self._make_grid_and_table()
-        start = np.array([2, 2, 2], dtype=np.intp)
-        goal = np.array([15, 15, 15], dtype=np.intp)
+        start = cp.array([2, 2, 2], dtype=cp.intp)
+        goal = cp.array([15, 15, 15], dtype=cp.intp)
 
         result = space_time_astar(grid, start, goal, 0, rt, resolution=1.0)
         assert result is not None
         path_ijk, path_t = result
         assert len(path_ijk) >= 2
-        np.testing.assert_array_equal(path_ijk[0], start)
-        np.testing.assert_array_equal(path_ijk[-1], goal)
+        np.testing.assert_array_equal(path_ijk[0].get(), start.get())
+        np.testing.assert_array_equal(path_ijk[-1].get(), goal.get())
 
     def test_navigates_around_wall(self):
         """A* finds a path through a gap in a wall."""
@@ -637,14 +639,14 @@ class TestSpaceTimeAStar:
             if y != 10:
                 grid[10, y, :] = 1
 
-        start = np.array([5, 5, 5], dtype=np.intp)
-        goal = np.array([15, 5, 5], dtype=np.intp)
+        start = cp.array([5, 5, 5], dtype=cp.intp)
+        goal = cp.array([15, 5, 5], dtype=cp.intp)
 
         result = space_time_astar(grid, start, goal, 0, rt, resolution=1.0)
         assert result is not None
         path_ijk, _ = result
         # Path must go through the gap at y=10
-        np.testing.assert_array_equal(path_ijk[-1], goal)
+        np.testing.assert_array_equal(path_ijk[-1].get(), goal.get())
 
     def test_blocked_goal_returns_none(self):
         """Occupied goal → None."""
@@ -661,11 +663,11 @@ class TestSpaceTimeAStar:
     def test_avoids_reserved_cells(self):
         """A* detours around time-reserved cells."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar, ReservationTable
-        grid = np.zeros((10, 10, 1), dtype=np.uint8)
+        grid = cp.zeros((10, 10, 1), dtype=cp.uint8)
         rt = ReservationTable((10, 10, 1), 50, np.array([0, 0, 0], dtype=np.intp))
 
-        start = np.array([0, 5, 0], dtype=np.intp)
-        goal = np.array([9, 5, 0], dtype=np.intp)
+        start = cp.array([0, 5, 0], dtype=cp.intp)
+        goal = cp.array([9, 5, 0], dtype=cp.intp)
 
         # Reserve the direct path at the times A* would traverse it
         for x in range(1, 9):
@@ -676,26 +678,28 @@ class TestSpaceTimeAStar:
         result = space_time_astar(grid, start, goal, 0, rt, resolution=1.0)
         assert result is not None
         path_ijk, path_t = result
-        np.testing.assert_array_equal(path_ijk[-1], goal)
+        path_ijk_np = path_ijk.get()
+        path_t_np = path_t.get()
+        np.testing.assert_array_equal(path_ijk_np[-1], goal.get())
 
         # Verify no path cell collides with reservations
-        for i in range(len(path_ijk)):
+        for i in range(len(path_ijk_np)):
             assert not rt.is_reserved(
-                int(path_ijk[i, 0]), int(path_ijk[i, 1]),
-                int(path_ijk[i, 2]), int(path_t[i]),
+                int(path_ijk_np[i, 0]), int(path_ijk_np[i, 1]),
+                int(path_ijk_np[i, 2]), int(path_t_np[i]),
             ) or i == 0  # start position at t=0 is not reserved
 
     def test_same_start_goal(self):
         """Returns single-point path when start == goal."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
         grid, rt = self._make_grid_and_table()
-        point = np.array([5, 5, 5], dtype=np.intp)
+        point = cp.array([5, 5, 5], dtype=cp.intp)
 
         result = space_time_astar(grid, point, point, 0, rt, resolution=1.0)
         assert result is not None
         path_ijk, path_t = result
         assert len(path_ijk) == 1
-        np.testing.assert_array_equal(path_ijk[0], point)
+        np.testing.assert_array_equal(path_ijk[0].get(), point.get())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -712,7 +716,7 @@ class TestCoordinateTransforms:
         xyz = np.array([1.3, 2.7, 0.4])
 
         ijk = world_to_coarse(xyz, origin, res)
-        recovered = coarse_to_world(ijk, origin, res)
+        recovered = coarse_to_world(ijk, origin, res).get()
 
         # Recovered is the voxel centre; should be within res/2 of original
         diff = np.abs(recovered - xyz)
@@ -728,10 +732,10 @@ class TestCoordinateTransforms:
         xyz = np.array([1.0, 2.0, 3.0])
 
         ijk = world_to_coarse(xyz, origin, res)
-        np.testing.assert_array_equal(ijk, [2, 4, 6])
+        np.testing.assert_array_equal(ijk.get(), [2, 4, 6])
 
         world = coarse_to_world(ijk, origin, res)
-        np.testing.assert_allclose(world, [1.25, 2.25, 3.25])
+        np.testing.assert_allclose(world.get(), [1.25, 2.25, 3.25])
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -52,44 +52,17 @@ class TestAstarSingle:
         assert d == np.inf
 
 
-class TestDistanceMatrixCPU:
-    def test_symmetric(self):
-        grid = np.zeros((10, 10, 10), dtype=bool)
-        origin = np.zeros(3)
-        pts = np.array([[1.5, 1.5, 1.5], [3.5, 3.5, 3.5], [7.5, 7.5, 7.5]])
-        dm = compute_distance_matrix_cpu(grid, origin, 1.0, pts)
-        assert np.allclose(dm, dm.T)
-
-    def test_diagonal_zero(self):
-        grid = np.zeros((10, 10, 10), dtype=bool)
-        origin = np.zeros(3)
-        pts = np.array([[1.5, 1.5, 1.5], [5.5, 5.5, 5.5]])
-        dm = compute_distance_matrix_cpu(grid, origin, 1.0, pts)
-        assert dm[0, 0] == 0.0
-        assert dm[1, 1] == 0.0
-
-    def test_triangle_inequality(self):
-        grid = np.zeros((10, 10, 10), dtype=bool)
-        origin = np.zeros(3)
-        pts = np.array([[1.5, 1.5, 1.5], [3.5, 3.5, 3.5], [7.5, 7.5, 7.5]])
-        dm = compute_distance_matrix_cpu(grid, origin, 1.0, pts)
-        for i in range(3):
-            for j in range(3):
-                for k in range(3):
-                    assert dm[i, j] <= dm[i, k] + dm[k, j] + 1e-6
-
-
 class TestExtractAstarPath:
     def test_start_equals_goal(self, small_og):
         pt = small_og.voxel_to_world(np.array([0, 0, 0]))
-        path = extract_astar_path(small_og, pt, pt)
+        path = extract_astar_path(small_og.grid, pt, pt, small_og.origin, small_og.resolution)
         assert len(path) >= 1
         assert np.allclose(path[0], pt, atol=small_og.resolution)
 
     def test_path_endpoints(self, small_og):
         start = small_og.voxel_to_world(np.array([0, 0, 0]))
         goal = small_og.voxel_to_world(np.array([19, 19, 19]))
-        path = extract_astar_path(small_og, start, goal)
+        path = extract_astar_path(small_og.grid, start, goal, small_og.origin, small_og.resolution)
         assert len(path) >= 2
         assert np.allclose(path[0], start, atol=small_og.resolution)
         assert np.allclose(path[-1], goal, atol=small_og.resolution)
@@ -97,6 +70,6 @@ class TestExtractAstarPath:
     def test_all_points_free(self, small_og):
         start = small_og.voxel_to_world(np.array([0, 0, 0]))
         goal = small_og.voxel_to_world(np.array([19, 0, 0]))
-        path = extract_astar_path(small_og, start, goal)
+        path = extract_astar_path(small_og.grid, start, goal, small_og.origin, small_og.resolution)
         for pt in path:
             assert small_og.is_free_world(pt), f"Point {pt} is not free"

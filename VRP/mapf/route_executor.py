@@ -115,7 +115,7 @@ class RouteExecutor:
                 path_cache=path_cache,
                 dwell_s=dwell_s,
                 dt=SPACE_TIME_DT,
-                fine_og=self.og,
+                fine_occupancy_grid=self.og,
                 robot_radius=ROBOT_RADIUS,
             )
             robot_world_paths[robot_idx] = world_xyz
@@ -298,8 +298,10 @@ class RouteExecutor:
         fail_counts = [0] * n_robots
 
         for i in range(n_robots):
-            w_xyz = robot_world_paths[i]
-            c_t   = robot_coarse_times[i]
+            # Convert CuPy arrays to NumPy for trajectory densification
+            w_xyz = robot_world_paths[i].get()
+            c_t   = robot_coarse_times[i].get()
+            
             cfg   = self.start_configs[i].copy()  # 8-DOF
             wp_sched = robot_wp_schedules[i] or []
             # Convert coarse time-step schedule → seconds

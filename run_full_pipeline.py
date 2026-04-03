@@ -540,7 +540,7 @@ def main() -> None:
         "all_positions": cp.asnumpy(pos_gpu),
         "all_rotmats": cp.asnumpy(rot_gpu),
         # Visibility
-        "visibility_map": visibility_map,
+        "visibility_map": cp.asnumpy(opt_result.visibility_map),
         # Frustum
         "frustum_params": {
             "fov_deg": args.frustum_fov_deg,

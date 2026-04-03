@@ -96,6 +96,7 @@ def plan_robot_route_st(
         wp_schedule is list of (t_dwell_start, t_dwell_end, node_idx),
         stats is PlanningStats.
     """
+    coarse_grid = cp.asarray(coarse_grid)
     wp_arr = np.asarray(waypoints_world)
     xyz_all = np.array([_robot_xyz_from_waypoint(wp_arr[i]) for i in range(len(wp_arr))])
 

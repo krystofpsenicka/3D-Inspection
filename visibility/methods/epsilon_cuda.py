@@ -535,7 +535,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             else:
                 # Vectorized percentile: sort within VP segments, index directly
                 p = GAMMA_PERCENTILE[self.hp.gamma_method]
-                sort_order = cp.lexsort((front_pair_distances, front_pair_vp_indices))
+                sort_order = cp.lexsort(cp.stack([front_pair_distances, front_pair_vp_indices]))
                 sorted_dist = front_pair_distances[sort_order]
                 sorted_vps = front_pair_vp_indices[sort_order]
 
