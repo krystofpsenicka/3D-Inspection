@@ -9,6 +9,7 @@ import open3d as o3d
 from typing import Tuple
 from ..utils.sampling_grid_builder import build_sampling_occupancy_grid, build_sdf_grid
 from ..utils.sampling_space_builder import build_sampling_space
+from ...core.types import Side
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class ViewpointSamplerBase(ABC):
 
     # ── Feasible data access ────────────────────────────────────
 
-    def get_feasible_sampling_data(self, side: str = "outside",
+    def get_feasible_sampling_data(self, side: Side = Side.OUTSIDE,
                                    min_distance: float | None = None,
                                    max_distance_offset: float = 0.95,
                                    curvature_weighting: bool = False,

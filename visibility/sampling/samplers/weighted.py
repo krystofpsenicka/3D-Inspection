@@ -9,6 +9,7 @@ from typing import Tuple
 from shared.geometry import directions_rolls_to_rotmats
 
 from ...core.constants import DEFAULT_MAX_DIR_NOISE_RAD, NORM_EPS
+from ...core.types import Side
 from ..utils.direction import knn_centroid_direction, apply_angular_noise
 from .base import ProbabilisticSampler
 
@@ -22,7 +23,7 @@ class WeightedViewpointSampler(ProbabilisticSampler):
     complex surface regions.
     """
 
-    def sample(self, num_candidates: int, side: str = "outside",
+    def sample(self, num_candidates: int, side: Side = Side.OUTSIDE,
                min_distance: float | None = None,
                max_distance_offset: float = 0.95,
                curvature_weighting: bool = False,
@@ -32,7 +33,7 @@ class WeightedViewpointSampler(ProbabilisticSampler):
 
         Args:
             num_candidates:      number of viewpoints to generate.
-            side:                "outside" or "inside" the mesh.
+            side:                Side.OUTSIDE or Side.INSIDE.
             min_distance:        minimum clearance from mesh surface (default: 2×collision_radius).
             max_distance_offset: fraction of frustum_far for max distance.
             curvature_weighting: bias weights toward high-curvature regions.
@@ -46,13 +47,13 @@ class WeightedViewpointSampler(ProbabilisticSampler):
 
         logger.info("[WeightedViewpointSampler] Sampling %d viewpoints from %s mesh "
                     "(curvature_weighting=%s) ...",
-                    num_candidates, side.upper(), curvature_weighting)
+                    num_candidates, side.value.upper(), curvature_weighting)
 
         centers_gpu, weights_gpu, coarse_res = self.get_feasible_sampling_data(
             side, min_distance, max_distance_offset, curvature_weighting)
 
         logger.info("[WeightedViewpointSampler] %s free space: %d feasible voxel centers",
-                    side.capitalize(), int(len(centers_gpu)))
+                    side.value.capitalize(), int(len(centers_gpu)))
 
         t0 = time.perf_counter()
         result = self._sample_from_free_space(

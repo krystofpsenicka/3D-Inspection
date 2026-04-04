@@ -122,11 +122,11 @@ class SamplingVisualizer:
 
         for i in range(n_normal):
             pos = np.asarray(normal_candidates[i][0])
-            orientation = normal_candidates[i][1]
+            rotation = normal_candidates[i][1]
             color = list(raw_blues[i][:3])
 
             geometries += create_viewpoint_geometry(
-                pos, orientation, self.frustum_params, color)
+                pos, rotation, self.frustum_params, color)
 
             visible_indices = normal_vis_map.get(i, np.array([], dtype=int))
             if len(visible_indices) > 0:
@@ -249,13 +249,13 @@ class SamplingVisualizer:
 
         for i, candidate in enumerate(all_candidates):
             pos = np.asarray(candidate[0])
-            orientation = candidate[1]
+            rotation = candidate[1]
             is_targeted = i >= n_normal
             base_color = ORANGE if is_targeted else BLUE
             vis_color = list(vp_colors[i % len(vp_colors)])
 
             geometries += create_viewpoint_geometry(
-                pos, orientation, self.frustum_params, base_color)
+                pos, rotation, self.frustum_params, base_color)
 
             visible_indices = all_vis_map.get(i, np.array([], dtype=int))
             if len(visible_indices) > 0:

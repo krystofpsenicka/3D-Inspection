@@ -3,11 +3,11 @@ import numpy as np
 import cupy as cp
 import torch
 import open3d as o3d
-from time import time as get_time
+import time
 from typing import Tuple
 
 from ..core.types import FrustumParams
-from ..core.base_cuda import VisibilityQueryCuda
+from .base_cuda import VisibilityQueryCuda
 from ..core.constants import NORM_EPS, RAYCAST_TOLERANCE
 
 logger = logging.getLogger(__name__)
@@ -47,12 +47,12 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         Returns:
             (visible_indices, comp_time) where visible_indices is CuPy int64.
         """
-        start = get_time()
+        start = time.perf_counter()
 
         candidate_indices = self.points_in_frustum_gpu(viewpoint_gpu, rotmat_gpu)
 
         if len(candidate_indices) == 0:
-            return cp.array([], dtype=cp.int64), get_time() - start
+            return cp.array([], dtype=cp.int64), time.perf_counter() - start
 
         num_candidates = len(candidate_indices)
 
@@ -85,7 +85,7 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
 
         visible_indices = candidate_indices[is_visible]
 
-        comp_time = get_time() - start
+        comp_time = time.perf_counter() - start
         return visible_indices, comp_time
 
     def compute_visibility_batch(self, positions, rotmats) -> Tuple[cp.ndarray, float]:
@@ -98,7 +98,7 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         Returns:
             ``(V, total_time)`` where *V* is ``(N, M)`` uint8 CuPy array.
         """
-        start = get_time()
+        start = time.perf_counter()
         N, M = len(positions), self.num_points
         V = cp.zeros((N, M), dtype=cp.uint8)
 
@@ -109,7 +109,7 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         vp_idx, pt_idx = cp.where(frustum_mask)
         del frustum_mask  # free (N*M) bytes
         if len(vp_idx) == 0:
-            return V, get_time() - start
+            return V, time.perf_counter() - start
 
         # 3. Build rays for all pairs (float32 for OptiX)
         positions_f32 = cp.asarray(positions, dtype=cp.float32)
@@ -135,7 +135,7 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         # 6. Scatter into V
         V[vp_idx[is_visible], pt_idx[is_visible]] = 1
 
-        total_time = get_time() - start
+        total_time = time.perf_counter() - start
         logger.info("[RaycastingCuda] Batch visibility for %d VPs: %d rays, %.2fs",
                     N, len(vp_idx), total_time)
         return V, total_time

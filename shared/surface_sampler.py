@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from time import time as get_time
+import time
 
 import numpy as np
 import open3d as o3d
@@ -62,7 +62,7 @@ class SurfacePointSampler:
             return result
 
         logger.info("Surface sample cache MISS — computing …")
-        t0 = get_time()
+        t0 = time.perf_counter()
 
         pcd = mesh.sample_points_poisson_disk(number_of_points=num_points)
         pcd.estimate_normals(
@@ -76,7 +76,7 @@ class SurfacePointSampler:
         normals = np.asarray(pcd.normals)
         normals = orient_normals_outward(target_points, normals)
 
-        elapsed = get_time() - t0
+        elapsed = time.perf_counter() - t0
         logger.info("  Sampled %d points in %.1f s", len(target_points), elapsed)
 
         self._save_cache(
@@ -150,7 +150,7 @@ class SurfacePointSampler:
             "cache_key": key,
             "num_points": len(target_points),
             "params": params,
-            "timestamp": get_time(),
+            "timestamp": time.time(),
         }
         with open(json_path, "w") as f:
             json.dump(meta, f, indent=2)

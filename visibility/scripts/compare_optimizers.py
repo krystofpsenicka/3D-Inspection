@@ -6,15 +6,15 @@ import numpy as np
 import cupy as cp
 import open3d as o3d
 import os
-from time import time as get_time
+import time
 from typing import Dict, Any
 import matplotlib.pyplot as plt
 
-from visibility.core.types import FrustumParams, OptimizationResult
+from visibility.core.types import FrustumParams, OptimizationResult, Side
 from visibility.sampling import WeightedViewpointSampler
 from shared.surface_sampler import SurfacePointSampler
-from visibility.methods.raycast import RaycastingVisibilityQuery
-from visibility.methods.epsilon import EpsilonVisibilityQuery
+from visibility.visibility.raycast import RaycastingVisibilityQuery
+from visibility.visibility.epsilon import EpsilonVisibilityQuery
 from visibility.set_cover import GreedySetCover
 
 
@@ -38,11 +38,11 @@ def check_solution_with_raycast(raycast_query: RaycastingVisibilityQuery,
     total_visible_mask = np.zeros(num_target_points, dtype=bool)
 
     positions_np = result.positions.get()
-    orientations_np = result.orientations.get()
+    rotations_np = result.rotations.get()
     for i in range(result.num_viewpoints):
         visible_indices_rc, _ = raycast_query.compute_visibility(
             viewpoint=positions_np[i],
-            orientation=orientations_np[i]
+            rotation=rotations_np[i]
         )
         total_visible_mask[visible_indices_rc] = True
 
@@ -179,7 +179,7 @@ def run_comparison_pipeline():
     sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
-    pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side=Side.OUTSIDE)
     positions = cp.asnumpy(pos_gpu)
     rotmats = cp.asnumpy(rot_gpu)
 

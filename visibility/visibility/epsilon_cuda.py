@@ -3,11 +3,11 @@ import numpy as np
 import cupy as cp
 import open3d as o3d
 from numpy.linalg import norm
-from time import time as get_time
+import time
 from typing import Optional, Tuple
 
 from ..core.types import FrustumParams, EpsilonHyperparams
-from ..core.base_cuda import VisibilityQueryCuda
+from .base_cuda import VisibilityQueryCuda
 from ..core.constants import (
     NORM_EPS, CUDA_BLOCK_SIZE, DELTA_AGG_FUNCS_CP, GAMMA_AGG_FUNCS_CP,
     DELTA_DEFAULT, DELTA_SAMPLE_SIZE, GAMMA_FALLBACK_DIVISOR, GAMMA_PERCENTILE,
@@ -244,12 +244,12 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         Returns:
             (visible_indices, comp_time) where visible_indices is CuPy int64.
         """
-        start = get_time()
+        start = time.perf_counter()
 
         frustum_indices = self.points_in_frustum_gpu(viewpoint_gpu, rotmat_gpu)
 
         if len(frustum_indices) == 0:
-            return cp.array([], dtype=cp.int64), get_time() - start
+            return cp.array([], dtype=cp.int64), time.perf_counter() - start
 
         # GPU back-face check
         frustum_points = self.gpu_points[frustum_indices]
@@ -275,7 +275,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
 
         visible_indices = frustum_indices[cp.where(visible_mask)[0]]
 
-        comp_time = get_time() - start
+        comp_time = time.perf_counter() - start
         return visible_indices, comp_time
 
     def _check_occlusion_gpu(self, viewpoint_gpu: cp.ndarray, points_gpu: cp.ndarray,
@@ -366,7 +366,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         Returns:
             ``(V, total_time)`` where *V* is ``(N, M)`` uint8 CuPy array (visibility matrix).
         """
-        start = get_time()
+        start = time.perf_counter()
         N, M = len(positions), self.num_points
         V_flat = cp.zeros(N * M, dtype=cp.uint8)
 
@@ -376,7 +376,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
         del frustum_mask
         R = len(pair_vp_indices)
         if R == 0:
-            return V_flat.reshape(N, M), get_time() - start
+            return V_flat.reshape(N, M), time.perf_counter() - start
 
         pair_vp_indices_i32 = pair_vp_indices.astype(cp.int32)
         pair_pt_indices_i32 = pair_pt_indices.astype(cp.int32)
@@ -500,7 +500,7 @@ class EpsilonVisibilityQueryCuda(VisibilityQueryCuda):
             )
 
         V = V_flat.reshape(N, M)
-        total_time = get_time() - start
+        total_time = time.perf_counter() - start
         logger.info("[EpsilonCuda] Batch visibility for %d VPs: %d pairs, "
                     "%d bins, %.2fs", N, R, total_bins, total_time)
         return V, total_time

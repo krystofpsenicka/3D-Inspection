@@ -15,7 +15,8 @@ from ...core.constants import (
     OPT_SAMPLER_POPSIZE, OPT_SAMPLER_MAXITER, OPT_SAMPLER_TRAVEL_WEIGHT,
     OPT_SAMPLER_TRAVEL_ROT_FRACTION, DEFAULT_K_COVERAGE,
 )
-from ...core.base_cuda import VisibilityQueryCuda
+from ...core.types import Side
+from ...visibility.base_cuda import VisibilityQueryCuda
 from .base import ViewpointSamplerBase
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ class OptimizingSampler(ViewpointSamplerBase):
         visibility_query: VisibilityQueryCuda,
         existing_pos_gpu: cp.ndarray | None = None,
         existing_rot_gpu: cp.ndarray | None = None,
-        side: str = "outside",
+        side: Side = Side.OUTSIDE,
         target_coverage: float = 1.0,
         k_coverage: int = DEFAULT_K_COVERAGE,
         travel_weight: float = OPT_SAMPLER_TRAVEL_WEIGHT,

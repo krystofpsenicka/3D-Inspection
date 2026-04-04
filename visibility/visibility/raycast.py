@@ -2,11 +2,11 @@ import logging
 import numpy as np
 import open3d as o3d
 from numpy.linalg import norm
-from time import time as get_time
+import time
 from typing import Tuple
 
 from ..core.types import FrustumParams
-from ..core.base import VisibilityQuery
+from .base import VisibilityQuery
 from ..core.constants import NORM_EPS, RAYCAST_TOLERANCE
 
 logger = logging.getLogger(__name__)
@@ -25,18 +25,18 @@ class RaycastingVisibilityQuery(VisibilityQuery):
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
         logger.info("[RaycastingQuery] Initialized O3D RaycastingScene for occlusion checks.")
 
-    def compute_visibility(self, viewpoint: np.ndarray, orientation: np.ndarray) -> Tuple[np.ndarray, float]:
+    def compute_visibility(self, viewpoint: np.ndarray, rotation: np.ndarray) -> Tuple[np.ndarray, float]:
         """
         Checks visibility using the RaycastingScene: we cast a ray from the
         viewpoint to each target point. If the ray hits anything *before* it
         hits the target point, the target is occluded.
         """
-        start = get_time()
+        start = time.perf_counter()
 
-        candidate_indices = self.points_in_frustum_with_kdtree(viewpoint, orientation)
+        candidate_indices = self.points_in_frustum_with_kdtree(viewpoint, rotation)
 
         if len(candidate_indices) == 0:
-            return np.array([]), get_time() - start
+            return np.array([]), time.perf_counter() - start
 
         candidate_points = self.target_points[candidate_indices]
         num_candidates = len(candidate_indices)
@@ -57,5 +57,5 @@ class RaycastingVisibilityQuery(VisibilityQuery):
 
         visible_indices = candidate_indices[is_visible_mask]
 
-        comp_time = get_time() - start
+        comp_time = time.perf_counter() - start
         return visible_indices, comp_time

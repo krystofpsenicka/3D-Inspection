@@ -6,15 +6,15 @@ import numpy as np
 import cupy as cp
 import open3d as o3d
 import os
-from time import time as get_time
+import time
 from typing import List, Dict, Any, Tuple
 import matplotlib.pyplot as plt
 
-from visibility.core.types import FrustumParams, OptimizationResult
+from visibility.core.types import FrustumParams, OptimizationResult, Side
 from visibility.sampling import WeightedViewpointSampler
 from shared.surface_sampler import SurfacePointSampler
-from visibility.methods.raycast import RaycastingVisibilityQuery
-from visibility.methods.epsilon import EpsilonVisibilityQuery
+from visibility.visibility.raycast import RaycastingVisibilityQuery
+from visibility.visibility.epsilon import EpsilonVisibilityQuery
 from visibility.set_cover import GreedySetCover
 from visualization import SetCoverVisualizer
 
@@ -43,11 +43,11 @@ def check_epsilon_solution_with_raycast(raycast_query: RaycastingVisibilityQuery
     total_visible_mask = np.zeros(num_target_points, dtype=bool)
 
     positions_np = epsilon_result.positions.get()
-    orientations_np = epsilon_result.orientations.get()
+    rotations_np = epsilon_result.rotations.get()
     for i in range(epsilon_result.num_viewpoints):
         visible_indices_rc, _ = raycast_query.compute_visibility(
             viewpoint=positions_np[i],
-            orientation=orientations_np[i]
+            rotation=rotations_np[i]
         )
         total_visible_mask[visible_indices_rc] = True
 
@@ -214,23 +214,23 @@ def run_comparison_pipeline():
     sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
-    pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side=Side.OUTSIDE)
     positions = cp.asnumpy(pos_gpu)
     rotmats = cp.asnumpy(rot_gpu)
 
-    start_time_rc_init = get_time()
+    start_time_rc_init = time.perf_counter()
     visibility_query_raycast = RaycastingVisibilityQuery(
         mesh=mesh, target_points=target_points,
         normals=normals, frustum_params=frustum_params
     )
-    rc_vis_init_time = get_time() - start_time_rc_init
+    rc_vis_init_time = time.perf_counter() - start_time_rc_init
 
-    start_time_eps_init = get_time()
+    start_time_eps_init = time.perf_counter()
     visibility_query_epsilon = EpsilonVisibilityQuery(
         target_points=target_points,
         normals=normals, frustum_params=frustum_params
     )
-    eps_vis_init_time = get_time() - start_time_eps_init
+    eps_vis_init_time = time.perf_counter() - start_time_eps_init
     if visibility_query_epsilon.fixed_epsilon is not None:
         print(f"  Fixed Epsilon: {visibility_query_epsilon.fixed_epsilon:.4f} radians")
     else:

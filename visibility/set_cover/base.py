@@ -3,7 +3,7 @@
 import logging
 import cupy as cp
 from abc import ABC, abstractmethod
-from time import time as get_time
+import time
 from typing import List, Optional, Tuple
 
 from ..core.types import OptimizationResult
@@ -26,7 +26,7 @@ class IterativeSetCoverOptimizer(ABC):
     def select_next(self) -> Optional[Tuple[cp.ndarray, cp.ndarray, cp.ndarray]]:
         """Select the next best candidate viewpoint.
 
-        Returns ``(position, orientation, visible_indices)`` as CuPy arrays,
+        Returns ``(position, rotation, visible_indices)`` as CuPy arrays,
         or ``None`` if no candidate provides new coverage.
 
         Does **not** mutate internal state — call ``commit_selection``
@@ -41,10 +41,10 @@ class IterativeSetCoverOptimizer(ABC):
     def optimize(self, target_coverage: float = DEFAULT_TARGET_COVERAGE,
                  max_viewpoints: int = DEFAULT_MAX_VIEWPOINTS) -> OptimizationResult:
         """Run the full iterative set-cover loop."""
-        start_time = get_time()
+        start_time = time.perf_counter()
 
         sel_positions: List[cp.ndarray] = []
-        sel_orientations: List[cp.ndarray] = []
+        sel_rotations: List[cp.ndarray] = []
         sel_vis_rows: List[cp.ndarray] = []  # (M,) uint8 rows for visibility_map
 
         covered_mask = cp.zeros(self.num_points, dtype=cp.bool_)
@@ -59,7 +59,7 @@ class IterativeSetCoverOptimizer(ABC):
             self.commit_selection(vis)
 
             sel_positions.append(pos)
-            sel_orientations.append(rot)
+            sel_rotations.append(rot)
 
             # Build a (M,) uint8 row for this viewpoint
             row = cp.zeros(self.num_points, dtype=cp.uint8)
@@ -73,21 +73,21 @@ class IterativeSetCoverOptimizer(ABC):
             logger.info("  [SetCover] VP %d: +%d pts, coverage=%.1f%%",
                         len(sel_positions), len(vis), coverage * 100)
 
-        optimization_time = get_time() - start_time
+        optimization_time = time.perf_counter() - start_time
         coverage = int(covered_mask.sum()) / self.num_points if self.num_points > 0 else 0.0
 
         if sel_positions:
             positions = cp.stack(sel_positions)
-            orientations = cp.stack(sel_orientations)
+            rotations = cp.stack(sel_rotations)
             visibility_map = cp.stack(sel_vis_rows)
         else:
             positions = cp.empty((0, 3), dtype=cp.float32)
-            orientations = cp.empty((0, 3, 3), dtype=cp.float32)
+            rotations = cp.empty((0, 3, 3), dtype=cp.float32)
             visibility_map = cp.empty((0, self.num_points), dtype=cp.uint8)
 
         return OptimizationResult(
             positions=positions,
-            orientations=orientations,
+            rotations=rotations,
             visibility_map=visibility_map,
             total_coverage=coverage,
             num_viewpoints=len(sel_positions),

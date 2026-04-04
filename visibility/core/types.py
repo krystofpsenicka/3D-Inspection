@@ -1,3 +1,5 @@
+from enum import Enum
+
 import cupy as cp
 import numpy as np
 from numpy.linalg import norm
@@ -12,6 +14,12 @@ def normalize_vector(v: np.ndarray) -> np.ndarray:
     if n < NORM_EPS:
         return np.zeros(3)
     return v / n
+
+
+class Side(Enum):
+    """Which side of the surface to sample viewpoints from."""
+    OUTSIDE = "outside"
+    INSIDE = "inside"
 
 
 @dataclass
@@ -37,7 +45,7 @@ class EpsilonHyperparams:
 class OptimizationResult:
     """Result from set-cover optimization. All arrays are on GPU (CuPy)."""
     positions: cp.ndarray       # (K, 3) selected viewpoint positions
-    orientations: cp.ndarray    # (K, 3, 3) selected rotation matrices
+    rotations: cp.ndarray       # (K, 3, 3) selected rotation matrices
     visibility_map: cp.ndarray  # (K, M) uint8 — selected viewpoints' visibility
     total_coverage: float
     num_viewpoints: int

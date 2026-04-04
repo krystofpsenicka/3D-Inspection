@@ -9,15 +9,15 @@ import argparse
 import numpy as np
 import cupy as cp
 import open3d as o3d
-from time import time as get_time
+import time
 
-from visibility.core import FrustumParams
+from visibility.core import FrustumParams, Side
 from shared.surface_sampler import SurfacePointSampler
 from visibility.sampling import WeightedViewpointSampler
-from visibility.methods.raycast import RaycastingVisibilityQuery
-from visibility.methods.epsilon import EpsilonVisibilityQuery
-from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
-from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
+from visibility.visibility.raycast import RaycastingVisibilityQuery
+from visibility.visibility.epsilon import EpsilonVisibilityQuery
+from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
+from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
 from visualization import VisibilityVisualizer
 
 
@@ -50,6 +50,8 @@ def main():
                         help="Show each viewpoint in a separate window (default: all together)")
     args = parser.parse_args()
 
+    side = Side(args.side)
+
     # --- Setup ---
     mesh = load_mesh(args.mesh_path)
 
@@ -60,7 +62,7 @@ def main():
 
     # --- Viewpoints ---
     sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side=args.side)
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side=side)
 
     # --- Query ---
     use_gpu = args.method in ("epsilon_cuda", "raycast_cuda")
@@ -88,10 +90,10 @@ def main():
 
     visibility_map = {}
     for i in range(n_vp):
-        t0 = get_time()
+        t0 = time.perf_counter()
         visible_indices, comp_time = query.compute_visibility(positions[i], rotmats[i])
         print(f"  VP {i}: visible {len(visible_indices)} / {len(target_points)}  "
-              f"time={get_time() - t0:.3f} s")
+              f"time={time.perf_counter() - t0:.3f} s")
         visibility_map[i] = visible_indices.astype(int)
 
     # --- Visualize (CPU arrays + list of tuples) ---

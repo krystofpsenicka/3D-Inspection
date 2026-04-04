@@ -1,12 +1,11 @@
 import logging
 import numpy as np
 import cupy as cp
-from time import time as get_time
 from typing import Tuple
 
-from .types import FrustumParams
+from ..core.types import FrustumParams
 from .base import VisibilityQueryBase
-from .constants import CUDA_BLOCK_SIZE
+from ..core.constants import CUDA_BLOCK_SIZE
 
 logger = logging.getLogger(__name__)
 

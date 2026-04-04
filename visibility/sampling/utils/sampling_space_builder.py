@@ -9,13 +9,14 @@ from shared.grid_utils import downsample_occupancy_grid
 from shared.occupancy_grid import OccupancyGrid
 
 from ...core.constants import NORM_EPS, CURVATURE_POSITION_WEIGHT
+from ...core.types import Side
 
 logger = logging.getLogger(__name__)
 
 
 def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray,
                          target_points_gpu: cp.ndarray, normals_gpu: cp.ndarray, free_space_resolution: float,
-                         side: str, min_dist: float, max_dist: float,
+                         side: Side, min_dist: float, max_dist: float,
                          curvature_weighting: bool = False) -> Tuple[cp.ndarray, cp.ndarray, float]:
     """Build feasible sampling positions using EDT-SDF grid lookup on GPU.
 
@@ -28,7 +29,7 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
         target_points_gpu:    CuPy float32 (M, 3) — surface points.
         normals_gpu:          CuPy float32 (M, 3) — surface normals.
         free_space_resolution: float — coarse grid resolution.
-        side:                 "outside" or "inside".
+        side:                 Side.OUTSIDE or Side.INSIDE.
         min_dist:             minimum SDF distance.
         max_dist:             maximum SDF distance.
         curvature_weighting:  bias weights toward high-curvature regions.
@@ -71,16 +72,17 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
     sdf = sdf_grid_gpu[fine_ijk[:, 0], fine_ijk[:, 1], fine_ijk[:, 2]]
 
     # 5. Filter by side AND distance range
-    if side == "outside":
-        mask = (sdf >= min_dist) & (sdf <= max_dist)
-    else:  # inside
-        mask = (sdf <= -min_dist) & (sdf >= -max_dist)
+    match side:
+        case Side.OUTSIDE:
+            mask = (sdf >= min_dist) & (sdf <= max_dist)
+        case Side.INSIDE:
+            mask = (sdf <= -min_dist) & (sdf >= -max_dist)
 
     feasible_ijk = free_ijk[mask]
     feasible_sdf = sdf[mask]
     n_feasible = len(feasible_ijk)
     logger.info("[build_sampling_space] After SDF filter (%s): %d / %d positions",
-                side, n_feasible, len(free_ijk))
+                side.value, n_feasible, len(free_ijk))
 
     if n_feasible == 0:
         return cp.empty((0, 3), dtype=cp.float32), cp.empty(0, dtype=cp.float32), actual_res
@@ -103,6 +105,6 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
 
     logger.info("[build_sampling_space] %s free space: %d feasible positions "
                 "(coarse res %.2fm, curvature_weighting=%s)",
-                side.capitalize(), n_feasible, actual_res, curvature_weighting)
+                side.value.capitalize(), n_feasible, actual_res, curvature_weighting)
 
     return feasible_centers, weights, actual_res

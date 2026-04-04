@@ -36,7 +36,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict
-from time import time as get_time
+import time
 
 import cupy as cp
 import numpy as np
@@ -52,6 +52,7 @@ if VISIBILITY_DIR not in sys.path:
     sys.path.insert(0, os.path.dirname(VISIBILITY_DIR))
 
 from VRP.core import constants as _vrp_cfg
+from visibility.core.types import Side
 
 # The GLB file stores vertices in Y-up convention (glTF standard).
 # Isaac Sim's GLB→USD converter implicitly prepends a Y-up→Z-up rotation
@@ -198,7 +199,7 @@ def main() -> None:
                 args.frustum_fov_deg, args.frustum_aspect)
     logger.info("=" * 70)
 
-    t0 = get_time()
+    t0 = time.perf_counter()
 
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 1 – Load & transform mesh
@@ -277,7 +278,7 @@ def main() -> None:
     logger.info("[4/9] Building raycast visibility query …")
 
     from visibility.core.types import FrustumParams, OptimizationResult
-    from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
+    from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
 
     frustum_params = FrustumParams(
         fov_y=np.deg2rad(args.frustum_fov_deg),
@@ -305,7 +306,7 @@ def main() -> None:
                     n_uniform, n_targeted, args.resampling_strategy)
         pos_gpu, rot_gpu = sampler.sample(
             cp.arange(len(target_points)),
-            n_uniform, side="outside",
+            n_uniform, side=Side.OUTSIDE,
             curvature_weighting=args.curvature_weighting)
         V, _ = raycast_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
@@ -337,7 +338,7 @@ def main() -> None:
             else:
                 # Random targeted sampling (iterative for k-coverage tracking)
                 targeted_pos_gpu, targeted_rot_gpu = sampler.sample(
-                    uncovered, n_targeted, side="outside",
+                    uncovered, n_targeted, side=Side.OUTSIDE,
                     curvature_weighting=args.curvature_weighting,
                     visibility_query=raycast_query,
                     k_coverage=args.k_coverage,
@@ -353,7 +354,7 @@ def main() -> None:
         pos_gpu, rot_gpu = sampler.sample(
             cp.arange(len(target_points)),
             num_candidates=args.num_candidates,
-            side="outside",
+            side=Side.OUTSIDE,
             curvature_weighting=args.curvature_weighting,
         )
         logger.info("  Generated %d candidates.", len(pos_gpu))
@@ -379,7 +380,7 @@ def main() -> None:
 
     # Use optimization result directly — positions + rotation matrices, all GPU
     selected_positions = opt_result.positions     # (K, 3) CuPy
-    selected_rotmats = opt_result.orientations    # (K, 3, 3) CuPy
+    selected_rotmats = opt_result.rotations        # (K, 3, 3) CuPy
     logger.info("  Selected positions shape: %s", selected_positions.shape)
 
     # ══════════════════════════════════════════════════════════════════════
@@ -517,7 +518,7 @@ def main() -> None:
     logger.info("[9/9] Saving pipeline data to %s …", args.output)
 
     # Map: for each robot, which *inspection* waypoint indices it visits (0-based
-    # into opt_result.positions / opt_result.orientations).
+    # into opt_result.positions / opt_result.rotations).
     robot_inspection_wp_indices: list[list[int]] = []
     for i, route in enumerate(vrp_result.routes):
         # route entries are global indices; subtract K to get inspection index
@@ -566,7 +567,7 @@ def main() -> None:
 
     _save_pipeline_data(pipeline_data, args.output)
 
-    elapsed = get_time() - t0
+    elapsed = time.perf_counter() - t0
     logger.info("=" * 70)
     logger.info("Pipeline complete in %.1f s.  Saved to: %s", elapsed, args.output)
     logger.info("  Pointcloud   : %d points", len(target_points))

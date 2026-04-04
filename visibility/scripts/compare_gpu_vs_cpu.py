@@ -11,26 +11,26 @@ import numpy as np
 import open3d as o3d
 import os
 import sys
-from time import time as get_time
+import time
 from typing import List, Tuple
 
-from visibility.core.types import FrustumParams
+from visibility.core.types import FrustumParams, Side
 from visibility.sampling import WeightedViewpointSampler
 from shared.surface_sampler import SurfacePointSampler
 
 # CPU methods
-from visibility.methods.raycast import RaycastingVisibilityQuery
-from visibility.methods.epsilon import EpsilonVisibilityQuery
+from visibility.visibility.raycast import RaycastingVisibilityQuery
+from visibility.visibility.epsilon import EpsilonVisibilityQuery
 
 # GPU methods
-from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
+from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
 
 # Set-cover optimizers
 from visibility.set_cover import GreedySetCover, GreedySetCoverCuda
 
 # Optionally import GPU raycast (requires Triro/OptiX)
 try:
-    from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
+    from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
     HAS_TRIRO = True
 except ImportError:
     HAS_TRIRO = False
@@ -100,9 +100,9 @@ def benchmark_frustum_culling(query_cpu, query_gpu, positions_cpu, rotmats_cpu,
     # CPU KDTree
     times_cpu = []
     for i in range(NUM_TIMED_VPS):
-        t0 = get_time()
+        t0 = time.perf_counter()
         idx = query_cpu.points_in_frustum_with_kdtree(positions_cpu[i], rotmats_cpu[i])
-        times_cpu.append(get_time() - t0)
+        times_cpu.append(time.perf_counter() - t0)
     print(f"  CPU KDTree:        {np.mean(times_cpu)*1000:.2f} ± {np.std(times_cpu)*1000:.2f} ms")
 
     # GPU brute-force — warm up
@@ -110,9 +110,9 @@ def benchmark_frustum_culling(query_cpu, query_gpu, positions_cpu, rotmats_cpu,
         query_gpu.points_in_frustum_gpu(positions_gpu[i], rotmats_gpu[i])
     times_gpu = []
     for i in range(NUM_TIMED_VPS):
-        t0 = get_time()
+        t0 = time.perf_counter()
         idx = query_gpu.points_in_frustum_gpu(positions_gpu[i], rotmats_gpu[i])
-        times_gpu.append(get_time() - t0)
+        times_gpu.append(time.perf_counter() - t0)
     print(f"  GPU Brute-force:   {np.mean(times_gpu)*1000:.2f} ± {np.std(times_gpu)*1000:.2f} ms")
 
     speedup = np.mean(times_cpu) / np.mean(times_gpu)
@@ -179,7 +179,7 @@ def main():
 
     # Generate candidate viewpoints (GPU arrays from sampler)
     sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side="outside")
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side=Side.OUTSIDE)
 
     # Transfer to CPU for CPU benchmarks
     positions = cp.asnumpy(pos_gpu)
@@ -191,29 +191,29 @@ def main():
     print("\n[INIT] Setting up visibility queries...")
 
     # CPU
-    t0 = get_time()
+    t0 = time.perf_counter()
     q_raycast_cpu = RaycastingVisibilityQuery(mesh, target_points, normals, frustum_params)
-    print(f"  CPU Raycast init: {get_time()-t0:.2f}s")
+    print(f"  CPU Raycast init: {time.perf_counter()-t0:.2f}s")
 
-    t0 = get_time()
+    t0 = time.perf_counter()
     q_epsilon_cpu = EpsilonVisibilityQuery(target_points, normals, frustum_params)
-    print(f"  CPU Epsilon init: {get_time()-t0:.2f}s")
+    print(f"  CPU Epsilon init: {time.perf_counter()-t0:.2f}s")
 
     # GPU Epsilon
-    t0 = get_time()
+    t0 = time.perf_counter()
     q_epsilon_gpu = EpsilonVisibilityQueryCuda(
         target_points, normals, frustum_params,
     )
-    print(f"  GPU Epsilon init: {get_time()-t0:.2f}s")
+    print(f"  GPU Epsilon init: {time.perf_counter()-t0:.2f}s")
 
     # GPU Raycast (if Triro available)
     q_raycast_gpu = None
     if HAS_TRIRO:
-        t0 = get_time()
+        t0 = time.perf_counter()
         q_raycast_gpu = RaycastingVisibilityQueryCuda(
             mesh, target_points, normals, frustum_params
         )
-        print(f"  GPU Raycast (OptiX) init: {get_time()-t0:.2f}s")
+        print(f"  GPU Raycast (OptiX) init: {time.perf_counter()-t0:.2f}s")
 
     # =====================================================================
     # Benchmarks

@@ -9,14 +9,14 @@ import argparse
 import numpy as np
 import cupy as cp
 import open3d as o3d
-from time import time as get_time
-from visibility.core import FrustumParams
+import time
+from visibility.core import FrustumParams, Side
 from shared.surface_sampler import SurfacePointSampler
 from visibility.sampling import WeightedViewpointSampler
-from visibility.methods.raycast import RaycastingVisibilityQuery
-from visibility.methods.epsilon import EpsilonVisibilityQuery
-from visibility.methods.epsilon_cuda import EpsilonVisibilityQueryCuda
-from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
+from visibility.visibility.raycast import RaycastingVisibilityQuery
+from visibility.visibility.epsilon import EpsilonVisibilityQuery
+from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
+from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
 from visualization import create_frustum_lineset
 
 
@@ -64,7 +64,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
 
     geometries = [mesh_vis, pcd_vis]
 
-    for i, (pos, orientation) in enumerate(viewpoints):
+    for i, (pos, rotation) in enumerate(viewpoints):
         radius = 0.015 if i == vp_index else 0.01
         color = [1.0, 0.0, 0.0] if i == vp_index else [0.0, 0.0, 1.0]
         sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
@@ -73,8 +73,8 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
         sphere.compute_vertex_normals()
         geometries.append(sphere)
 
-    pos, orientation = viewpoints[vp_index]
-    forward = orientation[:, 0]
+    pos, rotation = viewpoints[vp_index]
+    forward = rotation[:, 0]
     arrow_length = frustum_params.far * 0.2
     arrow_end = pos + forward * arrow_length
     arrow = o3d.geometry.LineSet()
@@ -83,7 +83,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
     arrow.colors = o3d.utility.Vector3dVector([[1.0, 1.0, 0.0]])
     geometries.append(arrow)
 
-    frustum = create_frustum_lineset(pos, orientation, frustum_params)
+    frustum = create_frustum_lineset(pos, rotation, frustum_params)
     frustum.paint_uniform_color([0.8, 0.8, 0.0])
     geometries.append(frustum)
 
@@ -117,7 +117,7 @@ def main():
 
     # --- Viewpoints (GPU arrays) ---
     sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
-    pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side="outside")
+    pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side=Side.OUTSIDE)
 
     # --- Instantiate both queries ---
     gt_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
@@ -144,7 +144,7 @@ def main():
     vp_results = []  # store (gt_set, pred_set) for visualization
 
     for i in range(len(pos_gpu)):
-        t0 = get_time()
+        t0 = time.perf_counter()
 
         # GPU queries accept CuPy
         gt_indices, _ = gt_query.compute_visibility(pos_gpu[i], rot_gpu[i])
@@ -157,7 +157,7 @@ def main():
         else:
             pred_indices, _ = pred_query.compute_visibility(pos_gpu[i], rot_gpu[i])
 
-        elapsed = get_time() - t0
+        elapsed = time.perf_counter() - t0
 
         gt_set = set(gt_indices.tolist())
         pred_set = set(pred_indices.tolist())

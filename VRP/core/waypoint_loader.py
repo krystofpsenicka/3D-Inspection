@@ -22,18 +22,18 @@ logger = logging.getLogger(__name__)
 
 def load_viewpoints_gpu(
     positions: cp.ndarray,
-    orientations: cp.ndarray,
+    rotations: cp.ndarray,
 ) -> Tuple[cp.ndarray, cp.ndarray]:
     """Pass through GPU-resident viewpoint data.
 
     Accepts CuPy arrays directly from the visibility module's
     ``OptimizationResult.positions`` (K, 3) and
-    ``OptimizationResult.orientations`` (K, 3, 3).
+    ``OptimizationResult.rotations`` (K, 3, 3).
 
     Returns:
-        (positions, orientations) as CuPy arrays.
+        (positions, rotations) as CuPy arrays.
     """
-    return positions, orientations
+    return positions, rotations
 
 
 def load_waypoints(

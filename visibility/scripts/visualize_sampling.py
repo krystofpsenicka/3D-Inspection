@@ -16,10 +16,10 @@ import numpy as np
 import cupy as cp
 import open3d as o3d
 
-from visibility.core import FrustumParams
+from visibility.core import FrustumParams, Side
 from shared.surface_sampler import SurfacePointSampler
 from visibility.sampling import TargetedViewpointSampler, OptimizingSampler, CMAESBackend
-from visibility.methods.raycast_cuda import RaycastingVisibilityQueryCuda
+from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
 from visualization import VisibilityVisualizer, SamplingVisualizer
 
 
@@ -86,6 +86,7 @@ def main():
                         default="random", help="Targeted resampling strategy")
     args = parser.parse_args()
 
+    side = Side(args.side)
     curvature_weighting = (args.mode == "curvature")
 
     # --- Setup (same pattern as other scripts) ---
@@ -104,9 +105,9 @@ def main():
 
     print("\nBuilding feasible regions...")
     outside_pos_gpu, outside_w_gpu, _ = sampler.get_feasible_sampling_data(
-        side="outside", curvature_weighting=curvature_weighting)
+        side=Side.OUTSIDE, curvature_weighting=curvature_weighting)
     inside_pos_gpu, inside_w_gpu, _ = sampler.get_feasible_sampling_data(
-        side="inside", curvature_weighting=curvature_weighting)
+        side=Side.INSIDE, curvature_weighting=curvature_weighting)
     outside_pos, outside_w = cp.asnumpy(outside_pos_gpu), cp.asnumpy(outside_w_gpu)
     inside_pos, inside_w = cp.asnumpy(inside_pos_gpu), cp.asnumpy(inside_w_gpu)
 
@@ -132,7 +133,7 @@ def main():
         pos_gpu, rot_gpu = sampler.sample(
             cp.arange(len(target_points)),
             num_candidates=args.num_viewpoints,
-            side=args.side,
+            side=side,
             curvature_weighting=curvature_weighting)
 
         if len(pos_gpu) == 0:
@@ -166,7 +167,7 @@ def main():
         print(f"  Sampling {n_normal} normal viewpoints from {args.side}...")
         normal_pos_gpu, normal_rot_gpu = sampler.sample(
             cp.arange(len(target_points)),
-            num_candidates=n_normal, side=args.side)
+            num_candidates=n_normal, side=side)
 
         if len(normal_pos_gpu) == 0:
             print("No valid normal viewpoints sampled — aborting.")
@@ -211,7 +212,7 @@ def main():
                 n_targeted, coverage_count_gpu, vis_query,
                 existing_pos_gpu=normal_pos_gpu,
                 existing_rot_gpu=normal_rot_gpu,
-                side=args.side, verbose=True)
+                side=side, verbose=True)
 
             if len(targeted_pos_gpu) == 0:
                 print("  No valid targeted viewpoints found via optimisation.")
@@ -227,7 +228,7 @@ def main():
             # Random proximity-weighted targeted sampling
             print(f"  Sampling {n_targeted} targeted viewpoints...")
             targeted_pos_gpu, targeted_rot_gpu = sampler.sample(
-                uncovered_indices, n_targeted, side=args.side)
+                uncovered_indices, n_targeted, side=side)
 
             if len(targeted_pos_gpu) == 0:
                 print("  No valid targeted viewpoints sampled.")

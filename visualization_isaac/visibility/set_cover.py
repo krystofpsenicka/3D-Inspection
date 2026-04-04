@@ -52,7 +52,7 @@ class SetCoverVisualizer:
 
         # Transfer GPU arrays to CPU
         positions_np = result.positions.get()
-        orientations_np = result.orientations.get()
+        rotations_np = result.rotations.get()
         vis_map_np = result.visibility_map.get()
 
         covered_mask = vis_map_np.any(axis=0)
@@ -69,7 +69,7 @@ class SetCoverVisualizer:
         for i in range(result.num_viewpoints):
             color = tuple(colors[i % len(colors)])
             pos = positions_np[i]
-            rot = orientations_np[i]
+            rot = rotations_np[i]
             vis = np.where(vis_map_np[i])[0]
 
             paths += add_viewpoint_geometry(

@@ -3,10 +3,10 @@ import numpy as np
 from abc import ABC, abstractmethod
 from scipy.spatial import KDTree
 from numpy.linalg import norm
-from time import time as get_time
+import time
 from typing import Tuple
 
-from .types import FrustumParams
+from ..core.types import FrustumParams
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +32,16 @@ class VisibilityQueryBase(ABC):
         self.num_points = num_points
 
     @abstractmethod
-    def compute_visibility(self, viewpoint, orientation) -> Tuple[np.ndarray, float]:
+    def compute_visibility(self, viewpoint, rotation) -> Tuple[np.ndarray, float]:
         """Compute visible indices from a single viewpoint."""
 
     @abstractmethod
-    def compute_visibility_batch(self, positions, orientations) -> Tuple[np.ndarray, float]:
+    def compute_visibility_batch(self, positions, rotations) -> Tuple[np.ndarray, float]:
         """Compute visibility for a batch of viewpoints.
 
         Args:
-            positions:    (N, 3) array of viewpoint positions.
-            orientations: (N, 3, 3) array of rotation matrices.
+            positions:  (N, 3) array of viewpoint positions.
+            rotations:  (N, 3, 3) array of rotation matrices.
 
         Returns ``(visibility_matrix, total_time)`` where ``visibility_matrix``
         is an (N, M) array; entry [i, j] indicates whether point j is visible
@@ -63,13 +63,13 @@ class VisibilityQuery(VisibilityQueryBase):
     def compute_visibility(self, viewpoint: np.ndarray, rotmat: np.ndarray) -> Tuple[np.ndarray, float]:
         raise NotImplementedError("Subclasses must implement compute_visibility")
 
-    def compute_visibility_batch(self, positions, orientations) -> Tuple[np.ndarray, float]:
+    def compute_visibility_batch(self, positions, rotations) -> Tuple[np.ndarray, float]:
         """CPU batch visibility via per-viewpoint loop.
 
         Returns ``(visibility_matrix, total_time)`` where ``visibility_matrix``
         is an (N, M) bool array.
         """
-        start_time = get_time()
+        start_time = time.perf_counter()
         class_name = type(self).__name__
 
         n = len(positions)
@@ -79,11 +79,11 @@ class VisibilityQuery(VisibilityQueryBase):
                 logger.info("  [%s] ... computed %d / %d candidates",
                             class_name, i + 1, n)
 
-            visible_indices, _ = self.compute_visibility(positions[i], orientations[i])
+            visible_indices, _ = self.compute_visibility(positions[i], rotations[i])
             if len(visible_indices) > 0:
                 matrix[i, visible_indices] = True
 
-        total_time = get_time() - start_time
+        total_time = time.perf_counter() - start_time
         logger.info("[%s] Visibility computation for %d candidates finished in %.2fs",
                     class_name, n, total_time)
         return matrix, total_time

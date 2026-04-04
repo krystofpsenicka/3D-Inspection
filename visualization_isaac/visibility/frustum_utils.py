@@ -10,7 +10,7 @@ def add_frustum_lineset(
     stage,
     path: str,
     viewpoint: np.ndarray,
-    orientation: np.ndarray,
+    rotation: np.ndarray,
     params: FrustumParams,
     color: tuple = (1.0, 1.0, 0.0),
     width: float = 2.0,
@@ -22,7 +22,7 @@ def add_frustum_lineset(
     stage : Usd.Stage
     path : USD prim path.
     viewpoint : (3,) array — camera position.
-    orientation : (3, 3) rotation matrix — columns are [forward, right, up].
+    rotation : (3, 3) rotation matrix — columns are [forward, right, up].
     params : FrustumParams defining FOV, near/far planes.
     color : RGB colour.
     width : Line width.
@@ -34,7 +34,7 @@ def add_frustum_lineset(
     half_angle_rad = params.fov_y / 2.0
     far_half_size = params.far * np.tan(half_angle_rad)
 
-    forward, right, up = orientation[:, 0], orientation[:, 1], orientation[:, 2]
+    forward, right, up = rotation[:, 0], rotation[:, 1], rotation[:, 2]
 
     far_center = viewpoint + forward * params.far
 
@@ -61,7 +61,7 @@ def add_viewpoint_geometry(
     stage,
     base_path: str,
     position: np.ndarray,
-    orientation: np.ndarray,
+    rotation: np.ndarray,
     frustum_params: FrustumParams,
     color: tuple | list,
     sphere_radius: float = 0.15,
@@ -74,7 +74,7 @@ def add_viewpoint_geometry(
     stage : Usd.Stage
     base_path : Parent prim path — children are created beneath it.
     position : (3,) camera position.
-    orientation : (3, 3) rotation matrix — columns are [forward, right, up].
+    rotation : (3, 3) rotation matrix — columns are [forward, right, up].
     frustum_params : Camera frustum geometry.
     color : RGB colour for all three primitives.
     sphere_radius : Radius of the viewpoint marker sphere.
@@ -93,10 +93,10 @@ def add_viewpoint_geometry(
 
     paths.append(add_frustum_lineset(
         stage, f"{base_path}/frustum",
-        viewpoint=position, orientation=orientation,
+        viewpoint=position, rotation=rotation,
         params=frustum_params, color=color))
 
-    forward = orientation[:, 0]
+    forward = rotation[:, 0]
     arrow_end = position + forward * arrow_length
     arrow_pts = np.array([position, arrow_end])
     arrow_lines = np.array([[0, 1]])

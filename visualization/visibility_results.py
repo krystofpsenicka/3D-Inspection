@@ -101,12 +101,12 @@ class VisibilityVisualizer:
 
         for i in range(num_vps):
             pos = np.asarray(candidates[i][0])
-            orientation = candidates[i][1]
+            rotation = candidates[i][1]
             visible_indices = visibility_map[i]
             color = list(vp_colors[i % len(vp_colors)])
 
             geometries += create_viewpoint_geometry(
-                pos, orientation, self.frustum_params, color)
+                pos, rotation, self.frustum_params, color)
 
             # Visible points
             if len(visible_indices) > 0:

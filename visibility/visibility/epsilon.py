@@ -2,11 +2,11 @@ import logging
 import numpy as np
 import open3d as o3d
 from numpy.linalg import norm
-from time import time as get_time
+import time
 from typing import Tuple, Optional
 
 from ..core.types import FrustumParams, EpsilonHyperparams
-from ..core.base import VisibilityQuery
+from .base import VisibilityQuery
 from ..core.constants import (
     NORM_EPS, DELTA_AGG_FUNCS, GAMMA_AGG_FUNCS,
     DELTA_DEFAULT, DELTA_SAMPLE_SIZE, GAMMA_FALLBACK_DIVISOR,
@@ -69,14 +69,14 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         gamma = max(gamma, 1e-6)
         return 2.0 * np.arctan(self.delta / (4.0 * gamma)) * self.hp.epsilon_scale
 
-    def compute_visibility(self, viewpoint, orientation):
+    def compute_visibility(self, viewpoint, rotation):
         """Compute epsilon-visible points using back-face and occlusion checks."""
-        start = get_time()
+        start = time.perf_counter()
 
-        frustum_indices = self.points_in_frustum_with_kdtree(viewpoint, orientation)
+        frustum_indices = self.points_in_frustum_with_kdtree(viewpoint, rotation)
 
         if len(frustum_indices) == 0:
-            return np.array([]), get_time() - start
+            return np.array([]), time.perf_counter() - start
 
         frustum_points = self.target_points[frustum_indices]
         frustum_normals = self.normals[frustum_indices]
@@ -101,7 +101,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
 
         visible_indices = frustum_indices[visible_mask]
 
-        comp_time = get_time() - start
+        comp_time = time.perf_counter() - start
         return visible_indices, comp_time
 
     def _check_occlusion(self, viewpoint: np.ndarray, points: np.ndarray,

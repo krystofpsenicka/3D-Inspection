@@ -8,7 +8,7 @@ from visibility.core.types import FrustumParams
 
 def create_frustum_lineset(
     viewpoint: np.ndarray,
-    orientation: np.ndarray,
+    rotation: np.ndarray,
     params: FrustumParams,
 ) -> o3d.geometry.LineSet:
     """Create a LineSet representing the frustum.
@@ -16,13 +16,13 @@ def create_frustum_lineset(
     Parameters
     ----------
     viewpoint : (3,) array — camera position.
-    orientation : (3, 3) rotation matrix — columns are [forward, right, up].
+    rotation : (3, 3) rotation matrix — columns are [forward, right, up].
     params : FrustumParams defining FOV, near/far planes.
     """
     half_angle_rad = params.fov_y / 2.0
     far_half_size = params.far * np.tan(half_angle_rad)
 
-    forward, right, up = orientation[:, 0], orientation[:, 1], orientation[:, 2]
+    forward, right, up = rotation[:, 0], rotation[:, 1], rotation[:, 2]
 
     far_center = viewpoint + forward * params.far
 
@@ -50,7 +50,7 @@ def create_frustum_lineset(
 
 def create_viewpoint_geometry(
     position: np.ndarray,
-    orientation: np.ndarray,
+    rotation: np.ndarray,
     frustum_params: FrustumParams,
     color: tuple | list,
     sphere_radius: float = 0.15,
@@ -61,7 +61,7 @@ def create_viewpoint_geometry(
     Parameters
     ----------
     position : (3,) camera position.
-    orientation : (3, 3) rotation matrix — columns are [forward, right, up].
+    rotation : (3, 3) rotation matrix — columns are [forward, right, up].
     frustum_params : Camera frustum geometry.
     color : RGB colour for all three primitives.
     sphere_radius : Radius of the viewpoint marker sphere.
@@ -78,10 +78,10 @@ def create_viewpoint_geometry(
     sphere.paint_uniform_color(color)
     sphere.compute_vertex_normals()
 
-    frustum = create_frustum_lineset(position, orientation, frustum_params)
+    frustum = create_frustum_lineset(position, rotation, frustum_params)
     frustum.paint_uniform_color(color)
 
-    forward = orientation[:, 0]
+    forward = rotation[:, 0]
     arrow_end = position + forward * arrow_length
     arrow = o3d.geometry.LineSet()
     arrow.points = o3d.utility.Vector3dVector(np.array([position, arrow_end]))

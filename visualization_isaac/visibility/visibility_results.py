@@ -121,13 +121,13 @@ class VisibilityVisualizer:
 
         for i in range(num_vps):
             pos = np.asarray(candidates[i][0])
-            orientation = candidates[i][1]
+            rotation = candidates[i][1]
             visible_indices = visibility_map[i]
             color = tuple(vp_colors[i % len(vp_colors)])
 
             paths += add_viewpoint_geometry(
                 stage, f"{base_path}/vp_{i}",
-                pos, orientation, self.frustum_params, color)
+                pos, rotation, self.frustum_params, color)
 
             if len(visible_indices) > 0:
                 paths.append(create_points_prim(

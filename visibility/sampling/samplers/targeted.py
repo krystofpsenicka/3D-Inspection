@@ -10,8 +10,9 @@ from ...core.constants import (
     PROXIMITY_KNN_FRACTION,
     TARGETED_PROXIMITY_SIGMA_FACTOR, DEFAULT_K_COVERAGE,
 )
+from ...core.types import Side
 from .weighted import WeightedViewpointSampler
-from ...core.base import VisibilityQueryBase
+from ...visibility.base import VisibilityQueryBase
 from ..utils.proximity import compute_knn_proximity_weights
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
     """
 
     def sample(self, uncovered_indices: cp.ndarray, num_candidates: int,
-                        side: str = "outside",
+                        side: Side = Side.OUTSIDE,
                         min_distance: float | None = None,
                         max_distance_offset: float = 0.95,
                         max_dir_noise_rad: float = DEFAULT_MAX_DIR_NOISE_RAD,
@@ -51,7 +52,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             samples_per_iteration)
 
     def _sample_targeted_iterative(self, uncovered_indices: cp.ndarray, num_candidates: int,
-                                   side: str, min_distance: float | None, max_distance_offset: float,
+                                   side: Side, min_distance: float | None, max_distance_offset: float,
                                    max_dir_noise_rad: float, curvature_weighting: bool,
                                    visibility_query, k_coverage: int,
                                    coverage_count_gpu, samples_per_iteration: int):
