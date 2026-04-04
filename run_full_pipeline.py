@@ -227,9 +227,12 @@ def main() -> None:
     logger.info("[2/9] Sampling %d surface points …", args.num_surface_points)
     from shared.surface_sampler import SurfacePointSampler
     surface_sampler = SurfacePointSampler()
-    target_points, normals = surface_sampler.sample(
+    target_points_np, normals_np = surface_sampler.sample(
         o3d_mesh, args.num_surface_points, seed=args.seed,
     )
+    # CPU → GPU immediately (Open3D returns numpy)
+    target_points = cp.asarray(target_points_np, dtype=cp.float32)
+    normals = cp.asarray(normals_np, dtype=cp.float32)
     logger.info("  Sampled %d points.  Normal estimation done.", len(target_points))
 
     # ══════════════════════════════════════════════════════════════════════
@@ -301,7 +304,7 @@ def main() -> None:
         logger.info("[3–5/9] Sampling %d uniform + %d targeted (%s) …",
                     n_uniform, n_targeted, args.resampling_strategy)
         pos_gpu, rot_gpu = sampler.sample(
-            np.arange(len(target_points)),
+            cp.arange(len(target_points)),
             n_uniform, side="outside",
             curvature_weighting=args.curvature_weighting)
         V, _ = raycast_query.compute_visibility_batch(pos_gpu, rot_gpu)
@@ -309,7 +312,7 @@ def main() -> None:
         # Phase 2: build per-point coverage counts and identify under-covered
         coverage_count_gpu = V.astype(cp.int32).sum(axis=0)
         under_k_mask = coverage_count_gpu < args.k_coverage
-        uncovered = cp.asnumpy(cp.where(under_k_mask)[0])
+        uncovered = cp.where(under_k_mask)[0]
 
         if len(uncovered) > 0 and n_targeted > 0:
             if args.resampling_strategy == "optimal":
@@ -348,7 +351,7 @@ def main() -> None:
         logger.info("  Total candidates after resampling: %d", len(pos_gpu))
     else:
         pos_gpu, rot_gpu = sampler.sample(
-            np.arange(len(target_points)),
+            cp.arange(len(target_points)),
             num_candidates=args.num_candidates,
             side="outside",
             curvature_weighting=args.curvature_weighting,
@@ -371,18 +374,13 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 6 – Convert selected viewpoints to VRP waypoints
     # ══════════════════════════════════════════════════════════════════════
-    logger.info("[6/9] Converting %d viewpoints to VRP waypoints …",
+    logger.info("[6/9] Preparing %d selected viewpoints for VRP …",
                 opt_result.num_viewpoints)
 
-    from scipy.spatial.transform import Rotation
-    positions_np = opt_result.positions.get()
-    orientations_np = opt_result.orientations.get()
-    selected_wp_7dof = np.zeros((opt_result.num_viewpoints, 7), dtype=np.float64)
-    for i in range(opt_result.num_viewpoints):
-        selected_wp_7dof[i, :3] = positions_np[i]
-        selected_wp_7dof[i, 3:] = Rotation.from_matrix(orientations_np[i]).as_quat(scalar_first=True)
-
-    logger.info("  Waypoints array shape: %s", selected_wp_7dof.shape)
+    # Use optimization result directly — positions + rotation matrices, all GPU
+    selected_positions = opt_result.positions     # (K, 3) CuPy
+    selected_rotmats = opt_result.orientations    # (K, 3, 3) CuPy
+    logger.info("  Selected positions shape: %s", selected_positions.shape)
 
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 7 – Occupancy grid + depot positions + distance matrix
@@ -391,7 +389,7 @@ def main() -> None:
 
     from VRP.core.occupancy_grid import get_mesh_world_bounds, OccupancyGrid
     from VRP.scripts.vrp_planner import _compute_start_grid
-    from VRP.core.distance_matrix import compute_distance_matrix, build_route_path_cache
+    from VRP.core.distance_matrix import compute_distance_matrix
 
     mesh_bmin, mesh_bmax = get_mesh_world_bounds(
         mesh_target_length=MESH_TARGET_LENGTH,
@@ -407,16 +405,19 @@ def main() -> None:
     og = sampling_og
     logger.info("  Grid shape: %s  res=%.2f m", og.grid.shape, og.resolution)
 
-    # Assemble VRP node array: [depots | inspection waypoints]
+    # Assemble VRP node arrays: positions + rotmats (all GPU)
     K = args.num_robots
-    home_poses = np.array(
-        [[*xyz, 1.0, 0.0, 0.0, 0.0] for xyz in robot_start_xyzs],
-        dtype=np.float32,
+    home_positions = cp.array(
+        [[float(xyz[0]), float(xyz[1]), float(xyz[2])] for xyz in robot_start_xyzs],
+        dtype=cp.float32,
     )
-    waypoints_world = np.vstack([home_poses, selected_wp_7dof.astype(np.float32)])
+    home_rotmats = cp.tile(cp.eye(3, dtype=cp.float32), (K, 1, 1))
+
+    waypoint_positions = cp.vstack([home_positions, selected_positions.astype(cp.float32)])
+    waypoint_rotmats = cp.concatenate([home_rotmats, selected_rotmats.astype(cp.float32)])
     home_indices = list(range(K))
-    N_insp = len(selected_wp_7dof)
-    logger.info("  VRP nodes: %d (%d homes + %d inspection)", len(waypoints_world), K, N_insp)
+    N_insp = opt_result.num_viewpoints
+    logger.info("  VRP nodes: %d (%d homes + %d inspection)", len(waypoint_positions), K, N_insp)
 
     # cuGraph graph memory scales with free-voxel count (~12 B/edge × 26 adj).
     # Find the finest integer downsampling factor that keeps free voxels under
@@ -454,7 +455,7 @@ def main() -> None:
         "  Using factor=%d (%.2f m) for dist-matrix (%d free voxels).",
         _dm_factor, _dm_og.resolution, _dm_free,
     )
-    dist_matrix = compute_distance_matrix(_dm_og, waypoints_world[:, :3])
+    dist_matrix = compute_distance_matrix(_dm_og, waypoint_positions)
     logger.info("  Distance matrix computed.  max=%.2f m",
                 float(np.max(dist_matrix[np.isfinite(dist_matrix)])))
 
@@ -485,9 +486,6 @@ def main() -> None:
     ]
     logger.info("  Routes (with homes): %s", routes)
 
-    # Build A* sub-waypoint path cache
-    path_cache = build_route_path_cache(og, waypoints_world[:, :3], routes)
-
     # Build start configs (8-DOF: [x, y, z, yaw, pitch, roll, cam_yaw, cam_pitch])
     robot_cfg = load_local_robot_config("brov.yml")
     j_names = robot_cfg["kinematics"]["cspace"]["joint_names"]
@@ -507,8 +505,9 @@ def main() -> None:
     )
     exec_result: ExecutionResult = executor.execute(
         routes=routes,
-        waypoints_world=waypoints_world,
-        path_cache=path_cache,
+        waypoint_positions=waypoint_positions,
+        waypoint_rotmats=waypoint_rotmats,
+        home_indices=set(home_indices),
     )
     logger.info("  Execution done.  Fail counts: %s", exec_result.fail_counts)
 
@@ -518,7 +517,7 @@ def main() -> None:
     logger.info("[9/9] Saving pipeline data to %s …", args.output)
 
     # Map: for each robot, which *inspection* waypoint indices it visits (0-based
-    # into selected_wp_7dof / opt_result.viewpoints).
+    # into opt_result.positions / opt_result.orientations).
     robot_inspection_wp_indices: list[list[int]] = []
     for i, route in enumerate(vrp_result.routes):
         # route entries are global indices; subtract K to get inspection index
@@ -533,9 +532,9 @@ def main() -> None:
         "mesh_path": MESH_PATH,
         "mesh_bounds_min": mesh_bounds_min,
         "mesh_bounds_max": mesh_bounds_max,
-        # Pointcloud
-        "target_points": target_points,
-        "normals": normals,
+        # Pointcloud (GPU → CPU for serialization)
+        "target_points": cp.asnumpy(target_points),
+        "normals": cp.asnumpy(normals),
         # Candidates
         "all_positions": cp.asnumpy(pos_gpu),
         "all_rotmats": cp.asnumpy(rot_gpu),
@@ -551,8 +550,9 @@ def main() -> None:
         },
         # Set cover
         "optimization_result": opt_result,
-        # VRP waypoints
-        "selected_waypoints_7dof": selected_wp_7dof,
+        # VRP waypoints (positions + rotmats instead of 7-DOF)
+        "selected_positions": cp.asnumpy(selected_positions),
+        "selected_rotmats": cp.asnumpy(selected_rotmats),
         # VRP
         "vrp_routes": vrp_result.routes,          # raw routes (no home)
         "vrp_routes_with_homes": routes,           # routes with home book-ends

@@ -130,6 +130,7 @@ def main():
         print(f"\nSampling {args.num_viewpoints} viewpoints from {args.side} "
               f"(mode={args.mode})...")
         pos_gpu, rot_gpu = sampler.sample(
+            cp.arange(len(target_points)),
             num_candidates=args.num_viewpoints,
             side=args.side,
             curvature_weighting=curvature_weighting)
@@ -164,6 +165,7 @@ def main():
         # Phase 1: sample normal candidates
         print(f"  Sampling {n_normal} normal viewpoints from {args.side}...")
         normal_pos_gpu, normal_rot_gpu = sampler.sample(
+            cp.arange(len(target_points)),
             num_candidates=n_normal, side=args.side)
 
         if len(normal_pos_gpu) == 0:
@@ -187,7 +189,7 @@ def main():
 
         # Phase 2: identify uncovered and sample targeted candidates
         all_indices = set(range(len(target_points)))
-        uncovered_indices = np.array(sorted(all_indices - normal_covered), dtype=int)
+        uncovered_indices = cp.array(sorted(all_indices - normal_covered), dtype=int)
         print(f"\n  {len(uncovered_indices)} uncovered points remaining.")
 
         if len(uncovered_indices) == 0 or n_targeted == 0:

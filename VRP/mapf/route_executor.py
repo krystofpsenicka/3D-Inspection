@@ -28,6 +28,7 @@ import logging
 import math
 from typing import List, Optional
 
+import cupy as cp
 import numpy as np
 
 from ..core.constants import (
@@ -45,8 +46,6 @@ from ..core.types import ExecutionResult
 from shared.grid_utils import downsample_occupancy_grid
 from .space_time_search import ReservationTable
 from .route_planner import plan_robot_route_st
-from ..core.collision import find_trajectory_collisions
-
 logger = logging.getLogger(__name__)
 
 
@@ -58,11 +57,11 @@ class RouteExecutor:
     Parameters
     ----------
     start_configs:
-        ``(num_robots, D)`` initial joint configurations.
+        ``(num_robots, D)`` initial joint configurations (numpy).
     joint_names:
         Ordered joint name list.
     og:
-        Occupancy grid (used to build the coarse grid for Space-Time A*).
+        Occupancy grid (GPU-resident, used to build the coarse grid).
     """
 
     def __init__(
@@ -81,15 +80,16 @@ class RouteExecutor:
     def _plan_sequential(
         self,
         routes: List[List[int]],
-        waypoints_world: np.ndarray,
+        waypoint_positions: cp.ndarray,
+        waypoint_rotmats: cp.ndarray,
+        home_indices: set,
         priority_order: List[int],
         route_costs: List[float],
-        coarse_grid: np.ndarray,
-        coarse_origin: np.ndarray,
+        coarse_grid: cp.ndarray,
+        coarse_origin: cp.ndarray,
         coarse_res: float,
         T_max: int,
         half_v: np.ndarray,
-        path_cache: Optional[dict],
         dwell_s: float,
     ):
         """Plan all robots sequentially in given priority order.
@@ -102,8 +102,8 @@ class RouteExecutor:
         n_robots = self.num_robots
         reservation = ReservationTable(coarse_grid.shape, T_max, half_v)
 
-        robot_world_paths: List[Optional[np.ndarray]] = [None] * n_robots
-        robot_coarse_times: List[Optional[np.ndarray]] = [None] * n_robots
+        robot_world_paths: List[Optional[cp.ndarray]] = [None] * n_robots
+        robot_coarse_times: List[Optional[cp.ndarray]] = [None] * n_robots
         robot_wp_schedules: List[Optional[list]] = [None] * n_robots
         per_robot_stats: List[PlanningStats] = [PlanningStats() for _ in range(n_robots)]
 
@@ -111,8 +111,8 @@ class RouteExecutor:
             route = routes[robot_idx]
             world_xyz, coarse_t, wp_schedule, stats = plan_robot_route_st(
                 coarse_grid, coarse_origin, coarse_res,
-                reservation, route, waypoints_world,
-                path_cache=path_cache,
+                reservation, route,
+                waypoint_positions, waypoint_rotmats, home_indices,
                 dwell_s=dwell_s,
                 dt=SPACE_TIME_DT,
                 fine_occupancy_grid=self.og,
@@ -137,9 +137,10 @@ class RouteExecutor:
 
     def execute(
         self,
-        routes:          List[List[int]],
-        waypoints_world: np.ndarray,
-        path_cache: Optional[dict] = None,
+        routes:              List[List[int]],
+        waypoint_positions:  cp.ndarray,
+        waypoint_rotmats:    cp.ndarray,
+        home_indices:        set,
         dwell_s: float = SPACE_TIME_DWELL_S,
         n_priority_trials: int = 20,
     ) -> ExecutionResult:
@@ -148,16 +149,20 @@ class RouteExecutor:
 
         Parameters
         ----------
+        waypoint_positions : cp.ndarray (N, 3)
+            World-frame positions for all VRP nodes (homes + inspection).
+        waypoint_rotmats : cp.ndarray (N, 3, 3)
+            Rotation matrices for all VRP nodes (identity for homes).
         n_priority_trials : int
             Total budget of priority orderings to try (including
             deterministic ones).  The best (lowest makespan) is kept.
-            Set to 0 to use only the default ordering.
         """
         n_robots = self.num_robots
 
-        # Build per-robot waypoint list for visualisation
+        # Build per-robot waypoint list for visualisation (CPU)
+        wp_pos_np = cp.asnumpy(waypoint_positions)
         all_waypoints: List[List[List[float]]] = [
-            [waypoints_world[wp_idx].tolist() for wp_idx in route]
+            [wp_pos_np[wp_idx].tolist() for wp_idx in route]
             for route in routes
         ]
         initial_positions = [cfg[:3].copy() for cfg in self.start_configs]
@@ -171,8 +176,8 @@ class RouteExecutor:
         else:
             logger.warning("No occupancy grid; collision avoidance with "
                            "static obstacles is disabled.")
-            coarse_grid = np.zeros((10, 10, 10), dtype=np.bool_)
-            coarse_origin = np.zeros(3)
+            coarse_grid = cp.zeros((10, 10, 10), dtype=cp.bool_)
+            coarse_origin = cp.zeros(3, dtype=cp.float64)
             coarse_res = SPACE_TIME_RESOLUTION
 
         T_max = max(1, int(math.ceil(SPACE_TIME_MAX_HORIZON_S / SPACE_TIME_DT)))
@@ -189,12 +194,8 @@ class RouteExecutor:
             cost = 0.0
             for leg in range(1, len(route)):
                 a, b = route[leg - 1], route[leg]
-                if path_cache and (a, b) in path_cache:
-                    pc = path_cache[(a, b)]
-                    cost += float(np.sum(np.linalg.norm(np.diff(pc, axis=0), axis=1)))
-                else:
-                    cost += float(np.linalg.norm(
-                        waypoints_world[b, :3] - waypoints_world[a, :3]))
+                cost += float(cp.linalg.norm(
+                    waypoint_positions[b] - waypoint_positions[a]))
             route_costs.append(cost)
 
         default_order = sorted(range(n_robots), key=lambda i: -route_costs[i])
@@ -204,9 +205,10 @@ class RouteExecutor:
         # ── 3. Try priority orderings, keep best makespan ─────────────
         # Deterministic ordering 1: longest-first (default)
         best_result = self._plan_sequential(
-            routes, waypoints_world, default_order, route_costs,
+            routes, waypoint_positions, waypoint_rotmats, home_indices,
+            default_order, route_costs,
             coarse_grid, coarse_origin, coarse_res, T_max, half_v,
-            path_cache, dwell_s,
+            dwell_s,
         )
         best_makespan = best_result[3]
         best_order = default_order
@@ -220,9 +222,10 @@ class RouteExecutor:
         if n_priority_trials >= 2:
             reverse_order = list(reversed(default_order))
             trial_result = self._plan_sequential(
-                routes, waypoints_world, reverse_order, route_costs,
+                routes, waypoint_positions, waypoint_rotmats, home_indices,
+                reverse_order, route_costs,
                 coarse_grid, coarse_origin, coarse_res, T_max, half_v,
-                path_cache, dwell_s,
+                dwell_s,
             )
             trial_makespan = trial_result[3]
             logger.info("[executor] Shortest-first order makespan: %.1f s",
@@ -235,7 +238,6 @@ class RouteExecutor:
             trials_used += 1
 
         # Deterministic ordering 3: conflict-count (most-conflicted first)
-        # Based on stats from the first trial
         if n_priority_trials >= 3:
             conflict_scores = [
                 s.wait_steps + s.astar_failures * 100
@@ -246,9 +248,10 @@ class RouteExecutor:
             )
             if conflict_order != default_order:
                 trial_result = self._plan_sequential(
-                    routes, waypoints_world, conflict_order, route_costs,
+                    routes, waypoint_positions, waypoint_rotmats, home_indices,
+                    conflict_order, route_costs,
                     coarse_grid, coarse_origin, coarse_res, T_max, half_v,
-                    path_cache, dwell_s,
+                    dwell_s,
                 )
                 trial_makespan = trial_result[3]
                 logger.info("[executor] Conflict-count order %s makespan: %.1f s",
@@ -260,13 +263,14 @@ class RouteExecutor:
                     best_stats = trial_result[4]
             trials_used += 1
 
-        # Remaining budget: random permutations, with conflict-informed bias
+        # Remaining budget: random permutations
         for trial in range(trials_used, n_priority_trials):
             random_order = list(np.random.permutation(n_robots))
             trial_result = self._plan_sequential(
-                routes, waypoints_world, random_order, route_costs,
+                routes, waypoint_positions, waypoint_rotmats, home_indices,
+                random_order, route_costs,
                 coarse_grid, coarse_origin, coarse_res, T_max, half_v,
-                path_cache, dwell_s,
+                dwell_s,
             )
             trial_makespan = trial_result[3]
             logger.info("[executor] Trial %d order %s makespan: %.1f s",
@@ -293,15 +297,18 @@ class RouteExecutor:
                             float(c_t[-1]) * SPACE_TIME_DT)
 
         # ── 4. Smooth-interpolate to replay resolution ────────────────
+        # CPU boundary: np.interp, trajectory densification
+        rotmats_np = cp.asnumpy(waypoint_rotmats)
+
         all_traj_positions:  List[List[np.ndarray]] = [[] for _ in range(n_robots)]
         all_traj_velocities: List[List[np.ndarray]] = [[] for _ in range(n_robots)]
         fail_counts = [0] * n_robots
 
         for i in range(n_robots):
-            # Convert CuPy arrays to NumPy for trajectory densification
+            # GPU → CPU for trajectory densification
             w_xyz = robot_world_paths[i].get()
             c_t   = robot_coarse_times[i].get()
-            
+
             cfg   = self.start_configs[i].copy()  # 8-DOF
             wp_sched = robot_wp_schedules[i] or []
             # Convert coarse time-step schedule → seconds
@@ -348,7 +355,7 @@ class RouteExecutor:
                 t_dense=t_dense,
                 dt=TRAJ_DT,
                 wp_schedule_s=wp_sched_s,
-                waypoints_world=waypoints_world,
+                waypoint_rotmats_np=rotmats_np,
             )
 
             # Finite-difference velocities
@@ -361,17 +368,7 @@ class RouteExecutor:
                 all_traj_velocities[i].append(sv.astype(np.float32))
 
         # ── 5. Safety checks ────────────────────────────────────────────
-        # 5a. Inter-robot AABB check
-        collisions = find_trajectory_collisions(all_traj_positions,
-                                                np.array(BROV_CUBOID_DIMS, dtype=np.float32))
-        if collisions:
-            logger.warning("[executor] %d residual AABB collision(s) after "
-                           "priority-based planning (logged for diagnostics).",
-                           len(collisions))
-        else:
-            logger.info("[executor] No residual AABB collisions – clean plan.")
-
-        # 5b. Fine OG obstacle check on smoothed trajectories
+        # Fine OG obstacle check on smoothed trajectories
         if self.og is not None:
             for i in range(n_robots):
                 og_collisions = 0
@@ -415,13 +412,13 @@ def _apply_heading_orientation(
     t_dense: np.ndarray,
     dt: float = TRAJ_DT,
     wp_schedule_s: Optional[list] = None,
-    waypoints_world: Optional[np.ndarray] = None,
+    waypoint_rotmats_np: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Set yaw (joint 3) and camera pitch (joint 7) on a dense trajectory.
 
     During dwell windows the robot holds the waypoint's viewing direction
-    derived from the waypoint quaternion.  Between dwells the yaw and camera
-    pitch are cosine-eased between successive waypoint values.
+    derived from the rotation matrix forward column.  Between dwells the
+    yaw and camera pitch are cosine-eased between successive waypoint values.
 
     Joint layout: [x, y, z, yaw, pitch, roll, cam_yaw, cam_pitch]
     """
@@ -432,25 +429,21 @@ def _apply_heading_orientation(
     yaw          = np.empty(N)
     camera_pitch = np.zeros(N)
 
-    if not wp_schedule_s or waypoints_world is None:
+    if not wp_schedule_s or waypoint_rotmats_np is None:
         yaw[:] = traj[0, 3]
         traj[:, 3] = (yaw + math.pi) % (2 * math.pi) - math.pi
         return traj
 
-    # ── Extract per-waypoint yaw and camera pitch ────────────────────────────
+    # ── Extract per-waypoint yaw and camera pitch from rotation matrices ────
     wp_yaws:   list = []
     wp_cpitch: list = []
     wp_t_ds:   list = []
     wp_t_de:   list = []
 
     for (t_ds, t_de, node_idx) in wp_schedule_s:
-        wp7 = waypoints_world[node_idx]
-        qw = float(wp7[3]); qx = float(wp7[4])
-        qy = float(wp7[5]); qz = float(wp7[6])
-        # Rotate +X by quaternion → camera forward direction
-        fx = 1.0 - 2.0 * (qy * qy + qz * qz)
-        fy = 2.0 * (qx * qy + qw * qz)
-        fz = 2.0 * (qx * qz - qw * qy)
+        # Forward direction = column 0 of rotation matrix
+        forward = waypoint_rotmats_np[node_idx, :, 0]
+        fx, fy, fz = float(forward[0]), float(forward[1]), float(forward[2])
         xy_norm = math.sqrt(fx * fx + fy * fy)
         wp_yaws.append(math.atan2(fy, fx))
         wp_cpitch.append(-math.atan2(fz, xy_norm) if xy_norm > 1e-9 else 0.0)
@@ -503,11 +496,7 @@ def _apply_heading_orientation(
             camera_pitch[d_end:] = 0.0
 
     # ── Write back ───────────────────────────────────────────────────────────
-    # Write unwrapped yaw directly — do NOT wrap to [-π, π].
-    # Wrapping creates a discontinuity when the interpolated yaw crosses ±π,
-    # causing the joint controller to reverse direction mid-transit.
     traj[:, 3] = yaw
     if traj.shape[1] > 7:
         traj[:, 7] = camera_pitch
     return traj
-

@@ -20,12 +20,13 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
     Requires OptiX SDK >= 7.7 and triro installed.
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
-                 normals: np.ndarray, frustum_params: FrustumParams):
+    def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: cp.ndarray,
+                 normals: cp.ndarray, frustum_params: FrustumParams):
         super().__init__(target_points, normals, frustum_params)
 
         from triro.ray.ray_optix import RayMeshIntersector
 
+        # Open3D mesh is CPU — convert to torch CUDA tensors for Triro
         vertices = np.asarray(mesh.vertices, dtype=np.float32)
         triangles = np.asarray(mesh.triangles, dtype=np.int32)
 

@@ -153,10 +153,13 @@ def compute_via_subprocess(
         config_path = os.path.join(tmpdir, "config.json")
         out_path = os.path.join(tmpdir, "matrix.npy")
 
-        np.save(grid_path, occupancy_grid.grid)
+        # serialize for subprocess
+        import cupy as _cp
+        grid_np = _cp.asnumpy(occupancy_grid.grid)
+        np.save(grid_path, grid_np)
         cfg = {
             "grid_path": grid_path,
-            "origin": occupancy_grid.origin.tolist(),
+            "origin": (_cp.asnumpy(occupancy_grid.origin)).tolist(),
             "resolution": float(occupancy_grid.resolution),
             "waypoints_flat": waypoints_world.flatten().tolist(),
             "out_matrix_path": out_path,

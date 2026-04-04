@@ -12,7 +12,6 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-import cupy as cp
 import numpy as np
 
 
@@ -21,11 +20,11 @@ def apply_heading_orientation(
     t_dense: np.ndarray,
     dt: float,
     wp_schedule_s: Optional[list] = None,
-    waypoints_world: Optional[np.ndarray] = None,
+    waypoint_rotmats_np: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Set yaw and camera pitch on a dense trajectory.
 
-    This currently operates on CPU (NumPy) since the trajectory is small
+    This operates on CPU (NumPy) since the trajectory is small
     and the logic is branchy. The input/output stays NumPy since it feeds
     directly into ExecutionResult which may go to visualization.
     """
@@ -36,7 +35,7 @@ def apply_heading_orientation(
     yaw = np.empty(N)
     camera_pitch = np.zeros(N)
 
-    if not wp_schedule_s or waypoints_world is None:
+    if not wp_schedule_s or waypoint_rotmats_np is None:
         yaw[:] = traj[0, 3]
         traj[:, 3] = (yaw + math.pi) % (2 * math.pi) - math.pi
         return traj
@@ -47,11 +46,9 @@ def apply_heading_orientation(
     wp_t_de: list = []
 
     for (t_ds, t_de, node_idx) in wp_schedule_s:
-        wp7 = waypoints_world[node_idx]
-        qw, qx, qy, qz = float(wp7[3]), float(wp7[4]), float(wp7[5]), float(wp7[6])
-        fx = 1.0 - 2.0 * (qy * qy + qz * qz)
-        fy = 2.0 * (qx * qy + qw * qz)
-        fz = 2.0 * (qx * qz - qw * qy)
+        # Forward direction = column 0 of rotation matrix
+        forward = waypoint_rotmats_np[node_idx, :, 0]
+        fx, fy, fz = float(forward[0]), float(forward[1]), float(forward[2])
         xy_norm = math.sqrt(fx * fx + fy * fy)
         wp_yaws.append(math.atan2(fy, fx))
         wp_cpitch.append(-math.atan2(fz, xy_norm) if xy_norm > 1e-9 else 0.0)

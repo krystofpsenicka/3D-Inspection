@@ -4,6 +4,7 @@ import logging
 import time
 from math import ceil
 
+import cupy as cp
 import numpy as np
 import open3d as o3d
 import trimesh
@@ -30,7 +31,7 @@ def build_sampling_occupancy_grid(
         resolution:    voxel resolution in meters.
 
     Returns:
-        SamplingOccupancyGrid with inflated, raw, and filled grids.
+        SamplingOccupancyGrid with inflated, raw, and filled grids (all GPU).
     """
     vertices = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
@@ -70,21 +71,27 @@ def build_sampling_occupancy_grid(
     )
 
 
-def build_sdf_grid(og: SamplingOccupancyGrid) -> np.ndarray:
+def build_sdf_grid(og: SamplingOccupancyGrid) -> cp.ndarray:
     """Build a volumetric SDF grid using the two-EDT method.
 
     Uses ``og.filled_raw_grid`` for robust interior detection.
     Positive outside, negative inside.
 
+    scipy distance_transform_edt requires CPU — transfer at the boundary.
+
     Returns:
-        float32 numpy array with signed distance values.
+        CuPy float32 array with signed distance values.
     """
     from scipy.ndimage import distance_transform_edt
 
     t0 = time.perf_counter()
-    outside_dist = distance_transform_edt(~og.filled_raw_grid).astype(np.float32) * og.resolution
-    inside_dist = distance_transform_edt(og.filled_raw_grid).astype(np.float32) * og.resolution
-    sdf_grid = outside_dist - inside_dist
+    # Scipy EDT requires numpy
+    filled_np = cp.asnumpy(og.filled_raw_grid)
+    outside_dist = distance_transform_edt(~filled_np).astype(np.float32) * og.resolution
+    inside_dist = distance_transform_edt(filled_np).astype(np.float32) * og.resolution
+    sdf_grid_np = outside_dist - inside_dist
+    # Back to GPU
+    sdf_grid = cp.asarray(sdf_grid_np)
     dt = time.perf_counter() - t0
     logger.info(
         "[build_sdf_grid] SDF grid computed (two-EDT): shape=%s, "

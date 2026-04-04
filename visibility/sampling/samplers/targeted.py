@@ -3,7 +3,6 @@
 import logging
 
 import cupy as cp
-import numpy as np
 from typing import Tuple
 
 from ...core.constants import (
@@ -25,7 +24,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
     targeted sampling with configurable batch size per iteration.
     """
 
-    def sample(self, uncovered_indices: np.ndarray, num_candidates: int,
+    def sample(self, uncovered_indices: cp.ndarray, num_candidates: int,
                         side: str = "outside",
                         min_distance: float | None = None,
                         max_distance_offset: float = 0.95,
@@ -51,7 +50,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             visibility_query, k_coverage, coverage_count_gpu,
             samples_per_iteration)
 
-    def _sample_targeted_iterative(self, uncovered_indices: np.ndarray, num_candidates: int,
+    def _sample_targeted_iterative(self, uncovered_indices: cp.ndarray, num_candidates: int,
                                    side: str, min_distance: float | None, max_distance_offset: float,
                                    max_dir_noise_rad: float, curvature_weighting: bool,
                                    visibility_query, k_coverage: int,
@@ -67,9 +66,8 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             if coverage_count_gpu is None:
                 coverage_count_gpu = cp.full(
                     self.num_points, k_coverage, dtype=cp.int32)
-                coverage_count_gpu[cp.asarray(uncovered_indices)] = 0
+                coverage_count_gpu[uncovered_indices] = 0
 
-        uncovered_indices_gpu = cp.asarray(uncovered_indices)
         all_pos_list = []
         all_rot_list = []
         remaining = num_candidates
@@ -84,9 +82,9 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
                                 num_candidates - remaining)
                     break
                 under_k_indices = cp.where(under_k_mask)[0]
-                uncovered_pts_gpu = self._target_points_gpu[under_k_indices]
+                uncovered_pts_gpu = self.target_points[under_k_indices]
             else:
-                uncovered_pts_gpu = self._target_points_gpu[uncovered_indices_gpu]
+                uncovered_pts_gpu = self.target_points[uncovered_indices]
 
             sigma = TARGETED_PROXIMITY_SIGMA_FACTOR * coarse_res
             prox_w = self._compute_uncovered_proximity_weights(

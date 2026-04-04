@@ -1,13 +1,9 @@
 """Single-robot route planning via Space-Time A* on GPU.
 
 Plans one robot through its full VRP route using GPU-accelerated
-Space-Time A* (see ``space_time_search.py``). For each leg:
-
-1. Plan hop-by-hop with GPU parallel A*.
-2. Smooth the spatial path with OMPL PathSimplifier.
-3. Re-sample the smoothed path at the original coarse time steps.
-4. Safety-check against the reservation table; fall back to raw A*
-   path on conflict.
+Space-Time A* (see ``space_time_search.py``). For each leg the robot
+navigates directly between waypoints, with OMPL smoothing applied
+to the resulting coarse path.
 
 After all legs, the trajectory is committed to the reservation table
 so later robots (in priority order) avoid it.
@@ -49,40 +45,53 @@ from .path_smoother import arc_length_resample, simplify_path_ompl
 logger = logging.getLogger(__name__)
 
 
-def _robot_xyz_from_waypoint(waypoint_7dof: np.ndarray) -> np.ndarray:
-    """Return robot body-centre XYZ for a 7-DOF waypoint.
+def _robot_xyz_from_waypoints(
+    positions: cp.ndarray, rotmats: cp.ndarray, home_indices: set,
+) -> cp.ndarray:
+    """Return robot body-centre XYZ for all waypoints (vectorized GPU).
 
     Inspection waypoints encode the desired camera position and viewing
-    direction. The robot body centre must be offset backward so the camera
+    direction. The robot body centre is offset backward so the camera
     arrives at the waypoint position.
 
-    Home nodes (identity quaternion) are returned unchanged.
+    Home nodes are returned unchanged (no camera offset).
+
+    Args:
+        positions:    (N, 3) CuPy — waypoint positions.
+        rotmats:      (N, 3, 3) CuPy — rotation matrices.
+        home_indices: set of int — indices of home/depot nodes.
+
+    Returns:
+        (N, 3) CuPy — robot body-centre positions.
     """
-    xyz = np.array(waypoint_7dof[:3], dtype=np.float64)
-    qw, qx, qy, qz = (
-        float(waypoint_7dof[3]), float(waypoint_7dof[4]),
-        float(waypoint_7dof[5]), float(waypoint_7dof[6]),
-    )
-    if abs(qw - 1.0) < 1e-3 and abs(qx) < 1e-3 and abs(qy) < 1e-3 and abs(qz) < 1e-3:
-        return xyz
-    fx = 1.0 - 2.0 * (qy * qy + qz * qz)
-    fy = 2.0 * (qx * qy + qw * qz)
-    xy_norm = math.sqrt(fx * fx + fy * fy)
-    if xy_norm > 1e-9:
-        xyz[0] -= CAMERA_OFFSET_FORWARD * (fx / xy_norm)
-        xyz[1] -= CAMERA_OFFSET_FORWARD * (fy / xy_norm)
-    xyz[2] -= CAMERA_OFFSET_UP
+    xyz = positions.copy()
+
+    # Forward direction = column 0 of rotation matrix
+    forwards = rotmats[:, :, 0]  # (N, 3)
+
+    # Camera offset: subtract forward and up offsets
+    xy_norm = cp.linalg.norm(forwards[:, :2], axis=1, keepdims=True)
+    xy_norm = cp.maximum(xy_norm, 1e-9)
+    xyz[:, 0] -= CAMERA_OFFSET_FORWARD * (forwards[:, 0] / xy_norm[:, 0])
+    xyz[:, 1] -= CAMERA_OFFSET_FORWARD * (forwards[:, 1] / xy_norm[:, 0])
+    xyz[:, 2] -= CAMERA_OFFSET_UP
+
+    # Restore home positions (no camera offset)
+    for idx in home_indices:
+        xyz[idx] = positions[idx]
+
     return xyz
 
 
 def plan_robot_route_st(
     coarse_grid: cp.ndarray,
-    coarse_origin: np.ndarray | cp.ndarray,
+    coarse_origin: cp.ndarray,
     coarse_res: float,
     reservation: ReservationTable,
     route: List[int],
-    waypoints_world: np.ndarray,
-    path_cache: Optional[dict] = None,
+    waypoint_positions: cp.ndarray,
+    waypoint_rotmats: cp.ndarray,
+    home_indices: set,
     dwell_s: float = SPACE_TIME_DWELL_S,
     dt: float = SPACE_TIME_DT,
     fine_occupancy_grid=None,
@@ -96,9 +105,7 @@ def plan_robot_route_st(
         wp_schedule is list of (t_dwell_start, t_dwell_end, node_idx),
         stats is PlanningStats.
     """
-    coarse_grid = cp.asarray(coarse_grid)
-    wp_arr = np.asarray(waypoints_world)
-    xyz_all = np.array([_robot_xyz_from_waypoint(wp_arr[i]) for i in range(len(wp_arr))])
+    xyz_all = _robot_xyz_from_waypoints(waypoint_positions, waypoint_rotmats, home_indices)
 
     coarse_positions: list = []
     world_positions: list = []
@@ -109,29 +116,24 @@ def plan_robot_route_st(
     straight_line_total = 0.0
 
     hold_steps = max(1, int(round(dwell_s / dt)))
-    coarse_origin_np = np.asarray(cp.asnumpy(coarse_origin) if isinstance(coarse_origin, cp.ndarray) else coarse_origin)
 
     for leg in range(1, len(route)):
         prev_node = route[leg - 1]
         curr_node = route[leg]
 
-        if path_cache is not None and (prev_node, curr_node) in path_cache:
-            leg_xyz = path_cache[(prev_node, curr_node)].copy()
-            leg_xyz[0] = xyz_all[prev_node]
-            leg_xyz[-1] = xyz_all[curr_node]
-        else:
-            leg_xyz = np.vstack([xyz_all[prev_node], xyz_all[curr_node]])
+        # Waypoint-to-waypoint
+        leg_xyz = cp.stack([xyz_all[prev_node], xyz_all[curr_node]])
 
-        leg_ijk_cp = world_to_coarse(leg_xyz, coarse_origin_np, coarse_res)
-        leg_ijk = cp.asnumpy(leg_ijk_cp)
+        leg_ijk = world_to_coarse(leg_xyz, coarse_origin, coarse_res)
 
-        keep = np.ones(len(leg_ijk), dtype=bool)
-        keep[1:] = np.any(leg_ijk[1:] != leg_ijk[:-1], axis=1)
+        # Deduplicate consecutive identical voxels
+        keep = cp.ones(len(leg_ijk), dtype=cp.bool_)
+        keep[1:] = cp.any(leg_ijk[1:] != leg_ijk[:-1], axis=1)
         leg_ijk = leg_ijk[keep]
 
         grid_shape = (int(coarse_grid.shape[0]), int(coarse_grid.shape[1]), int(coarse_grid.shape[2]))
         for d, mx in enumerate(grid_shape):
-            leg_ijk[:, d] = np.clip(leg_ijk[:, d], 0, mx - 1)
+            leg_ijk[:, d] = cp.clip(leg_ijk[:, d], 0, mx - 1)
 
         stride_voxels = max(1, int(round(SPACE_TIME_HOP_DISTANCE / coarse_res)))
         sub_idx = list(range(0, len(leg_ijk), stride_voxels))
@@ -139,15 +141,15 @@ def plan_robot_route_st(
             sub_idx.append(len(leg_ijk) - 1)
         sub_ijk = leg_ijk[sub_idx]
 
-        straight_line_total += float(np.linalg.norm(
+        straight_line_total += float(cp.linalg.norm(
             xyz_all[curr_node] - xyz_all[prev_node]))
 
         leg_plan_pos: list = []
         leg_plan_t: list = []
 
         for hop in range(1, len(sub_ijk)):
-            s_ijk = cp.asarray(sub_ijk[hop - 1])
-            g_ijk = cp.asarray(sub_ijk[hop])
+            s_ijk = sub_ijk[hop - 1]
+            g_ijk = sub_ijk[hop]
             if cp.array_equal(s_ijk, g_ijk):
                 continue
 
@@ -198,10 +200,10 @@ def plan_robot_route_st(
         planned_t = cp.concatenate(leg_plan_t, axis=0)
 
         final_ijk = planned_ijk
-        final_world = coarse_to_world(planned_ijk, coarse_origin_np, coarse_res)
+        final_world = coarse_to_world(planned_ijk, coarse_origin, coarse_res)
 
         if fine_occupancy_grid is not None and len(planned_ijk) >= 3:
-            planned_world = coarse_to_world(planned_ijk, coarse_origin_np, coarse_res)
+            planned_world = coarse_to_world(planned_ijk, coarse_origin, coarse_res)
             smoothed_world = simplify_path_ompl(
                 planned_world, fine_occupancy_grid, robot_radius,
                 max_time=OMPL_SIMPLIFY_MAX_TIME,
@@ -209,7 +211,7 @@ def plan_robot_route_st(
 
             if len(smoothed_world) >= 2:
                 resampled_world = arc_length_resample(smoothed_world, len(planned_t))
-                resampled_ijk = world_to_coarse(resampled_world, coarse_origin_np, coarse_res)
+                resampled_ijk = world_to_coarse(resampled_world, coarse_origin, coarse_res)
                 for d, mx in enumerate(grid_shape):
                     resampled_ijk[:, d] = cp.clip(resampled_ijk[:, d], 0, mx - 1)
 

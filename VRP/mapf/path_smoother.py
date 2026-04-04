@@ -69,13 +69,14 @@ def simplify_path_ompl(
             super().__init__(si)
 
         def isValid(self, state):  # noqa: N802
-            xyz = np.array([state[0], state[1], state[2]])
+            xyz = cp.array([state[0], state[1], state[2]])
             return bool(occupancy_grid.is_free_world(xyz))
 
     space = ob.RealVectorStateSpace(3)
     bounds = ob.RealVectorBounds(3)
-    lo = np.asarray(occupancy_grid.origin, dtype=np.float64)
-    hi = lo + np.asarray(occupancy_grid.grid.shape, dtype=np.float64) * occupancy_grid.resolution
+    # OMPL requires numpy
+    lo = cp.asnumpy(occupancy_grid.origin).astype(np.float64)
+    hi = lo + np.array(occupancy_grid.grid.shape, dtype=np.float64) * occupancy_grid.resolution
     for dim in range(3):
         bounds.setLow(dim, float(lo[dim]))
         bounds.setHigh(dim, float(hi[dim]))

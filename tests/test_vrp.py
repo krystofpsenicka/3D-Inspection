@@ -768,3 +768,58 @@ class TestHelperFunctions:
         per_v = _per_vehicle_costs([[2], [3]], dm, depot=[0, 1])
         assert abs(per_v[0] - 40.0) < 1e-6
         assert abs(per_v[1] - 50.0) < 1e-6
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. TestTrajectoryCollisions — GPU-vectorized AABB collision detection
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestTrajectoryCollisions:
+
+    def test_no_collision_parallel_paths(self):
+        """Two robots moving in parallel far apart produce no collisions."""
+        from VRP.core.collision import find_trajectory_collisions
+        T = 50
+        traj_a = [np.array([0.0, 0.0, float(t) * 0.1], dtype=np.float32) for t in range(T)]
+        traj_b = [np.array([5.0, 5.0, float(t) * 0.1], dtype=np.float32) for t in range(T)]
+        collisions = find_trajectory_collisions([traj_a, traj_b])
+        assert collisions == []
+
+    def test_head_on_collision_detected(self):
+        """Two robots crossing the same point detect overlap."""
+        from VRP.core.collision import find_trajectory_collisions
+        T = 20
+        # Robot A moves along +X, Robot B moves along -X; they cross at x=0
+        traj_a = [np.array([float(t) - 10.0, 0.0, 0.0], dtype=np.float32) for t in range(T)]
+        traj_b = [np.array([10.0 - float(t), 0.0, 0.0], dtype=np.float32) for t in range(T)]
+        collisions = find_trajectory_collisions([traj_a, traj_b])
+        assert len(collisions) > 0
+        # Verify tuple format: (step, robot_a, robot_b, penetration)
+        for step, ra, rb, pen in collisions:
+            assert ra == 0 and rb == 1
+            assert pen > 0.0
+
+    def test_padding_shorter_trajectory(self):
+        """Robots with different trajectory lengths are padded correctly."""
+        from VRP.core.collision import find_trajectory_collisions
+        # Robot A: 10 steps far away; Robot B: 5 steps far away
+        traj_a = [np.array([100.0, 0.0, 0.0], dtype=np.float32) for _ in range(10)]
+        traj_b = [np.array([-100.0, 0.0, 0.0], dtype=np.float32) for _ in range(5)]
+        collisions = find_trajectory_collisions([traj_a, traj_b])
+        assert collisions == []
+
+    def test_single_robot_no_collision(self):
+        """A single robot cannot collide with itself."""
+        from VRP.core.collision import find_trajectory_collisions
+        traj = [np.array([0.0, 0.0, float(t)], dtype=np.float32) for t in range(10)]
+        collisions = find_trajectory_collisions([traj])
+        assert collisions == []
+
+    def test_cupy_input_accepted(self):
+        """Function accepts CuPy arrays as trajectory positions."""
+        from VRP.core.collision import find_trajectory_collisions
+        T = 10
+        traj_a = [cp.array([0.0, 0.0, float(t)], dtype=cp.float32) for t in range(T)]
+        traj_b = [cp.array([100.0, 0.0, float(t)], dtype=cp.float32) for t in range(T)]
+        collisions = find_trajectory_collisions([traj_a, traj_b])
+        assert collisions == []

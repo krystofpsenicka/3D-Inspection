@@ -8,6 +8,7 @@ import logging
 import math
 from typing import List, Tuple
 
+import cupy as cp
 import numpy as np
 import matplotlib.cm as _cm
 
@@ -31,43 +32,40 @@ WEIGHTS_26: np.ndarray = np.array(
 
 # ── Grid inflation ────────────────────────────────────────────────────────────
 
-def inflate_grid(grid: np.ndarray, inflation_voxels: int) -> np.ndarray:
+def inflate_grid(grid: cp.ndarray, inflation_voxels: int) -> cp.ndarray:
     """Morphological dilation of the obstacle grid by *inflation_voxels* voxels.
 
     Uses a spherical structuring element of radius ``inflation_voxels``.
     This expands every obstacle by the robot's collision radius so that
     path planners can treat the robot as a point.
 
-    Using CuPy (GPU) for speed.
+    Input and output are GPU-resident CuPy arrays.
     """
+    from cupyx.scipy.ndimage import binary_dilation as gpu_dilation
+
     r = inflation_voxels
+    # Structuring element constructed on CPU: tiny array, negligible transfer.
     coords = np.mgrid[-r:r+1, -r:r+1, -r:r+1]
     se = (coords[0]**2 + coords[1]**2 + coords[2]**2) <= r**2
-
-    import cupy as cp
-    from cupyx.scipy.ndimage import binary_dilation as gpu_dilation
-    grid_gpu = cp.asarray(grid)
     se_gpu = cp.asarray(se)
-    result = gpu_dilation(grid_gpu, structure=se_gpu)
-    return cp.asnumpy(result)
+
+    return gpu_dilation(grid, structure=se_gpu)
 
 
 # ── Grid down-sampling ───────────────────────────────────────────────────────
 
 def downsample_occupancy_grid(
-    fine_grid: np.ndarray,
-    fine_origin: np.ndarray,
+    fine_grid: cp.ndarray,
+    fine_origin: cp.ndarray,
     fine_res: float,
     coarse_res: float,
-) -> Tuple[np.ndarray, np.ndarray, float]:
-    """Down-sample an occupancy grid.
+) -> Tuple[cp.ndarray, cp.ndarray, float]:
+    """Down-sample an occupancy grid (GPU).
 
     A coarse voxel is **occupied** if **any** of its constituent fine
     voxels is occupied (no false free-space).
 
-    Vectorised with ``np.pad`` + ``reshape`` + ``any``.
-
-    Returns ``(coarse_grid, coarse_origin, coarse_res)``.
+    Returns ``(coarse_grid, coarse_origin, coarse_res)`` as CuPy arrays.
     """
     factor = max(1, int(round(coarse_res / fine_res)))
     Fx, Fy, Fz = fine_grid.shape
@@ -77,13 +75,13 @@ def downsample_occupancy_grid(
     pad_y = (-Fy) % factor
     pad_z = (-Fz) % factor
     if pad_x or pad_y or pad_z:
-        fine_padded = np.pad(
-            fine_grid.astype(bool),
+        fine_padded = cp.pad(
+            fine_grid.astype(cp.bool_),
             [(0, pad_x), (0, pad_y), (0, pad_z)],
             constant_values=False,
         )
     else:
-        fine_padded = fine_grid.astype(bool)
+        fine_padded = fine_grid.astype(cp.bool_)
 
     Cx = fine_padded.shape[0] // factor
     Cy = fine_padded.shape[1] // factor
@@ -110,4 +108,3 @@ def esdf_to_rgb(values: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
     """Map ESDF float values to (N, 3) RGB via the RdBu_r colourmap."""
     norm = np.clip((values - vmin) / (vmax - vmin + 1e-9), 0.0, 1.0)
     return _cm.get_cmap("RdBu_r")(norm)[:, :3].astype(np.float64)
-

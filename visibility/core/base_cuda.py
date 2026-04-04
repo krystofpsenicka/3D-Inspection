@@ -51,23 +51,15 @@ void batch_frustum_cull(
 
 
 class VisibilityQueryCuda(VisibilityQueryBase):
-    """GPU-accelerated base class for visibility queries.
+    """GPU-accelerated base class for visibility queries."""
 
-    Transfers target points and normals to GPU as CuPy arrays and provides
-    brute-force GPU frustum culling.
-    """
-
-    def __init__(self, target_points: np.ndarray,
-                 normals: np.ndarray, frustum_params: FrustumParams):
+    def __init__(self, target_points: cp.ndarray,
+                 normals: cp.ndarray, frustum_params: FrustumParams):
         super().__init__(frustum_params, num_points=len(target_points))
 
-        # Keep numpy references for set-cover optimizers
-        self.target_points = target_points
-        self.normals = normals
-
-        # Transfer to GPU (float64 for the same precision as CPU frustum culling)
-        self.gpu_points = cp.asarray(target_points, dtype=cp.float64)
-        self.gpu_normals = cp.asarray(normals, dtype=cp.float64)
+        # float64 for same precision as CPU frustum culling
+        self.gpu_points = target_points.astype(cp.float64)
+        self.gpu_normals = normals.astype(cp.float64)
 
         logger.info("[VisibilityQueryCuda] GPU arrays ready (%d points)", self.num_points)
 

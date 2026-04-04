@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import cupy as cp
 import numpy as np
 
 from shared.occupancy_grid import OccupancyGrid
@@ -16,29 +17,27 @@ class SamplingOccupancyGrid(OccupancyGrid):
 
     Attributes
     ----------
-    raw_grid : np.ndarray, dtype=bool
+    raw_grid : cp.ndarray, dtype=bool
         Pre-inflation obstacle grid (surface-only or filled, no dilation).
-    filled_raw_grid : np.ndarray, dtype=bool
+    filled_raw_grid : cp.ndarray, dtype=bool
         Flood-filled voxelization for two-EDT SDF computation.
     mesh_scale : float | None
         Scale factor applied to the mesh.
     """
 
-    raw_grid: np.ndarray
-    filled_raw_grid: np.ndarray
+    raw_grid: cp.ndarray
+    filled_raw_grid: cp.ndarray
     mesh_scale: Optional[float] = None
 
     def sample_random_free_points(
-        self, n: int, rng: Optional[np.random.RandomState] = None
-    ) -> np.ndarray:
+        self, n: int, rng: Optional[cp.random.RandomState] = None
+    ) -> cp.ndarray:
         """Return ``(n, 3)`` random world-frame points inside free voxels."""
-        if rng is None:
-            rng = np.random.RandomState()
-        free_ijk = np.argwhere(~self.grid)
-        chosen = free_ijk[rng.choice(len(free_ijk), n, replace=True)]
-        # Add random offsets within the voxel
-        offsets = rng.uniform(0.0, self.resolution, size=(n, 3))
-        return chosen.astype(float) * self.resolution + self.origin + offsets
+        free_ijk = cp.argwhere(~self.grid)
+        indices = cp.random.randint(0, len(free_ijk), size=n)
+        chosen = free_ijk[indices]
+        offsets = cp.random.uniform(0.0, self.resolution, size=(n, 3)).astype(cp.float64)
+        return chosen.astype(cp.float64) * self.resolution + self.origin + offsets
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -48,13 +47,13 @@ class SamplingOccupancyGrid(OccupancyGrid):
         base = path.rsplit(".", 1)[0] if "." in path else path
         np.savez_compressed(
             base + ".npz",
-            grid=self.grid,
-            raw_grid=self.raw_grid,
-            filled_raw_grid=self.filled_raw_grid,
+            grid=cp.asnumpy(self.grid),
+            raw_grid=cp.asnumpy(self.raw_grid),
+            filled_raw_grid=cp.asnumpy(self.filled_raw_grid),
         )
         meta = {
             "resolution": self.resolution,
-            "origin": self.origin.tolist(),
+            "origin": cp.asnumpy(self.origin).tolist(),
             "mesh_scale": self.mesh_scale,
         }
         with open(base + ".json", "w") as f:
@@ -72,10 +71,10 @@ class SamplingOccupancyGrid(OccupancyGrid):
             with open(json_path) as f:
                 meta = json.load(f)
             return cls(
-                grid=data["grid"],
-                origin=np.array(meta["origin"]),
+                grid=cp.asarray(data["grid"]),
+                origin=cp.asarray(meta["origin"], dtype=cp.float64),
                 resolution=meta["resolution"],
-                raw_grid=data["raw_grid"],
-                filled_raw_grid=data["filled_raw_grid"],
+                raw_grid=cp.asarray(data["raw_grid"]),
+                filled_raw_grid=cp.asarray(data["filled_raw_grid"]),
                 mesh_scale=meta.get("mesh_scale"),
             )

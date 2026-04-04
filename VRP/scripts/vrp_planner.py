@@ -33,7 +33,7 @@ from ..core.constants import (
     VRP_FEEDBACK_THRESHOLD,
 )
 from ..core.types import ExecutionResult, PipelineConfig, VRPResult
-from ..core.distance_matrix import build_route_path_cache, compute_distance_matrix
+from ..core.distance_matrix import compute_distance_matrix
 from ..core.occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
 from ..mapf.route_executor import RouteExecutor
 from ..core.robot_config import load_local_robot_config
@@ -163,33 +163,33 @@ class VRPPipeline:
                     i, xyz, valid, free
                 )
 
-        inspection_wps = np.array(
-            load_waypoints(
-                source      = cfg.waypoint_source,
-                n_random    = cfg.n_random_waypoints,
-                og          = og,
-                random_seed = cfg.random_seed,
-            ),
-            dtype=np.float32,
-        )  # (N, 7)
-        N = len(inspection_wps)
+        insp_positions, insp_rotmats = load_waypoints(
+            source      = cfg.waypoint_source,
+            n_random    = cfg.n_random_waypoints,
+            og          = og,
+            random_seed = cfg.random_seed,
+        )
+        N = len(insp_positions)
         logger.info("      %d inspection waypoints loaded.", N)
 
         # Home nodes occupy indices 0..K-1; inspection nodes occupy K..K+N-1.
         K = cfg.num_robots
-        home_poses = np.array(
-            [[*xyz, 1.0, 0.0, 0.0, 0.0] for xyz in robot_start_xyzs],
+        home_positions = np.array(
+            [[float(xyz[0]), float(xyz[1]), float(xyz[2])] for xyz in robot_start_xyzs],
             dtype=np.float32,
-        )  # (K, 7)
-        waypoints_world = np.vstack([home_poses, inspection_wps])  # (K+N, 7)
-        home_indices = list(range(K))   # per-robot depot indices for VRP
+        )
+        home_rotmats = np.tile(np.eye(3, dtype=np.float32), (K, 1, 1))
+
+        all_positions = np.vstack([home_positions, insp_positions])
+        all_rotmats = np.concatenate([home_rotmats, insp_rotmats])
+        home_indices = list(range(K))
         logger.info("      Total VRP nodes: %d (%d homes + %d inspection)",
-                    len(waypoints_world), K, N)
+                    len(all_positions), K, N)
 
         # ── Stage 3: Distance matrix (depot + inspection waypoints) ────────
-        M = len(waypoints_world)
+        M = len(all_positions)
         logger.info("[3/5] Computing %dx%d distance matrix (cuGraph) …", M, M)
-        dist_matrix = compute_distance_matrix(og, waypoints_world[:, :3])
+        dist_matrix = compute_distance_matrix(og, all_positions)
         logger.info("      Distance matrix computed.  max_dist=%.2fm",
                     float(np.max(dist_matrix[np.isfinite(dist_matrix)])))
 
@@ -241,15 +241,13 @@ class VRPPipeline:
             ]
             logger.info("      Routes (with homes): %s", routes)
 
-            # Build A* sub-waypoint cache for every segment used by routes.
-            logger.info("      Building route path cache (A* sub-waypoints) …")
-            path_cache = build_route_path_cache(
-                og, waypoints_world[:, :3], routes,
-            )
-
             # ── Stage 5: Trajectory execution ────────────────────────
             logger.info("[5/5] Generating trajectories (iter=%d/%d) …",
                         iteration + 1, max_iters)
+
+            import cupy as _cp
+            wp_positions_gpu = _cp.asarray(all_positions, dtype=_cp.float32)
+            wp_rotmats_gpu = _cp.asarray(all_rotmats, dtype=_cp.float32)
 
             executor = RouteExecutor(
                 start_configs = start_configs,
@@ -257,9 +255,10 @@ class VRPPipeline:
                 og            = og,
             )
             exec_result = executor.execute(
-                routes          = routes,
-                waypoints_world = waypoints_world,
-                path_cache      = path_cache,
+                routes             = routes,
+                waypoint_positions = wp_positions_gpu,
+                waypoint_rotmats   = wp_rotmats_gpu,
+                home_indices       = set(home_indices),
             )
 
             # ── Check feedback convergence ───────────────────────────

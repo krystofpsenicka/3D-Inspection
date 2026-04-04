@@ -56,7 +56,7 @@ class ProbabilisticExpansionSampler(ExpansionSampler):
         self.radius = radius
 
     def refine(self, position, orientation, visible_indices):
-        self.sampler.restrict_to_sphere(cp.asnumpy(position), self.radius)
+        self.sampler.restrict_to_sphere(position, self.radius)
         try:
             positions_gpu, rotmats_gpu = self.sampler.sample(self.n_samples)
         finally:
@@ -91,7 +91,7 @@ class OptimizingExpansionSampler(ExpansionSampler):
         self.radius = radius
 
     def refine(self, position, orientation, visible_indices):
-        self.sampler.restrict_to_sphere(cp.asnumpy(position), self.radius)
+        self.sampler.restrict_to_sphere(position, self.radius)
         try:
             coverage_count_gpu = cp.zeros(self.query.num_points, dtype=cp.int32)
             if len(visible_indices) > 0:

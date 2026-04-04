@@ -6,8 +6,6 @@ import time
 import cupy as cp
 from typing import Tuple
 
-import numpy as np
-
 from shared.geometry import directions_rolls_to_rotmats
 
 from ...core.constants import DEFAULT_MAX_DIR_NOISE_RAD, NORM_EPS
@@ -100,9 +98,8 @@ class WeightedViewpointSampler(ProbabilisticSampler):
 
         # 3. K-nearest-neighbor centroid for viewing direction (GPU)
         dir_targets = (direction_targets_gpu if direction_targets_gpu is not None
-                       else self._target_points_gpu)
-        normals_gpu = (cp.asarray(self.normals, dtype=cp.float32)
-                       if curvature_weighting else None)
+                       else self.target_points)
+        normals_gpu = self.normals if curvature_weighting else None
         base_dirs = knn_centroid_direction(
             sampled_gpu, dir_targets, normals_gpu=normals_gpu)
         norms = cp.linalg.norm(base_dirs, axis=1, keepdims=True)

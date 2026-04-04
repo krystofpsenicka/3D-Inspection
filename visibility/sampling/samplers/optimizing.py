@@ -62,11 +62,12 @@ class OptimizingSampler(ViewpointSamplerBase):
 
     def _is_free(self, positions_gpu):
         """Check OG collision for (N, 3) world positions on GPU."""
+        og = self._occupancy_grid
         ijk = cp.floor(
-            (positions_gpu - self._og_origin_gpu) / self._og_resolution
+            (positions_gpu - og.origin) / og.resolution
         ).astype(cp.int32)
 
-        shape = cp.asarray(self._og_grid_gpu.shape, dtype=cp.int32)
+        shape = cp.array(og.grid.shape, dtype=cp.int32)
         in_bounds = (
             (ijk[:, 0] >= 0) & (ijk[:, 0] < shape[0]) &
             (ijk[:, 1] >= 0) & (ijk[:, 1] < shape[1]) &
@@ -76,7 +77,7 @@ class OptimizingSampler(ViewpointSamplerBase):
         result = cp.zeros(len(positions_gpu), dtype=cp.bool_)
         if cp.any(in_bounds):
             valid_ijk = ijk[in_bounds]
-            result[in_bounds] = ~self._og_grid_gpu[
+            result[in_bounds] = ~og.grid[
                 valid_ijk[:, 0], valid_ijk[:, 1], valid_ijk[:, 2]
             ]
         return result

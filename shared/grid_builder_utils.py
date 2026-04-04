@@ -4,6 +4,9 @@ Grid Builder Utilities
 
 Voxelization helpers and a simple occupancy-grid builder
 used by both the VRP planner and the visibility/sampling.
+
+Trimesh voxelization produces numpy arrays on CPU; the results are
+converted to CuPy (GPU) at the boundary and stay on GPU from there.
 """
 
 from __future__ import annotations
@@ -12,7 +15,9 @@ import logging
 import os
 from typing import Optional, Tuple
 
+import cupy as cp
 import numpy as np
+import trimesh
 
 from .occupancy_grid import OccupancyGrid
 from .grid_utils import inflate_grid
@@ -23,10 +28,13 @@ logger = logging.getLogger(__name__)
 def _map_voxels_to_grid(
     vg: trimesh.voxel.VoxelGrid,
     grid_shape: np.ndarray,
-    origin: np.ndarray,
+    origin: cp.ndarray,
     resolution: float,
-) -> np.ndarray:
-    """Map a trimesh VoxelGrid into a padded boolean grid.
+) -> cp.ndarray:
+    """Map a trimesh VoxelGrid into a padded boolean grid (GPU).
+
+    The voxel matrix from trimesh is uploaded to GPU; all index arithmetic
+    is done with CuPy.
 
     Parameters
     ----------
@@ -34,66 +42,48 @@ def _map_voxels_to_grid(
         Trimesh voxelization result.
     grid_shape : array-like (3,)
         Target grid dimensions ``(Nx, Ny, Nz)``.
-    origin : np.ndarray (3,)
-        World position of voxel ``(0, 0, 0)`` in the target grid.
+    origin : cp.ndarray (3,)
+        World position of voxel ``(0, 0, 0)``.
     resolution : float
         Voxel edge length.
 
     Returns
     -------
-    np.ndarray, dtype=bool, shape ``grid_shape``
+    cp.ndarray, dtype=bool, shape ``grid_shape``
     """
-    result = np.zeros(grid_shape, dtype=bool)
-    vox_matrix = vg.matrix
-    vox_world_origin = np.asarray(vg.transform[:3, 3])
-    vox_origin_ijk = np.floor(
+    result = cp.zeros(tuple(grid_shape), dtype=cp.bool_)
+    vox_matrix = cp.asarray(vg.matrix)
+    vox_world_origin = cp.asarray(vg.transform[:3, 3])
+    vox_origin_ijk = cp.floor(
         (vox_world_origin - origin) / resolution
-    ).astype(int)
-    dst_min = np.maximum(vox_origin_ijk, 0)
-    src_min = np.maximum(-vox_origin_ijk, 0)
-    dst_max = np.minimum(vox_origin_ijk + np.array(vox_matrix.shape), grid_shape)
+    ).astype(cp.int32)
+    grid_shape_gpu = cp.asarray(grid_shape)
+    vox_shape_gpu = cp.asarray(vox_matrix.shape)
+    dst_min = cp.maximum(vox_origin_ijk, 0)
+    src_min = cp.maximum(-vox_origin_ijk, 0)
+    dst_max = cp.minimum(vox_origin_ijk + vox_shape_gpu, grid_shape_gpu)
     src_max = src_min + (dst_max - dst_min)
-    result[
-        dst_min[0]:dst_max[0],
-        dst_min[1]:dst_max[1],
-        dst_min[2]:dst_max[2],
-    ] = vox_matrix[
-        src_min[0]:src_max[0],
-        src_min[1]:src_max[1],
-        src_min[2]:src_max[2],
-    ]
+    # Extract as Python ints for slice indexing
+    d0, d1, d2 = int(dst_min[0]), int(dst_min[1]), int(dst_min[2])
+    D0, D1, D2 = int(dst_max[0]), int(dst_max[1]), int(dst_max[2])
+    s0, s1, s2 = int(src_min[0]), int(src_min[1]), int(src_min[2])
+    S0, S1, S2 = int(src_max[0]), int(src_max[1]), int(src_max[2])
+    result[d0:D0, d1:D1, d2:D2] = vox_matrix[s0:S0, s1:S1, s2:S2]
     return result
 
 
 def voxelize_mesh(
     mesh: trimesh.Trimesh,
     grid_shape: np.ndarray,
-    origin: np.ndarray,
+    origin: cp.ndarray,
     resolution: float,
     fill_interior: bool = False,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Voxelize a trimesh mesh into raw occupancy grids.
-
-    Parameters
-    ----------
-    mesh : trimesh.Trimesh
-        The mesh to voxelize.
-    grid_shape : array-like (3,)
-        Target grid dimensions.
-    origin : np.ndarray (3,)
-        World position of voxel ``(0, 0, 0)``.
-    resolution : float
-        Voxel edge length (metres).
-    fill_interior : bool
-        If ``True``, the main grid uses the flood-filled voxelization.
-        ``filled_raw_grid`` is always the flood-filled version (for
-        two-EDT SDF computation).
+) -> Tuple[cp.ndarray, cp.ndarray]:
+    """Voxelize a trimesh mesh into GPU-resident occupancy grids.
 
     Returns
     -------
-    (raw_grid, filled_raw_grid) : tuple of np.ndarray, dtype=bool
-        ``raw_grid`` uses surface-only or filled depending on
-        ``fill_interior``.  ``filled_raw_grid`` is always flood-filled.
+    (raw_grid, filled_raw_grid) : tuple of cp.ndarray, dtype=bool
     """
     vg_surface = mesh.voxelized(pitch=resolution)
     vg_filled = vg_surface.fill()
@@ -122,13 +112,13 @@ def compute_grid_bounds(
     resolution: float,
     extra_free_points: Optional[np.ndarray] = None,
     extra_margin_voxels: int = 0,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[cp.ndarray, np.ndarray]:
     """Compute grid origin and shape from mesh bounds.
 
     Parameters
     ----------
     bounds_min, bounds_max : np.ndarray (3,)
-        AABB of the mesh.
+        AABB of the mesh (numpy — from trimesh).
     padding : float
         Extra space added around the bounding box.
     resolution : float
@@ -141,8 +131,8 @@ def compute_grid_bounds(
 
     Returns
     -------
-    (origin, grid_shape) : tuple of np.ndarray
-        ``origin`` is (3,) float, ``grid_shape`` is (3,) int.
+    (origin, grid_shape) : tuple
+        ``origin`` is CuPy (3,) float64, ``grid_shape`` is numpy (3,) int.
     """
     bmin = np.asarray(bounds_min, dtype=float) - padding
     bmax = np.asarray(bounds_max, dtype=float) + padding
@@ -159,7 +149,7 @@ def compute_grid_bounds(
             len(pts),
         )
 
-    origin = bmin.copy()
+    origin = cp.asarray(bmin.copy(), dtype=cp.float64)
     grid_shape = np.ceil((bmax - bmin) / resolution).astype(int)
     grid_shape = np.maximum(grid_shape, 1)
     logger.info(
@@ -202,7 +192,7 @@ def build_occupancy_grid(
 
     Returns
     -------
-    OccupancyGrid
+    OccupancyGrid (GPU-resident)
     """
     origin, grid_shape = compute_grid_bounds(
         mesh.bounds[0], mesh.bounds[1],

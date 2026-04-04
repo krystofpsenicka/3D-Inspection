@@ -52,7 +52,7 @@ if _VRP_ROOT not in sys.path:
 
 from VRP.core.occupancy_grid import build_occupancy_grid, OccupancyGrid, get_mesh_world_bounds
 from VRP.core.waypoint_loader import load_waypoints
-from VRP.core.distance_matrix import compute_distance_matrix, build_route_path_cache
+from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
 from VRP.core.types import VRPResult, ExecutionResult
 from VRP.mapf.route_executor import RouteExecutor
@@ -102,7 +102,6 @@ class RunMetrics:
     t_grid:              float = 0.0
     t_dist_matrix:       float = 0.0
     t_vrp_solve:         float = 0.0
-    t_path_cache:        float = 0.0
     t_trajectory:        float = 0.0
     t_total:             float = 0.0
 
@@ -125,29 +124,29 @@ def run_single(
 
     try:
         # ── Waypoints ─────────────────────────────────────────────
-        inspection_wps = np.array(
-            load_waypoints(
-                source="random",
-                n_random=n_waypoints,
-                og=og,
-                random_seed=seed,
-            ),
-            dtype=np.float32,
-        )  # (N, 7)
-        N = len(inspection_wps)
+        insp_positions, insp_rotmats = load_waypoints(
+            source="random",
+            n_random=n_waypoints,
+            og=og,
+            random_seed=seed,
+        )
+        N = len(insp_positions)
         K = fleet_size
 
         robot_start_xyzs = _compute_start_grid(K, mesh_bounds_min, mesh_bounds_max)
-        home_poses = np.array(
-            [[*xyz, 1.0, 0.0, 0.0, 0.0] for xyz in robot_start_xyzs],
+        home_positions = np.array(
+            [[float(xyz[0]), float(xyz[1]), float(xyz[2])] for xyz in robot_start_xyzs],
             dtype=np.float32,
         )
-        waypoints_world = np.vstack([home_poses, inspection_wps])
+        home_rotmats = np.tile(np.eye(3, dtype=np.float32), (K, 1, 1))
+
+        all_positions = np.vstack([home_positions, insp_positions])
+        all_rotmats = np.concatenate([home_rotmats, insp_rotmats])
         home_indices = list(range(K))
 
         # ── Distance matrix ───────────────────────────────────────
         t0 = time.perf_counter()
-        dist_matrix = compute_distance_matrix(og, waypoints_world[:, :3])
+        dist_matrix = compute_distance_matrix(og, all_positions)
         m.t_dist_matrix = time.perf_counter() - t0
 
         # ── VRP solve ─────────────────────────────────────────────
@@ -202,11 +201,6 @@ def run_single(
         m.max_wps_per_robot = int(max(wps_per_robot))
         m.min_wps_per_robot = int(min(wps_per_robot))
 
-        # ── Path cache (A* sub-waypoints) ─────────────────────────
-        t0 = time.perf_counter()
-        path_cache = build_route_path_cache(og, waypoints_world[:, :3], routes)
-        m.t_path_cache = time.perf_counter() - t0
-
         # ── Trajectory execution + collision avoidance ────────────
         t0 = time.perf_counter()
 
@@ -220,6 +214,10 @@ def run_single(
             s[0], s[1], s[2] = float(xyz[0]), float(xyz[1]), float(xyz[2])
             start_configs.append(np.array(s, dtype=np.float32))
 
+        import cupy as _cp
+        wp_positions_gpu = _cp.asarray(all_positions, dtype=_cp.float32)
+        wp_rotmats_gpu = _cp.asarray(all_rotmats, dtype=_cp.float32)
+
         executor = RouteExecutor(
             start_configs=start_configs,
             joint_names=j_names,
@@ -227,8 +225,9 @@ def run_single(
         )
         exec_result: ExecutionResult = executor.execute(
             routes=routes,
-            waypoints_world=waypoints_world,
-            path_cache=path_cache,
+            waypoint_positions=wp_positions_gpu,
+            waypoint_rotmats=wp_rotmats_gpu,
+            home_indices=set(home_indices),
         )
         m.t_trajectory = time.perf_counter() - t0
 
@@ -395,7 +394,7 @@ def plot_timing_breakdown(rows, fleet_sizes, waypoint_counts, out_dir):
     groups = _group(rows)
     mid_wps = waypoint_counts[len(waypoint_counts) // 2]
 
-    stages = ["t_dist_matrix", "t_vrp_solve", "t_path_cache", "t_trajectory"]
+    stages = ["t_dist_matrix", "t_vrp_solve", "t_trajectory"]
     labels = ["Distance matrix", "VRP solve", "Path cache (A*)", "Trajectory gen."]
     bar_colors = ["#2196F3", "#FF9800", "#4CAF50", "#9C27B0"]
 
