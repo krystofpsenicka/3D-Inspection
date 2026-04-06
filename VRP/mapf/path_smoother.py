@@ -4,8 +4,6 @@ OMPL ``PathSimplifier`` removes grid-aligned detours (shortcutting)
 and rounds corners (B-spline smoothing) while guaranteeing the result
 is collision-free with respect to the fine-resolution occupancy grid.
 
-OMPL is a hard requirement — if not installed, an ImportError is raised.
-
 References:
     Pan, J. & Manocha, D. (2012). GPU-Based Parallel Collision Detection
         for Fast Motion Planning. IJRR. — Future direction for GPU-native
@@ -20,13 +18,14 @@ import cupy as cp
 import numpy as np
 
 from ..core.constants import OMPL_SIMPLIFY_MAX_TIME
+from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
 
 def simplify_path_ompl(
-    path_xyz: np.ndarray | cp.ndarray,
-    occupancy_grid,
+    path_xyz: cp.ndarray,
+    occupancy_grid: OccupancyGrid,
     robot_radius: float = 0.35,
     max_time: float = OMPL_SIMPLIFY_MAX_TIME,
 ) -> cp.ndarray:
@@ -48,21 +47,14 @@ def simplify_path_ompl(
     Raises:
         ImportError: if OMPL is not installed.
     """
-    # Transfer to CPU if needed — OMPL requires NumPy
-    if isinstance(path_xyz, cp.ndarray):
-        path_xyz = cp.asnumpy(path_xyz)
+
+    path_xyz = cp.asnumpy(path_xyz, dtype=np.float64)
 
     if len(path_xyz) < 3:
         return cp.asarray(path_xyz.copy())
 
-    try:
-        import ompl.base as ob
-        import ompl.geometric as og_ompl
-    except ImportError:
-        raise ImportError(
-            "[path_smoother] OMPL is required for path smoothing but is not "
-            "installed. Install with: conda install -c conda-forge ompl"
-        )
+    import ompl.base as ob
+    import ompl.geometric as og_ompl
 
     class _Checker(ob.StateValidityChecker):
         def __init__(self, si):
@@ -105,30 +97,29 @@ def simplify_path_ompl(
 
 
 def arc_length_resample(
-    path_xyz: np.ndarray | cp.ndarray,
+    path_xyz: cp.ndarray,
     n_samples: int,
 ) -> cp.ndarray:
     """Resample a 3D path to n_samples points at uniform arc-length.
 
     Returns (n_samples, 3) CuPy array.
     """
-    path_g = cp.asarray(path_xyz, dtype=cp.float64)
-    if len(path_g) < 2 or n_samples < 1:
-        return cp.tile(path_g[0], (max(n_samples, 1), 1))
+    if len(path_xyz) < 2 or n_samples < 1:
+        return cp.tile(path_xyz[0], (max(n_samples, 1), 1))
 
-    diffs = cp.diff(path_g, axis=0)
+    diffs = cp.diff(path_xyz, axis=0)
     seg_lens = cp.linalg.norm(diffs, axis=1)
     cum_len = cp.concatenate([cp.array([0.0]), cp.cumsum(seg_lens)])
     total_len = float(cum_len[-1])
     if total_len < 1e-9:
-        return cp.tile(path_g[0], (n_samples, 1))
+        return cp.tile(path_xyz[0], (n_samples, 1))
 
     target_s = cp.linspace(0.0, total_len, n_samples)
 
     # CuPy interp is 1D — do per-axis
     cum_cpu = cp.asnumpy(cum_len)
     target_cpu = cp.asnumpy(target_s)
-    path_cpu = cp.asnumpy(path_g)
+    path_cpu = cp.asnumpy(path_xyz)
     result = np.column_stack([
         np.interp(target_cpu, cum_cpu, path_cpu[:, d]) for d in range(3)
     ])

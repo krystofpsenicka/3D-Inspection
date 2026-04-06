@@ -2,7 +2,7 @@
 
 Plans one robot through its full VRP route using GPU-accelerated
 Space-Time A* (see ``space_time_search.py``). For each leg the robot
-navigates directly between waypoints, with OMPL smoothing applied
+navigates between waypoints, with OMPL smoothing applied
 to the resulting coarse path.
 
 After all legs, the trajectory is committed to the reservation table
@@ -41,6 +41,7 @@ from .space_time_search import (
     world_to_coarse,
 )
 from .path_smoother import arc_length_resample, simplify_path_ompl
+from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 def _robot_xyz_from_waypoints(
     positions: cp.ndarray, rotmats: cp.ndarray, home_indices: set,
 ) -> cp.ndarray:
-    """Return robot body-centre XYZ for all waypoints (vectorized GPU).
+    """Return robot body-centre XYZ for all waypoints.
 
     Inspection waypoints encode the desired camera position and viewing
     direction. The robot body centre is offset backward so the camera
@@ -94,7 +95,7 @@ def plan_robot_route_st(
     home_indices: set,
     dwell_s: float = SPACE_TIME_DWELL_S,
     dt: float = SPACE_TIME_DT,
-    fine_occupancy_grid=None,
+    fine_occupancy_grid: OccupancyGrid = None,
     robot_radius: float = ROBOT_RADIUS,
 ) -> Tuple[cp.ndarray, cp.ndarray, list, PlanningStats]:
     """Plan one robot through its full VRP route using GPU Space-Time A*.
@@ -126,7 +127,7 @@ def plan_robot_route_st(
 
         leg_ijk = world_to_coarse(leg_xyz, coarse_origin, coarse_res)
 
-        # Deduplicate consecutive identical voxels
+        # Deduplicate consecutive identical voxels (e.g. short hops within same voxel)
         keep = cp.ones(len(leg_ijk), dtype=cp.bool_)
         keep[1:] = cp.any(leg_ijk[1:] != leg_ijk[:-1], axis=1)
         leg_ijk = leg_ijk[keep]
@@ -203,9 +204,8 @@ def plan_robot_route_st(
         final_world = coarse_to_world(planned_ijk, coarse_origin, coarse_res)
 
         if fine_occupancy_grid is not None and len(planned_ijk) >= 3:
-            planned_world = coarse_to_world(planned_ijk, coarse_origin, coarse_res)
             smoothed_world = simplify_path_ompl(
-                planned_world, fine_occupancy_grid, robot_radius,
+                final_world, fine_occupancy_grid, robot_radius,
                 max_time=OMPL_SIMPLIFY_MAX_TIME,
             )
 

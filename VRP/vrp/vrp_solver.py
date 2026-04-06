@@ -1,10 +1,10 @@
 """VRP solver entry point — combined-objective MIP.
 
-Provides ``solve_vrp()`` which builds a nearest-neighbour warm-start
+``solve_vrp()`` builds a nearest-neighbour warm-start
 and solves the VRP with a blended makespan/total-distance objective.
 
 Two MIP backends are available:
-- ``MIPMakespanGPU`` — cuOpt MILP solver (GPU via subprocess).
+- ``MIPMakespanGPU`` — cuOpt MILP solver (GPU).
 - ``MIPMakespanCPU`` — PuLP + CBC solver (CPU).
 """
 

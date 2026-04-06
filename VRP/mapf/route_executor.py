@@ -10,9 +10,9 @@ the replay time-step (``TRAJ_DT``) and converted to 8-DOF joint space.
 
 Pipeline
 --------
-1. Down-sample occupancy grid → coarse grid for Space-Time A*.
-2. Initialise a dense 4-D reservation table.
-3. Sort robots by estimated route cost (longest first = highest priority).
+1. Down-sample occupancy grid -> coarse grid for Space-Time A*.
+2. Initialize a dense 4-D reservation table.
+3. Sort robots by estimated route cost (longest first).
 4. For each robot (priority order):
    a.  Plan each route leg with Space-Time A*, building a coarse
        time-stamped XYZ path.
@@ -20,6 +20,76 @@ Pipeline
        avoid it.
    c.  Smooth-interpolate the coarse path at TRAJ_DT for replay.
 5. Run a final AABB safety check (should be clean; log any residual).
+
+References
+----------
+Silver, D. (2005). Cooperative Pathfinding. AIIDE.
+    Priority-based sequential planning framework: robots are planned
+    one at a time, each committing its trajectory to a reservation
+    table so that later robots avoid it.
+
+Erdmann, M. & Lozano-Perez, T. (1987). On Multiple Moving Objects.
+    Algorithmica, 2(1), 477–521.
+    Foundational work on planning in configuration-space × time;
+    the 4-D space-time grid with a reservation table derives from
+    this lineage.
+
+Zhou, Y. & Zeng, J. (2015). Massively Parallel A* Search on a GPU.
+    AAAI.
+    GPU-parallel frontier expansion via heuristic-guided threshold
+    selection (expanding nodes where f ≤ f_min + δ).
+
+Li, Z. et al. (2025). GPU-accelerated Conflict-based Search for
+    Multi-agent Embodied Intelligence. Machine Intelligence Research.
+    GPU-parallel frontier expansion for multi-agent pathfinding
+    (GATSA algorithm).
+
+Design note — why not Conflict-Based Search (CBS)?
+---------------------------------------------------
+CBS (Sharon et al., 2015) is an optimal MAPF solver: it searches a
+conflict tree where each node represents a set of inter-agent
+constraints, splitting on the first detected collision and re-planning
+only the affected agent.  This guarantees the shortest-makespan
+solution but at significant computational cost — CBS is exponential in
+the number of conflicts, and each conflict-tree node triggers a full
+single-agent A* re-plan.
+
+In this application the priority-based approach is preferred because:
+
+1. **Low robot density.**  A small fleet (typically 2–5 robots)
+   operates in a large 3-D volume (~80 K free voxels, i.e. ~16 K
+   voxels per robot at 5 agents).  Spatial conflicts are inherently
+   sparse, so the optimality gap between prioritised planning and
+   CBS is negligible in practice.
+
+2. **Priority-order search already covers the gap.**  The executor
+   tries multiple priority orderings (longest-first, shortest-first,
+   most-conflicted-first, plus random permutations) and keeps the
+   best makespan.  For 5 robots there are only 5! = 120 possible
+   orderings; the default budget of 20 trials samples ~17 % of
+   them, which is sufficient to find a near-optimal ordering.
+
+3. **The real bottleneck is VRP assignment, not conflict resolution.**
+   A suboptimal conflict resolution adds seconds of detour; a
+   suboptimal waypoint-to-vehicle assignment adds minutes of extra
+   travel.  Investing computation in CBS yields diminishing returns
+   when the upstream VRP solution dominates total cost.
+
+4. **CBS worst case is exponential.**  If robots frequently cross
+   paths (e.g. star-shaped routes through a central corridor) the
+   constraint tree can blow up.  The 4-D state space (x, y, z, t)
+   with 26-connected + wait already has a large branching factor;
+   CBS re-solves A* over this grid for every conflict-tree branch.
+   Priority-based planning degrades gracefully under the same
+   conditions.
+
+CBS would become worthwhile at 15–30+ robots or in highly constrained
+environments (narrow corridors, bottlenecks) where priority ordering
+causes significant cascading delays.  At the current scale — a small
+fleet in an open ship hull — the gain is not worth the complexity.
+
+Sharon, G. et al. (2015). Conflict-Based Search for Optimal
+    Multi-Agent Pathfinding. Artificial Intelligence, 219, 40–66.
 """
 
 from __future__ import annotations
@@ -44,6 +114,7 @@ from ..core.constants import (
 )
 from ..core.types import ExecutionResult
 from shared.grid_utils import downsample_occupancy_grid
+from shared.occupancy_grid import OccupancyGrid
 from .space_time_search import ReservationTable
 from .route_planner import plan_robot_route_st
 logger = logging.getLogger(__name__)
@@ -61,21 +132,18 @@ class RouteExecutor:
     joint_names:
         Ordered joint name list.
     og:
-        Occupancy grid (GPU-resident, used to build the coarse grid).
+        Occupancy grid.
     """
 
     def __init__(
         self,
         start_configs:  List[np.ndarray],
         joint_names:    List[str],
-        og=None,
+        og: OccupancyGrid | None = None,
     ):
         self.num_robots    = len(start_configs)
         self.start_configs = start_configs
-        self.joint_names   = joint_names
         self.og            = og
-
-    # ──────────────────────────────────────────────────────────────────
 
     def _plan_sequential(
         self,
@@ -159,12 +227,6 @@ class RouteExecutor:
         """
         n_robots = self.num_robots
 
-        # Build per-robot waypoint list for visualisation (CPU)
-        wp_pos_np = cp.asnumpy(waypoint_positions)
-        all_waypoints: List[List[List[float]]] = [
-            [wp_pos_np[wp_idx].tolist() for wp_idx in route]
-            for route in routes
-        ]
         initial_positions = [cfg[:3].copy() for cfg in self.start_configs]
 
         # ── 1. Coarse grid + reservation table ────────────────────────
@@ -185,7 +247,7 @@ class RouteExecutor:
         half_v = np.maximum(np.ceil(dims / (2.0 * coarse_res)).astype(np.intp), 1)
         half_v += SPLINE_SAFETY_VOXELS
 
-        logger.info("[executor] Coarse grid %s  T=%d  half_v=%s",
+        logger.info("[RouteExecutor] Coarse grid %s  T=%d  half_v=%s",
                     coarse_grid.shape, T_max, half_v)
 
         # ── 2. Priority ordering ──────────────────────────────────────
@@ -199,10 +261,10 @@ class RouteExecutor:
             route_costs.append(cost)
 
         default_order = sorted(range(n_robots), key=lambda i: -route_costs[i])
-        logger.info("[executor] Default priority (longest first): %s  costs=%s",
+        logger.info("[RouteExecutor] Default priority (longest first): %s  costs=%s",
                     default_order, [f"{route_costs[i]:.1f}" for i in default_order])
 
-        # ── 3. Try priority orderings, keep best makespan ─────────────
+        # ── 3. Try priority orderings, keep best ─────────────
         # Deterministic ordering 1: longest-first (default)
         best_result = self._plan_sequential(
             routes, waypoint_positions, waypoint_rotmats, home_indices,
@@ -213,13 +275,13 @@ class RouteExecutor:
         best_makespan = best_result[3]
         best_order = default_order
         best_stats = best_result[4]
-        logger.info("[executor] Default order (longest-first) makespan: %.1f s",
+        logger.info("[RouteExecutor] Default order (longest-first) makespan: %.1f s",
                     best_makespan)
 
         trials_used = 1
 
-        # Deterministic ordering 2: shortest-first (reverse)
-        if n_priority_trials >= 2:
+        # Deterministic ordering 2: shortest-first
+        if n_priority_trials > trials_used:
             reverse_order = list(reversed(default_order))
             trial_result = self._plan_sequential(
                 routes, waypoint_positions, waypoint_rotmats, home_indices,
@@ -228,7 +290,7 @@ class RouteExecutor:
                 dwell_s,
             )
             trial_makespan = trial_result[3]
-            logger.info("[executor] Shortest-first order makespan: %.1f s",
+            logger.info("[RouteExecutor] Shortest-first order makespan: %.1f s",
                         trial_makespan)
             if trial_makespan < best_makespan:
                 best_result = trial_result
@@ -238,7 +300,7 @@ class RouteExecutor:
             trials_used += 1
 
         # Deterministic ordering 3: conflict-count (most-conflicted first)
-        if n_priority_trials >= 3:
+        if n_priority_trials > trials_used:
             conflict_scores = [
                 s.wait_steps + s.astar_failures * 100
                 for s in best_stats
@@ -254,7 +316,33 @@ class RouteExecutor:
                     dwell_s,
                 )
                 trial_makespan = trial_result[3]
-                logger.info("[executor] Conflict-count order %s makespan: %.1f s",
+                logger.info("[RouteExecutor] Most conflicted order %s makespan: %.1f s",
+                            conflict_order, trial_makespan)
+                if trial_makespan < best_makespan:
+                    best_result = trial_result
+                    best_makespan = trial_makespan
+                    best_order = conflict_order
+                    best_stats = trial_result[4]
+            trials_used += 1
+
+        # Deterministic ordering 4: conflict-count (least-conflicted first)
+        if n_priority_trials > trials_used:
+            conflict_scores = [
+                s.wait_steps + s.astar_failures * 100
+                for s in best_stats
+            ]
+            conflict_order = sorted(
+                range(n_robots), key=lambda i: conflict_scores[i],
+            )
+            if conflict_order != default_order:
+                trial_result = self._plan_sequential(
+                    routes, waypoint_positions, waypoint_rotmats, home_indices,
+                    conflict_order, route_costs,
+                    coarse_grid, coarse_origin, coarse_res, T_max, half_v,
+                    dwell_s,
+                )
+                trial_makespan = trial_result[3]
+                logger.info("[RouteExecutor] Least conflicted order %s makespan: %.1f s",
                             conflict_order, trial_makespan)
                 if trial_makespan < best_makespan:
                     best_result = trial_result
@@ -273,7 +361,7 @@ class RouteExecutor:
                 dwell_s,
             )
             trial_makespan = trial_result[3]
-            logger.info("[executor] Trial %d order %s makespan: %.1f s",
+            logger.info("[RouteExecutor] Random trial %d order %s makespan: %.1f s",
                         trial + 1, random_order, trial_makespan)
             if trial_makespan < best_makespan:
                 best_result = trial_result
@@ -281,7 +369,7 @@ class RouteExecutor:
                 best_order = random_order
                 best_stats = trial_result[4]
 
-        logger.info("[executor] Best priority order: %s  makespan=%.1f s "
+        logger.info("[RouteExecutor] Best priority order: %s  makespan=%.1f s "
                     "(%d trials)", best_order, best_makespan, n_priority_trials)
 
         (robot_world_paths, robot_coarse_times, robot_wp_schedules,
@@ -297,7 +385,7 @@ class RouteExecutor:
                             float(c_t[-1]) * SPACE_TIME_DT)
 
         # ── 4. Smooth-interpolate to replay resolution ────────────────
-        # CPU boundary: np.interp, trajectory densification
+        # CPU: np.interp, trajectory densification
         rotmats_np = cp.asnumpy(waypoint_rotmats)
 
         all_traj_positions:  List[List[np.ndarray]] = [[] for _ in range(n_robots)]
@@ -311,21 +399,21 @@ class RouteExecutor:
 
             cfg   = self.start_configs[i].copy()  # 8-DOF
             wp_sched = robot_wp_schedules[i] or []
-            # Convert coarse time-step schedule → seconds
+            # Convert coarse time-step schedule -> seconds
             wp_sched_s = [
                 (int(ts) * SPACE_TIME_DT, int(te) * SPACE_TIME_DT, node)
                 for ts, te, node in wp_sched
             ]
 
             if w_xyz is None or len(w_xyz) == 0:
-                # Nothing planned – hold at home
+                # Nothing planned - hold at home
                 fail_counts[i] = len(routes[i]) - 1
                 for _ in range(50):
                     all_traj_positions[i].append(cfg.astype(np.float32).copy())
                     all_traj_velocities[i].append(np.zeros_like(cfg, dtype=np.float32))
                 continue
 
-            # Convert coarse time-steps → continuous seconds
+            # Convert coarse time-steps -> continuous seconds
             t_seconds = c_t.astype(np.float64) * SPACE_TIME_DT
             t0, tf = float(t_seconds[0]), float(t_seconds[-1])
             duration = tf - t0
@@ -378,7 +466,7 @@ class RouteExecutor:
                         og_collisions += 1
                 if og_collisions > 0:
                     logger.warning(
-                        "[executor] Robot %d: %d / %d trajectory steps "
+                        "[RouteExecutor] Robot %d: %d / %d trajectory steps "
                         "collide with fine OG.",
                         i, og_collisions, len(all_traj_positions[i]),
                     )
@@ -389,7 +477,7 @@ class RouteExecutor:
             n_steps = len(all_traj_positions[i])
             actual_per_vehicle.append(n_steps * TRAJ_DT)
         actual_makespan = max(actual_per_vehicle) if actual_per_vehicle else 0.0
-        logger.info("[executor] Actual makespan: %.1f s  per_vehicle: %s",
+        logger.info("[RouteExecutor] Actual makespan: %.1f s  per_vehicle: %s",
                     actual_makespan,
                     [f"{t:.1f}" for t in actual_per_vehicle])
 
@@ -398,7 +486,6 @@ class RouteExecutor:
             all_traj_velocities      = all_traj_velocities,
             all_waypoints            = all_waypoints,
             initial_positions        = initial_positions,
-            joint_names              = self.joint_names,
             fail_counts              = fail_counts,
             actual_makespan          = actual_makespan,
             actual_per_vehicle_times = actual_per_vehicle,

@@ -30,11 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def cugraph_distance_matrix_main():
-    """Entry point when this script is executed as a subprocess.
-
-    Reads JSON config from argv[1] with keys: grid_path, origin,
-    resolution, waypoints_flat, out_matrix_path.
-    """
+    """Entry point when this script is executed as a subprocess."""
     config_path = sys.argv[1]
     with open(config_path) as f:
         cfg = json.load(f)

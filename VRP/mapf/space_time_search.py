@@ -56,9 +56,6 @@ _WEIGHTS_27 = cp.array(
 class ReservationTable:
     """Dense 4D (T, Nx, Ny, Nz) reservation table on GPU.
 
-    Every lookup and commit is a CuPy array operation — no Python dict
-    or set overhead.
-
     Following Silver (2005), the reservation table records which
     space-time cells are occupied by previously planned robots, allowing
     subsequent robots to avoid collisions by construction.
@@ -188,27 +185,23 @@ def space_time_astar_gpu(
 
     Uses heuristic-guided parallel frontier expansion (Zhou & Zeng, 2015):
     each iteration expands ALL frontier cells whose f-value is within
-    ``f_threshold_delta`` of the current minimum, enabling massive GPU
+    ``f_threshold_delta`` of the current minimum, enabling GPU
     parallelism while preserving the A* heuristic's search efficiency.
-
-    This approach avoids the sequential priority-queue bottleneck of CPU A*
-    (which expands one node at a time) by processing thousands of
-    near-optimal frontier nodes in parallel each iteration.
 
     Args:
         grid: (Nx, Ny, Nz) bool CuPy array (True = obstacle).
         start_ijk: (3,) start voxel indices.
         goal_ijk: (3,) goal voxel indices.
         t_start: starting time step.
-        reservation: GPU-resident ReservationTable.
+        reservation: ReservationTable.
         resolution: coarse grid resolution in metres.
-        time_step_cost: small cost per time step to prefer shorter plans.
+        time_step_cost: cost per time step.
         max_time_steps: planning horizon (0 = use reservation.T).
         max_iterations: maximum wavefront iterations.
         f_threshold_delta: controls parallelism vs optimality tradeoff.
             Smaller = more A*-like (fewer cells expanded, more iterations).
             Larger = more Dijkstra-like (more cells per iteration, fewer
-            iterations). 2.0 works well for coarse grids.
+            iterations).
 
     Returns:
         (path_ijk, path_t) as CuPy arrays, or None on failure.
@@ -252,8 +245,8 @@ def space_time_astar_gpu(
     frontier = cp.zeros((T_max, Nx, Ny, Nz), dtype=cp.bool_)
     frontier[t_start, sx, sy, sz] = True
 
-    offsets_27 = _OFFSETS_27  # (27, 3) int32
-    weights_27 = _WEIGHTS_27  # (27,) float32
+    offsets_27 = _OFFSETS_27
+    weights_27 = _WEIGHTS_27
 
     for iteration in range(max_iterations):
         # Check if goal reached

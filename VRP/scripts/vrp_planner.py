@@ -29,8 +29,6 @@ from ..core.constants import (
     RAPIDS_PYTHON,
     ROBOT_RADIUS,
     VRP_ALPHA,
-    VRP_FEEDBACK_ITERATIONS,
-    VRP_FEEDBACK_THRESHOLD,
 )
 from ..core.types import ExecutionResult, PipelineConfig, VRPResult
 from ..core.distance_matrix import compute_distance_matrix

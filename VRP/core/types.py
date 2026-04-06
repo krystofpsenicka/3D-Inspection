@@ -1,8 +1,4 @@
-"""VRP core data types.
-
-Centralizes all dataclasses used across the VRP module, following the
-pattern established in ``visibility/core/types.py``.
-"""
+"""VRP core data types."""
 
 from __future__ import annotations
 
@@ -16,8 +12,7 @@ import cupy as cp
 class VRPResult:
     """Solution returned by any VRP solver backend.
 
-    Routes exclude depot indices. All non-depot nodes appear exactly once
-    across all routes.
+    Routes exclude depot indices.
     """
     routes: list[list[int]]
     total_cost: float
@@ -34,7 +29,7 @@ class PlanningStats:
     """Per-robot metrics from Space-Time A* planning.
 
     Used by the priority ordering heuristic to identify robots that
-    suffer most from conflicts and should be planned earlier.
+    have the most conflicts and should be planned earlier.
     """
     wait_steps: int = 0
     detour_ratio: float = 0.0
@@ -44,20 +39,14 @@ class PlanningStats:
 
 @dataclass
 class ExecutionResult:
-    """Full trajectory output for every robot after route execution.
-
-    Array fields may be CuPy (GPU-resident) or NumPy. Call ``.get()``
-    on CuPy arrays when CPU data is needed (e.g. for visualization or
-    serialization).
-    """
+    """Full trajectory output for every robot after route execution."""
     all_traj_positions: list[list[np.ndarray | cp.ndarray]]
     all_traj_velocities: list[list[np.ndarray | cp.ndarray]]
     all_waypoints: list[list[list[float]]]
     initial_positions: list[np.ndarray]
-    joint_names: list[str]
     fail_counts: list[int]
     actual_makespan: float = 0.0
-    actual_per_vehicle_times: list[float] = None  # type: ignore[assignment]
+    actual_per_vehicle_times: list[float] = None
 
     def __post_init__(self):
         if self.actual_per_vehicle_times is None:

@@ -1,8 +1,7 @@
 """Collision-free distance matrix computation via cuGraph.
 
 Computes the N x N pairwise shortest-path distance matrix between
-waypoints on the inflated occupancy grid using NVIDIA cuGraph's
-all-pairs Dijkstra algorithm running on GPU.
+waypoints on the inflated occupancy grid.
 
 References:
     Davidson, A., Baxter, S., Garland, M. & Owens, J.D. (2014).

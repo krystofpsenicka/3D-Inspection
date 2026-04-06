@@ -1,8 +1,4 @@
-"""VRP constants — all tuneable parameters in one place.
-
-Organized by subsystem following the pattern in
-``visibility/core/constants.py``.
-"""
+"""VRP constants"""
 
 import math
 import os
@@ -22,16 +18,14 @@ MESH_TARGET_LENGTH = 50.0
 # ── Occupancy grid ───────────────────────────────────────────────────────────
 
 VOXEL_RESOLUTION = 0.10        # metres per voxel edge
-ROBOT_RADIUS = 0.35            # collision sphere radius (brov.yml)
+ROBOT_RADIUS = 0.35            # collision sphere radius
 INFLATION_VOXELS = int(ROBOT_RADIUS / VOXEL_RESOLUTION) + 1
 
 # ── Robot physical constants ─────────────────────────────────────────────────
 
 BROV_CUBOID_DIMS = [0.7, 0.5, 0.35]
-STATIC_OBSTACLES = {}
 
 # ── RAPIDS / cuGraph subprocess ──────────────────────────────────────────────
-
 
 def _find_rapids_python() -> str:
     """Search common conda/mamba prefixes for a rapids_solver environment."""
@@ -69,9 +63,8 @@ TRAJ_DT = 0.02
 ST_ASTAR_MAX_EXPANSIONS = 500_000
 OMPL_SIMPLIFY_MAX_TIME = 0.5
 SPACE_TIME_HOP_DISTANCE = 2.0
-SNAP_TO_FREE_MAX_RADIUS = 10
 
-# ── Camera geometry (from URDF kinematic chain) ──────────────────────────────
+# ── Camera offset ────────────────────────────────────────────────────────────
 
 CAMERA_OFFSET_FORWARD = 0.30
 CAMERA_OFFSET_UP = 0.05
@@ -86,11 +79,6 @@ AUV_MAX_ACCEL = 1.5
 VRP_ALPHA = 1.0
 MIP_TIME_LIMIT = 120
 MIP_GAP = 0.05
-
-# ── VRP ↔ path-planning feedback loop ───────────────────────────────────────
-
-VRP_FEEDBACK_ITERATIONS = 3
-VRP_FEEDBACK_THRESHOLD = 0.20
 
 # ── GPU search (parallel A*) ────────────────────────────────────────────────
 
