@@ -30,7 +30,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from VRP.core.types import PipelineConfig
+from VRP.core.types import PipelineConfig, VRPBackend
 from VRP.scripts.vrp_planner import VRPPipeline
 
 
@@ -64,9 +64,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha", type=float, default=1.0,
                    help="Objective blending: 1.0=pure makespan, 0.0=pure "
                         "total distance, 0.5=balanced trade-off.")
-    p.add_argument("--solver", choices=["cuopt", "ortools"],
-                   default="ortools",
-                   help="MIP backend: 'cuopt' (GPU) or 'ortools' (CPU).")
+    p.add_argument("--solver", choices=["cuopt", "highs"],
+                   default="highs",
+                   help="MIP backend: 'cuopt' (GPU) or 'highs' (CPU).")
     p.add_argument("--gpu_timeout", type=int, default=300,
                    help="cuOpt subprocess timeout (seconds).")
     p.add_argument("--rapids_python", type=str, default="",
@@ -113,7 +113,7 @@ def main():
 
     cfg = PipelineConfig(
         num_robots          = args.num_robots,
-        solver_backend      = args.solver,
+        solver_backend      = VRPBackend(args.solver),
         alpha               = args.alpha,
         rapids_python       = args.rapids_python or DEFAULT_RAPIDS_PYTHON,
         gpu_timeout         = args.gpu_timeout,

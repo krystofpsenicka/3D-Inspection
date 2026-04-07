@@ -4,6 +4,10 @@ Runs inside the ``rapids_solver`` conda environment. Reads a JSON config
 from argv[1], builds a cuGraph graph from the occupancy grid's free voxels,
 runs all-pairs Dijkstra, and writes the resulting N x N distance matrix.
 
+Graph construction is GPU-vectorized via CuPy: for each of the 26
+neighbor offsets, all free voxels are shifted in parallel and valid edges
+collected without Python-level loops over voxels.
+
 References:
     Davidson, A. et al. (2014). Work-Efficient Parallel GPU Methods for
         Single-Source Shortest Paths. IPDPS.
@@ -43,84 +47,98 @@ def cugraph_distance_matrix_main():
     waypoints = wp_flat.reshape(N, 3)
     out_path = cfg["out_matrix_path"]
 
+    Nx, Ny, Nz = grid.shape
     logger.info("[cuGraph] Grid shape: %s, %s waypoints", grid.shape, N)
 
     import cudf
     import cugraph
     import cupy as cp
 
-    free_mask = ~grid
-    Nx, Ny, Nz = grid.shape
-
-    free_ijk = np.argwhere(free_mask)
-    free_flat = np.ravel_multi_index(
-        (free_ijk[:, 0], free_ijk[:, 1], free_ijk[:, 2]), grid.shape
-    )
-
-    flat_to_node = {int(f): i for i, f in enumerate(free_flat)}
-    F = len(free_flat)
+    # ── GPU-vectorized graph construction ──────────────────────────────
+    grid_gpu = cp.asarray(grid)
+    free_ijk_gpu = cp.argwhere(~grid_gpu)  # (F, 3) int64
+    F = len(free_ijk_gpu)
     logger.info("[cuGraph] Free voxels: %s", F)
 
-    offsets = np.array(_OFFSETS_26, dtype=np.int32)
-    weights_arr = np.array(_WEIGHTS_26, dtype=np.float32) * float(resolution)
+    # Flat-index -> node-ID lookup table (GPU)
+    free_flat_gpu = (
+        free_ijk_gpu[:, 0].astype(cp.int64) * (Ny * Nz)
+        + free_ijk_gpu[:, 1].astype(cp.int64) * Nz
+        + free_ijk_gpu[:, 2].astype(cp.int64)
+    )
+    flat_lookup = cp.full(Nx * Ny * Nz, -1, dtype=cp.int32)
+    flat_lookup[free_flat_gpu] = cp.arange(F, dtype=cp.int32)
 
-    src_list, dst_list, wt_list = [], [], []
-    BATCH = 50_000
-    for start in range(0, len(free_ijk), BATCH):
-        batch_ijk = free_ijk[start: start + BATCH]
-        for (di, dj, dk), w in zip(offsets, weights_arr):
-            nbr_ijk = batch_ijk + np.array([di, dj, dk])
-            valid = (
-                (nbr_ijk[:, 0] >= 0) & (nbr_ijk[:, 0] < Nx) &
-                (nbr_ijk[:, 1] >= 0) & (nbr_ijk[:, 1] < Ny) &
-                (nbr_ijk[:, 2] >= 0) & (nbr_ijk[:, 2] < Nz)
-            )
-            nbr_ijk = nbr_ijk[valid]
-            src_ijk = batch_ijk[valid]
-            free_nbr = ~grid[nbr_ijk[:, 0], nbr_ijk[:, 1], nbr_ijk[:, 2]]
-            nbr_ijk = nbr_ijk[free_nbr]
-            src_ijk = src_ijk[free_nbr]
-            if len(src_ijk) == 0:
-                continue
-            src_flat = np.ravel_multi_index(
-                (src_ijk[:, 0], src_ijk[:, 1], src_ijk[:, 2]), grid.shape
-            )
-            dst_flat = np.ravel_multi_index(
-                (nbr_ijk[:, 0], nbr_ijk[:, 1], nbr_ijk[:, 2]), grid.shape
-            )
-            src_nodes = np.array([flat_to_node.get(int(s), -1) for s in src_flat])
-            dst_nodes = np.array([flat_to_node.get(int(d), -1) for d in dst_flat])
-            mask = (src_nodes >= 0) & (dst_nodes >= 0)
-            src_list.append(src_nodes[mask])
-            dst_list.append(dst_nodes[mask])
-            wt_list.append(np.full(mask.sum(), w, dtype=np.float32))
+    offsets_gpu = cp.array(_OFFSETS_26, dtype=cp.int32)  # (26, 3)
+    weights_gpu = cp.array(_WEIGHTS_26, dtype=cp.float32) * float(resolution)
 
-    src_arr = np.concatenate(src_list).astype(np.int32)
-    dst_arr = np.concatenate(dst_list).astype(np.int32)
-    wt_arr = np.concatenate(wt_list).astype(np.float32)
+    src_all, dst_all, wt_all = [], [], []
+    for oi in range(26):
+        nbr = free_ijk_gpu + offsets_gpu[oi]  # (F, 3) broadcast
+        valid = (
+            (nbr[:, 0] >= 0) & (nbr[:, 0] < Nx) &
+            (nbr[:, 1] >= 0) & (nbr[:, 1] < Ny) &
+            (nbr[:, 2] >= 0) & (nbr[:, 2] < Nz)
+        )
+        nbr_v = nbr[valid]
+        # Check neighbors are free
+        free_nbr = ~grid_gpu[nbr_v[:, 0], nbr_v[:, 1], nbr_v[:, 2]]
+        nbr_v = nbr_v[free_nbr]
+        src_v = free_ijk_gpu[valid][free_nbr]
+        if len(src_v) == 0:
+            continue
+        src_flat = (
+            src_v[:, 0].astype(cp.int64) * (Ny * Nz)
+            + src_v[:, 1].astype(cp.int64) * Nz
+            + src_v[:, 2].astype(cp.int64)
+        )
+        dst_flat = (
+            nbr_v[:, 0].astype(cp.int64) * (Ny * Nz)
+            + nbr_v[:, 1].astype(cp.int64) * Nz
+            + nbr_v[:, 2].astype(cp.int64)
+        )
+        src_nodes = flat_lookup[src_flat]
+        dst_nodes = flat_lookup[dst_flat]
+        edge_mask = (src_nodes >= 0) & (dst_nodes >= 0)
+        src_all.append(src_nodes[edge_mask])
+        dst_all.append(dst_nodes[edge_mask])
+        wt_all.append(cp.full(int(edge_mask.sum()), weights_gpu[oi], dtype=cp.float32))
 
-    gdf = cudf.DataFrame({"src": src_arr, "dst": dst_arr, "weight": wt_arr})
+    src_arr = cp.concatenate(src_all)
+    dst_arr = cp.concatenate(dst_all)
+    wt_arr = cp.concatenate(wt_all)
+
+    # Build cuDF DataFrame directly from CuPy arrays
+    gdf = cudf.DataFrame({
+        "src": cudf.core.column.as_column(src_arr),
+        "dst": cudf.core.column.as_column(dst_arr),
+        "weight": cudf.core.column.as_column(wt_arr),
+    })
     G = cugraph.Graph()
     G.from_cudf_edgelist(gdf, source="src", destination="dst", edge_attr="weight")
     logger.info("[cuGraph] Graph: %s nodes, %s edges",
                 G.number_of_nodes(), G.number_of_edges())
 
-    wp_ijk = np.floor((waypoints - origin) / resolution).astype(int)
-    wp_flat_ids = np.ravel_multi_index(
-        (wp_ijk[:, 0], wp_ijk[:, 1], wp_ijk[:, 2]), grid.shape
+    # ── Waypoint node IDs (vectorized) ────────────────────────────────
+    wp_gpu = cp.asarray(waypoints)
+    origin_gpu = cp.asarray(origin)
+    wp_ijk_gpu = cp.floor((wp_gpu - origin_gpu) / resolution).astype(cp.int64)
+    wp_flat_gpu = (
+        wp_ijk_gpu[:, 0] * (Ny * Nz)
+        + wp_ijk_gpu[:, 1] * Nz
+        + wp_ijk_gpu[:, 2]
     )
-    wp_node_ids = np.array([flat_to_node.get(int(f), 0) for f in wp_flat_ids])
+    wp_node_ids_gpu = flat_lookup[wp_flat_gpu]  # (N,) int32, GPU
 
+    # ── SSSP for each waypoint, extract via direct array indexing ─────
     matrix = np.zeros((N, N), dtype=np.float32)
-    for i, src_node in enumerate(wp_node_ids):
-        df = cugraph.shortest_path(G, src_node)
-        df = df.to_pandas().set_index("vertex")
-        for j, dst_node in enumerate(wp_node_ids):
-            if i == j:
-                continue
-            dist = df.at[int(dst_node), "distance"] if int(dst_node) in df.index else np.inf
-            matrix[i, j] = float(dist)
-        logger.info("[cuGraph] Dijkstra %s/%s done", i + 1, N)
+    for i in range(N):
+        df = cugraph.shortest_path(G, int(wp_node_ids_gpu[i]))
+        dists = df.sort_values("vertex")["distance"].values  # (F,) cupy
+        matrix[i, :] = cp.asnumpy(dists[wp_node_ids_gpu])
+        matrix[i, i] = 0.0
+        if (i + 1) % max(1, N // 5) == 0 or i == N - 1:
+            logger.info("[cuGraph] Dijkstra %s/%s done", i + 1, N)
 
     np.save(out_path, matrix)
     logger.info("[cuGraph] Matrix saved to %s", out_path)

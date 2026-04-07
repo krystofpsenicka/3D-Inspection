@@ -62,7 +62,6 @@ class TestExecutionResultSerialization:
             all_traj_velocities=velocities,
             all_waypoints=[[[1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0]], [[4.0, 5.0, 6.0, 1.0, 0.0, 0.0, 0.0]]],
             initial_positions=[np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0])],
-            joint_names=["x", "y", "z", "yaw", "pitch", "roll", "cam_yaw", "cam_pitch"],
             fail_counts=[0, 1],
         )
 
@@ -75,7 +74,6 @@ class TestExecutionResultSerialization:
         assert len(loaded.all_traj_positions) == 2
         assert len(loaded.all_traj_positions[0]) == 10
         assert len(loaded.all_traj_positions[1]) == 7
-        assert loaded.joint_names == orig.joint_names
         assert loaded.fail_counts == orig.fail_counts
         assert loaded.all_waypoints == orig.all_waypoints
 
@@ -94,7 +92,6 @@ class TestExecutionResultSerialization:
             all_traj_velocities=[[], [np.zeros(8, dtype=np.float32)]],
             all_waypoints=[[], [[0, 0, 0, 1, 0, 0, 0]]],
             initial_positions=[np.zeros(3), np.ones(3)],
-            joint_names=["a"],
             fail_counts=[0, 0],
         )
         path = str(tmp_path / "exec_empty.pkl")

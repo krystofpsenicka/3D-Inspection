@@ -2,32 +2,21 @@
 
 from __future__ import annotations
 
-from typing import List, Union
-
+import cupy as cp
 import numpy as np
-
-
-def normalise_depot(
-    depot: int | list[int], num_vehicles: int
-) -> list[int]:
-    """Return a per-vehicle depot list regardless of input type."""
-    if isinstance(depot, (list, tuple)):
-        return [int(d) for d in depot]
-    return [int(depot)] * num_vehicles
 
 
 def compute_route_cost(
     routes: list[list[int]],
     dist_matrix: np.ndarray,
-    depot: int | list[int] = 0,
+    depot: list[int],
 ) -> float:
     """Sum travel distances for all vehicles (including return to depot)."""
-    depots = normalise_depot(depot, len(routes))
     total = 0.0
     for v, route in enumerate(routes):
         if not route:
             continue
-        d = depots[v]
+        d = depot[v]
         full = [d] + list(route) + [d]
         for a, b in zip(full[:-1], full[1:]):
             total += float(dist_matrix[a, b])
@@ -37,15 +26,14 @@ def compute_route_cost(
 def per_vehicle_costs(
     routes: list[list[int]],
     dist_matrix: np.ndarray,
-    depot: int | list[int] = 0,
+    depot: list[int],
 ) -> list[float]:
     """Return per-vehicle travel distances."""
-    depots = normalise_depot(depot, len(routes))
     costs: list[float] = []
     for v, route in enumerate(routes):
         c = 0.0
         if route:
-            d = depots[v]
+            d = depot[v]
             full = [d] + list(route) + [d]
             for a, b in zip(full[:-1], full[1:]):
                 c += float(dist_matrix[a, b])
@@ -54,23 +42,32 @@ def per_vehicle_costs(
 
 
 def nearest_neighbor_warmstart(
-    dist_matrix: np.ndarray,
+    dist_matrix: cp.ndarray,
     num_vehicles: int,
-    depot: int | list[int],
+    depot: list[int],
 ) -> list[list[int]]:
-    """Greedy nearest-neighbour heuristic for MIP warm-start. O(N^2)."""
-    depots = normalise_depot(depot, num_vehicles)
-    depot_set = set(depots)
-    customers = [i for i in range(dist_matrix.shape[0]) if i not in depot_set]
-    unvisited = set(customers)
-    routes: list[list[int]] = [[] for _ in range(num_vehicles)]
+    """Greedy nearest-neighbour heuristic for MIP warm-start."""
+    N = dist_matrix.shape[0]
+    depot_set = set(depot)
 
-    while unvisited:
+    visited = cp.zeros(N, dtype=cp.bool_)
+    for d in depot_set:
+        visited[d] = True
+
+    routes: list[list[int]] = [[] for _ in range(num_vehicles)]
+    current_pos = cp.array(depot, dtype=cp.int32)
+
+    remaining = N - len(depot_set)
+    while remaining > 0:
         for v in range(num_vehicles):
-            if not unvisited:
+            if remaining == 0:
                 break
-            last = routes[v][-1] if routes[v] else depots[v]
-            nearest = min(unvisited, key=lambda j: dist_matrix[last, j])
+            dists_from_current = dist_matrix[int(current_pos[v])]
+            masked = cp.where(visited, cp.inf, dists_from_current)
+            nearest = int(cp.argmin(masked))
             routes[v].append(nearest)
-            unvisited.remove(nearest)
+            visited[nearest] = True
+            current_pos[v] = nearest
+            remaining -= 1
+
     return routes

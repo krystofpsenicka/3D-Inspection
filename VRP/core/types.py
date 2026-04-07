@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
+from enum import Enum
 
-import cupy as cp
+
+class VRPBackend(Enum):
+    """MIP solver backend for VRP."""
+    HIGHS = "highs"
+    CUOPT = "cuopt"
 
 
 @dataclass
@@ -40,8 +45,8 @@ class PlanningStats:
 @dataclass
 class ExecutionResult:
     """Full trajectory output for every robot after route execution."""
-    all_traj_positions: list[list[np.ndarray | cp.ndarray]]
-    all_traj_velocities: list[list[np.ndarray | cp.ndarray]]
+    all_traj_positions: list[list[np.ndarray]]
+    all_traj_velocities: list[list[np.ndarray]]
     all_waypoints: list[list[list[float]]]
     initial_positions: list[np.ndarray]
     fail_counts: list[int]
@@ -57,7 +62,7 @@ class ExecutionResult:
 class PipelineConfig:
     """All user-facing settings for one VRP planning run."""
     num_robots: int = 2
-    solver_backend: str = "ortools"
+    solver_backend: VRPBackend = VRPBackend.HIGHS
     alpha: float = 1.0
     rapids_python: str = ""
     gpu_timeout: int = 300

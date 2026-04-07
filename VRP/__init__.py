@@ -1,7 +1,7 @@
 """VRP Planner package."""
 
 # Types
-from VRP.core.types import VRPResult, ExecutionResult, PlanningStats, PipelineConfig
+from VRP.core.types import VRPBackend, VRPResult, ExecutionResult, PlanningStats, PipelineConfig
 
 # Configuration
 from VRP.core.constants import (
@@ -9,11 +9,10 @@ from VRP.core.constants import (
     ROBOT_RADIUS,
     INFLATION_VOXELS,
     BROV_CUBOID_DIMS,
-    STATIC_OBSTACLES,
 )
 
 # Core
-from VRP.core.occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
+from shared.occupancy_grid import OccupancyGrid
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.core.waypoint_loader import load_waypoints, load_viewpoints_gpu
 
@@ -28,12 +27,12 @@ from VRP.core.serialization import save_solution, load_solution
 
 __all__ = [
     # Types
-    "VRPResult", "ExecutionResult", "PlanningStats", "PipelineConfig",
+    "VRPBackend", "VRPResult", "ExecutionResult", "PlanningStats", "PipelineConfig",
     # Configuration
     "VOXEL_RESOLUTION", "ROBOT_RADIUS", "INFLATION_VOXELS",
-    "BROV_CUBOID_DIMS", "STATIC_OBSTACLES",
+    "BROV_CUBOID_DIMS",
     # Core
-    "OccupancyGrid", "build_occupancy_grid", "get_mesh_world_bounds",
+    "OccupancyGrid",
     "compute_distance_matrix",
     "load_waypoints", "load_viewpoints_gpu",
     # Solver

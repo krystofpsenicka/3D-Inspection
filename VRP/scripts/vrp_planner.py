@@ -19,20 +19,28 @@ import logging
 import os
 from typing import List, Optional
 
+import cupy as cp
 import numpy as np
 
 from ..core.constants import (
     ASSETS_PATH,
     CONFIGS_PATH,
+    INFLATION_VOXELS,
+    MESH_PATH,
+    MESH_POSE,
+    MESH_TARGET_LENGTH,
     MIP_GAP,
     MIP_TIME_LIMIT,
     RAPIDS_PYTHON,
     ROBOT_RADIUS,
+    VOXEL_RESOLUTION,
     VRP_ALPHA,
 )
 from ..core.types import ExecutionResult, PipelineConfig, VRPResult
 from ..core.distance_matrix import compute_distance_matrix
-from ..core.occupancy_grid import OccupancyGrid, build_occupancy_grid, get_mesh_world_bounds
+from shared.occupancy_grid import OccupancyGrid
+from shared.mesh_loader import load_and_transform_mesh
+from shared.grid_builder_utils import build_occupancy_grid as _shared_build_occupancy_grid
 from ..mapf.route_executor import RouteExecutor
 from ..core.robot_config import load_local_robot_config
 from ..vrp.vrp_solver import solve_vrp
@@ -133,7 +141,9 @@ class VRPPipeline:
 
         # Probe mesh bounds (fast — no voxelisation) so depot Z is stable.
         logger.info("      Probing mesh bounds for depot placement …")
-        mesh_bounds_min, mesh_bounds_max = get_mesh_world_bounds()
+        mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
+        mesh_bounds_min = np.asarray(mesh.bounds[0], dtype=float)
+        mesh_bounds_max = np.asarray(mesh.bounds[1], dtype=float)
         logger.info("      Mesh world bounds: min=%s  max=%s",
                     mesh_bounds_min.round(2), mesh_bounds_max.round(2))
 
@@ -144,8 +154,16 @@ class VRPPipeline:
             logger.info("      Robot %d home XYZ: %s", i, p)
 
         # Build grid sized to cover both the mesh and all depot positions.
-        og: OccupancyGrid = build_occupancy_grid(
-            extra_free_points=np.array(robot_start_xyzs, dtype=np.float32),
+        extra_free = np.array(robot_start_xyzs, dtype=np.float32)
+        extra_margin = max(3, int(np.ceil(ROBOT_RADIUS / VOXEL_RESOLUTION)))
+        og: OccupancyGrid = _shared_build_occupancy_grid(
+            mesh=mesh,
+            padding=1.0,
+            inflation_voxels=INFLATION_VOXELS,
+            resolution=VOXEL_RESOLUTION,
+            fill_interior=True,
+            extra_free_points=extra_free,
+            extra_margin_voxels=extra_margin,
         )
         logger.info("      Grid shape: %s  resolution: %.2fm",
                     og.grid.shape, og.resolution)
@@ -189,7 +207,7 @@ class VRPPipeline:
         logger.info("[3/5] Computing %dx%d distance matrix (cuGraph) …", M, M)
         dist_matrix = compute_distance_matrix(og, all_positions)
         logger.info("      Distance matrix computed.  max_dist=%.2fm",
-                    float(np.max(dist_matrix[np.isfinite(dist_matrix)])))
+                    float(cp.max(dist_matrix[cp.isfinite(dist_matrix)])))
 
         # ── Build start configs (shared across feedback iterations) ────
         start_configs: List[np.ndarray] = []

@@ -30,7 +30,6 @@ def save_solution(result: "ExecutionResult", path: str) -> None:  # noqa: F821
 
     meta = {
         "all_waypoints": result.all_waypoints,
-        "joint_names": result.joint_names,
         "fail_counts": result.fail_counts,
     }
     with open(base + ".json", "w") as f:
@@ -67,6 +66,5 @@ def load_solution(path: str) -> "ExecutionResult":  # noqa: F821
         all_traj_velocities=unpack_ragged("all_traj_velocities"),
         all_waypoints=meta["all_waypoints"],
         initial_positions=list(data["initial_positions"]),
-        joint_names=meta["joint_names"],
         fail_counts=meta["fail_counts"],
     )

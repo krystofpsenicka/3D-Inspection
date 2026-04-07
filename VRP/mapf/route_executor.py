@@ -138,7 +138,6 @@ class RouteExecutor:
     def __init__(
         self,
         start_configs:  List[np.ndarray],
-        joint_names:    List[str],
         og: OccupancyGrid | None = None,
     ):
         self.num_robots    = len(start_configs)
@@ -455,7 +454,14 @@ class RouteExecutor:
                 all_traj_positions[i].append(sp.astype(np.float32))
                 all_traj_velocities[i].append(sv.astype(np.float32))
 
-        # ── 5. Safety checks ────────────────────────────────────────────
+        # ── 5. Build per-robot waypoint list ──────────────────────────────
+        wp_pos_np = cp.asnumpy(waypoint_positions)
+        all_waypoints = [
+            [wp_pos_np[node].tolist() for node in route]
+            for route in routes
+        ]
+
+        # ── 6. Safety checks ────────────────────────────────────────────
         # Fine OG obstacle check on smoothed trajectories
         if self.og is not None:
             for i in range(n_robots):

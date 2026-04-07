@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from ._helpers import normalise_depot as _normalise_depot, per_vehicle_costs as _per_vehicle_costs
+from ._helpers import per_vehicle_costs as _per_vehicle_costs
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 def build_makespan_mip(
     dist_matrix: np.ndarray,
     num_vehicles: int,
-    depot: Union[int, List[int]],
+    depot: list[int],
     capacity: int,
     alpha: float = 1.0,
     warm_start_routes: Optional[List[List[int]]] = None,
@@ -78,7 +78,7 @@ def build_makespan_mip(
         )
 
     n = dist_matrix.shape[0]
-    depots = _normalise_depot(depot, num_vehicles)
+    depots = depot
     depot_set = set(depots)
     customers = [i for i in range(n) if i not in depot_set]
     n_c = len(customers)
@@ -312,14 +312,13 @@ def _build_warm_start(
     return vals
 
 
-# ─── CPU backend: OR-Tools pywraplp ──────────────────────────────────────────
+# ─── CPU backend: HiGHS ──────────────────────────────────────────────────────
 
 class MIPMakespanCPU:
-    """Min-max VRP via MIP — OR-Tools pywraplp (CPU).
+    """Min-max VRP via MIP — HiGHS (CPU).
 
     Uses the shared MIP formulation from :func:`build_makespan_mip` and
-    solves directly with OR-Tools' built-in CBC solver via the PuLP
-    interface.
+    solves with the HiGHS solver via the PuLP interface.
     """
 
     def __init__(self, time_limit: int = 120, mip_gap: float = 0.05):
@@ -330,13 +329,13 @@ class MIPMakespanCPU:
         self,
         dist_matrix: np.ndarray,
         num_vehicles: int,
-        depot: Union[int, List[int]] = 0,
+        depot: list[int] = None,
         alpha: float = 1.0,
         warm_start_routes: Optional[List[List[int]]] = None,
     ):
         from ..core.types import VRPResult
 
-        depots = _normalise_depot(depot, num_vehicles)
+        depots = depot
         depot_set = set(depots)
         n = dist_matrix.shape[0]
         n_inspection = n - len(depot_set)
@@ -348,7 +347,7 @@ class MIPMakespanCPU:
         except ImportError:
             logger.error("[MIPMakespanCPU] PuLP not installed.")
             return VRPResult(routes=[], total_cost=float("inf"),
-                             solver="ortools_mip", status="import_error: pulp")
+                             solver="highs_mip", status="import_error: pulp")
 
         prob, warm_start = build_makespan_mip(
             dist_matrix, num_vehicles, depot, capacity,
@@ -357,8 +356,8 @@ class MIPMakespanCPU:
             mip_gap=self.mip_gap,
         )
 
-        # Solve with CBC via PuLP
-        solver = pulp.PULP_CBC_CMD(
+        # Solve with HiGHS via PuLP
+        solver = pulp.HiGHS(
             timeLimit=self.time_limit,
             gapRel=self.mip_gap,
             msg=1,
@@ -371,7 +370,7 @@ class MIPMakespanCPU:
                 if var.name in warm_start:
                     var.varValue = warm_start[var.name]
 
-        logger.info("[MIPMakespanCPU] Solving with CBC (limit=%ds, gap=%.1f%%) …",
+        logger.info("[MIPMakespanCPU] Solving with HiGHS (limit=%ds, gap=%.1f%%) …",
                     self.time_limit, self.mip_gap * 100)
 
         prob.solve(solver)
@@ -388,7 +387,7 @@ class MIPMakespanCPU:
             if not has_solution:
                 logger.warning("[MIPMakespanCPU] No feasible solution found.")
                 return VRPResult(routes=[], total_cost=float("inf"),
-                                 solver="ortools_mip",
+                                 solver="highs_mip",
                                  status=f"no_solution ({status_str})")
 
         # Extract routes from x variables
@@ -412,7 +411,7 @@ class MIPMakespanCPU:
             total_cost=total_cost,
             makespan=makespan,
             per_vehicle_costs=per_v,
-            solver="ortools_mip",
+            solver="highs_mip",
             status="success",
         )
 
@@ -445,7 +444,7 @@ class MIPMakespanGPU:
         self,
         dist_matrix: np.ndarray,
         num_vehicles: int,
-        depot: Union[int, List[int]] = 0,
+        depot: list[int] = None,
         alpha: float = 1.0,
         warm_start_routes: Optional[List[List[int]]] = None,
     ):
@@ -455,7 +454,7 @@ class MIPMakespanGPU:
 
         from ..core.types import VRPResult
 
-        depots = _normalise_depot(depot, num_vehicles)
+        depots = depot
         depot_set = set(depots)
         n = dist_matrix.shape[0]
         n_inspection = n - len(depot_set)

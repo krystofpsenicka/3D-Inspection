@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
                    help="Frustum vertical FOV (degrees).")
     p.add_argument("--frustum_aspect", type=float, default=1.0,
                    help="Frustum aspect ratio (width/height).")
-    p.add_argument("--solver", choices=["auto", "cuopt", "ortools"],
+    p.add_argument("--solver", choices=["auto", "cuopt", "highs"],
                    default="cuopt", help="MIP solver backend.")
     p.add_argument("--alpha", type=float, default=1.0,
                    help="Objective blending: 1.0=makespan, 0.0=total distance.")
@@ -388,14 +388,12 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[7/9] Building occupancy grid & distance matrix …")
 
-    from VRP.core.occupancy_grid import get_mesh_world_bounds, OccupancyGrid
     from VRP.scripts.vrp_planner import _compute_start_grid
     from VRP.core.distance_matrix import compute_distance_matrix
 
-    mesh_bmin, mesh_bmax = get_mesh_world_bounds(
-        mesh_target_length=MESH_TARGET_LENGTH,
-        mesh_pose=MESH_POSE,
-    )
+    # Reuse mesh bounds from Stage 1 (already loaded as raw_tm)
+    mesh_bmin = mesh_bounds_min
+    mesh_bmax = mesh_bounds_max
     robot_start_xyzs = _compute_start_grid(
         args.num_robots, mesh_bmin, mesh_bmax
     )
@@ -458,7 +456,7 @@ def main() -> None:
     )
     dist_matrix = compute_distance_matrix(_dm_og, waypoint_positions)
     logger.info("  Distance matrix computed.  max=%.2f m",
-                float(np.max(dist_matrix[np.isfinite(dist_matrix)])))
+                float(cp.max(dist_matrix[cp.isfinite(dist_matrix)])))
 
     # ══════════════════════════════════════════════════════════════════════
     # STAGE 8 – Solve VRP + execute routes
@@ -466,16 +464,17 @@ def main() -> None:
     logger.info("[8/9] Solving VRP (%s) and executing routes …", args.solver)
 
     from VRP.vrp.vrp_solver import solve_vrp
-    from VRP.core.types import VRPResult, ExecutionResult
+    from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
     from VRP.mapf.route_executor import RouteExecutor
     from VRP.core.robot_config import load_local_robot_config
 
+    vrp_backend = VRPBackend(args.solver)
     vrp_result: VRPResult = solve_vrp(
         dist_matrix=dist_matrix,
         num_vehicles=args.num_robots,
         depot=home_indices,
         alpha=args.alpha,
-        backend=args.solver,
+        backend=vrp_backend,
     )
     logger.info("  VRP status=%s  cost=%.2f  solver=%s",
                 vrp_result.status, vrp_result.total_cost, vrp_result.solver)

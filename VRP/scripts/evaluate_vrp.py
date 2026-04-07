@@ -50,17 +50,25 @@ if _PROJECT_ROOT not in sys.path:
 if _VRP_ROOT not in sys.path:
     sys.path.insert(0, _VRP_ROOT)
 
-from VRP.core.occupancy_grid import build_occupancy_grid, OccupancyGrid, get_mesh_world_bounds
+from shared.occupancy_grid import OccupancyGrid
+from shared.mesh_loader import load_and_transform_mesh
+from shared.grid_builder_utils import build_occupancy_grid as _shared_build_occupancy_grid
 from VRP.core.waypoint_loader import load_waypoints
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
-from VRP.core.types import VRPResult, ExecutionResult
+from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
 from VRP.mapf.route_executor import RouteExecutor
 from VRP.scripts.vrp_planner import _compute_start_grid
 from VRP.core.robot_config import load_local_robot_config
 from VRP.core.collision import find_trajectory_collisions
 from VRP.core.constants import (
+    INFLATION_VOXELS,
+    MESH_PATH,
+    MESH_POSE,
+    MESH_TARGET_LENGTH,
     RAPIDS_PYTHON,
+    ROBOT_RADIUS,
+    VOXEL_RESOLUTION,
     BROV_CUBOID_DIMS,
 )
 
@@ -116,7 +124,7 @@ def run_single(
     robot_cfg: dict,
     mesh_bounds_min: np.ndarray,
     mesh_bounds_max: np.ndarray,
-    solver_backend: str = "cuopt",
+    solver_backend: VRPBackend = VRPBackend.CUOPT,
 ) -> RunMetrics:
     """Execute one pipeline configuration and collect metrics."""
     m = RunMetrics(fleet_size=fleet_size, n_waypoints=n_waypoints, seed=seed)
@@ -501,7 +509,7 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+",
                         default=SEEDS)
     parser.add_argument("--solver", default=SOLVER_BACKEND,
-                        choices=["cuopt", "ortools", "auto"],
+                        choices=["cuopt", "highs", "auto"],
                         help="VRP solver backend")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
@@ -511,7 +519,7 @@ def main():
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
-    solver_backend = args.solver
+    solver_backend = VRPBackend(args.solver)
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -520,13 +528,23 @@ def main():
     t0 = time.perf_counter()
     # Probe mesh bounds first so the grid covers the depot positions of
     # all fleet sizes in the sweep (anchor to mesh top, not grid top).
-    mesh_bounds_min, mesh_bounds_max = get_mesh_world_bounds()
+    mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
+    mesh_bounds_min = np.asarray(mesh.bounds[0], dtype=float)
+    mesh_bounds_max = np.asarray(mesh.bounds[1], dtype=float)
     logger.info("  Mesh world bounds: min=%s  max=%s",
                 mesh_bounds_min.round(2), mesh_bounds_max.round(2))
     max_fleet = max(args.fleet_sizes) if args.fleet_sizes else 1
     max_depot_xyzs = _compute_start_grid(max_fleet, mesh_bounds_min, mesh_bounds_max)
-    og = build_occupancy_grid(
-        extra_free_points=np.array(max_depot_xyzs, dtype=np.float32),
+    extra_free = np.array(max_depot_xyzs, dtype=np.float32)
+    extra_margin = max(3, int(np.ceil(ROBOT_RADIUS / VOXEL_RESOLUTION)))
+    og = _shared_build_occupancy_grid(
+        mesh=mesh,
+        padding=1.0,
+        inflation_voxels=INFLATION_VOXELS,
+        resolution=VOXEL_RESOLUTION,
+        fill_interior=True,
+        extra_free_points=extra_free,
+        extra_margin_voxels=extra_margin,
     )
     t_grid = time.perf_counter() - t0
     logger.info("  Grid shape: %s  resolution: %.2fm  built in %.1fs",

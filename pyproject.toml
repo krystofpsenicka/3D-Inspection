@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
-vrp = ["ortools"]
+vrp = ["highspy"]
 
 [tool.setuptools.packages.find]
 include = ["VRP*", "visibility*", "shared*"]

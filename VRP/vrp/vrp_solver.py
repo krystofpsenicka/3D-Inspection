@@ -5,15 +5,15 @@ and solves the VRP with a blended makespan/total-distance objective.
 
 Two MIP backends are available:
 - ``MIPMakespanGPU`` — cuOpt MILP solver (GPU).
-- ``MIPMakespanCPU`` — PuLP + CBC solver (CPU).
+- ``MIPMakespanCPU`` — PuLP + HiGHS solver (CPU).
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from typing import List, Optional, Union
 
+import cupy as cp
 import numpy as np
 
 from ..core.constants import (
@@ -21,11 +21,8 @@ from ..core.constants import (
     MIP_TIME_LIMIT,
     RAPIDS_PYTHON,
 )
-from ..core.types import VRPResult
+from ..core.types import VRPBackend, VRPResult
 from ._helpers import (
-    normalise_depot as _normalise_depot,
-    compute_route_cost as _compute_route_cost,
-    per_vehicle_costs as _per_vehicle_costs,
     nearest_neighbor_warmstart as _nearest_neighbor_warmstart,
 )
 
@@ -35,11 +32,11 @@ logger = logging.getLogger(__name__)
 # ─── Unified solver entry-point ──────────────────────────────────────────────
 
 def solve_vrp(
-    dist_matrix: np.ndarray,
+    dist_matrix: cp.ndarray,
     num_vehicles: int,
-    depot: Union[int, List[int]] = 0,
+    depot: list[int] = None,
     alpha: float = 1.0,
-    backend: str = "ortools",
+    backend: VRPBackend = VRPBackend.HIGHS,
     rapids_python: str = RAPIDS_PYTHON,
     time_limit: int = MIP_TIME_LIMIT,
     gpu_timeout: int = 300,
@@ -50,9 +47,9 @@ def solve_vrp(
     Args:
         dist_matrix: Square (N, N) cost matrix.
         num_vehicles: Number of AUVs / robots.
-        depot: Single depot index or per-vehicle list.
+        depot: Per-vehicle depot index list.
         alpha: Objective blending in [0, 1]. 1.0 = makespan, 0.0 = total dist.
-        backend: ``"cuopt"`` (GPU) or ``"ortools"`` (CPU). No fallback.
+        backend: ``VRPBackend.CUOPT`` (GPU) or ``VRPBackend.HIGHS`` (CPU).
         rapids_python: Python binary path for the rapids_solver env.
         time_limit: MIP solver time budget (seconds).
         gpu_timeout: Wall-clock timeout for cuOpt subprocess (seconds).
@@ -63,8 +60,8 @@ def solve_vrp(
     """
     if not 0.0 <= alpha <= 1.0:
         raise ValueError(f"alpha must be in [0, 1], got {alpha}")
-    if backend not in ("cuopt", "ortools"):
-        raise ValueError(f"backend must be 'cuopt' or 'ortools', got '{backend}'")
+    if not isinstance(backend, VRPBackend):
+        raise TypeError(f"backend must be a VRPBackend, got {backend!r}")
 
     from .mip_makespan_solver import MIPMakespanCPU, MIPMakespanGPU
 
@@ -73,7 +70,10 @@ def solve_vrp(
     )
     logger.info("[solve_vrp] Nearest-neighbour warm-start ready.")
 
-    if backend == "cuopt":
+    # MIP solvers are CPU-based; convert to numpy once
+    dist_matrix_np = cp.asnumpy(dist_matrix)
+
+    if backend == VRPBackend.CUOPT:
         solver = MIPMakespanGPU(
             rapids_python=rapids_python,
             time_limit=time_limit,
@@ -87,7 +87,7 @@ def solve_vrp(
         )
 
     result = solver.solve(
-        dist_matrix, num_vehicles, depot,
+        dist_matrix_np, num_vehicles, depot,
         alpha=alpha,
         warm_start_routes=warm_start_routes,
     )
