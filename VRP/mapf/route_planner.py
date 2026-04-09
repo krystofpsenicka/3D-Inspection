@@ -24,81 +24,41 @@ import numpy as np
 
 from ..core.types import PlanningStats
 from ..core.constants import (
-    CAMERA_OFFSET_FORWARD,
-    CAMERA_OFFSET_UP,
+    AUV_CRUISE_SPEED,
     OMPL_SIMPLIFY_MAX_TIME,
     ROBOT_RADIUS,
     SPACE_TIME_DT,
     SPACE_TIME_DWELL_S,
-    SPACE_TIME_HOP_DISTANCE,
-    ST_ASTAR_MAX_EXPANSIONS,
+    SPACE_TIME_MIN_LEG_STEPS,
+    SPACE_TIME_SAFETY_FACTOR,
     GPU_SEARCH_MAX_ITERATIONS,
 )
-from .space_time_search import (
-    ReservationTable,
-    coarse_to_world,
-    space_time_astar_gpu,
-    world_to_coarse,
-)
+from .reservation_table import ReservationTable
+from .space_time_search import space_time_astar_gpu
 from .path_smoother import arc_length_resample, simplify_path_ompl
 from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
 
-def _robot_xyz_from_waypoints(
-    positions: cp.ndarray, rotmats: cp.ndarray, home_indices: set,
-) -> cp.ndarray:
-    """Return robot body-centre XYZ for all waypoints.
-
-    Inspection waypoints encode the desired camera position and viewing
-    direction. The robot body centre is offset backward so the camera
-    arrives at the waypoint position.
-
-    Home nodes are returned unchanged (no camera offset).
-
-    Args:
-        positions:    (N, 3) CuPy — waypoint positions.
-        rotmats:      (N, 3, 3) CuPy — rotation matrices.
-        home_indices: set of int — indices of home/depot nodes.
-
-    Returns:
-        (N, 3) CuPy — robot body-centre positions.
-    """
-    xyz = positions.copy()
-
-    # Forward direction = column 0 of rotation matrix
-    forwards = rotmats[:, :, 0]  # (N, 3)
-
-    # Camera offset: subtract forward and up offsets
-    xy_norm = cp.linalg.norm(forwards[:, :2], axis=1, keepdims=True)
-    xy_norm = cp.maximum(xy_norm, 1e-9)
-    xyz[:, 0] -= CAMERA_OFFSET_FORWARD * (forwards[:, 0] / xy_norm[:, 0])
-    xyz[:, 1] -= CAMERA_OFFSET_FORWARD * (forwards[:, 1] / xy_norm[:, 0])
-    xyz[:, 2] -= CAMERA_OFFSET_UP
-
-    # Restore home positions (no camera offset)
-    for idx in home_indices:
-        xyz[idx] = positions[idx]
-
-    return xyz
-
-
 def plan_robot_route_st(
-    coarse_grid: cp.ndarray,
-    coarse_origin: cp.ndarray,
-    coarse_res: float,
+    coarse_og: OccupancyGrid,
     reservation: ReservationTable,
     route: List[int],
     waypoint_positions: cp.ndarray,
-    waypoint_rotmats: cp.ndarray,
-    home_indices: set,
     dwell_s: float = SPACE_TIME_DWELL_S,
     dt: float = SPACE_TIME_DT,
     fine_occupancy_grid: OccupancyGrid = None,
     robot_radius: float = ROBOT_RADIUS,
+    cruise_speed: float = AUV_CRUISE_SPEED,
 ) -> Tuple[cp.ndarray, cp.ndarray, list, PlanningStats]:
     """Plan one robot through its full VRP route using GPU Space-Time A*.
+
+    ``waypoint_positions`` must already be robot body-centre positions
+    (see :func:`~VRP.core.geometry.viewpoints_to_robot_waypoints`).
+
+    Each leg is planned with a single A* call using a local time budget
+    proportional to the leg distance.
 
     Returns:
         (world_xyz, coarse_time_steps, wp_schedule, stats) where
@@ -106,7 +66,7 @@ def plan_robot_route_st(
         wp_schedule is list of (t_dwell_start, t_dwell_end, node_idx),
         stats is PlanningStats.
     """
-    xyz_all = _robot_xyz_from_waypoints(waypoint_positions, waypoint_rotmats, home_indices)
+    xyz_all = waypoint_positions
 
     coarse_positions: list = []
     world_positions: list = []
@@ -117,70 +77,28 @@ def plan_robot_route_st(
     straight_line_total = 0.0
 
     hold_steps = max(1, int(round(dwell_s / dt)))
+    grid_shape = coarse_og.shape
 
     for leg in range(1, len(route)):
         prev_node = route[leg - 1]
         curr_node = route[leg]
 
-        # Waypoint-to-waypoint
-        leg_xyz = cp.stack([xyz_all[prev_node], xyz_all[curr_node]])
+        # Convert waypoints to coarse voxel indices
+        s_xyz = xyz_all[prev_node]
+        g_xyz = xyz_all[curr_node]
+        s_ijk = coarse_og.world_to_voxel(s_xyz.reshape(1, 3))[0]
+        g_ijk = coarse_og.world_to_voxel(g_xyz.reshape(1, 3))[0]
 
-        leg_ijk = world_to_coarse(leg_xyz, coarse_origin, coarse_res)
+        # Clip to grid bounds
+        for d in range(3):
+            s_ijk[d] = cp.clip(s_ijk[d], 0, grid_shape[d] - 1)
+            g_ijk[d] = cp.clip(g_ijk[d], 0, grid_shape[d] - 1)
 
-        # Deduplicate consecutive identical voxels (e.g. short hops within same voxel)
-        keep = cp.ones(len(leg_ijk), dtype=cp.bool_)
-        keep[1:] = cp.any(leg_ijk[1:] != leg_ijk[:-1], axis=1)
-        leg_ijk = leg_ijk[keep]
+        dist = float(cp.linalg.norm(g_xyz - s_xyz))
+        straight_line_total += dist
 
-        grid_shape = (int(coarse_grid.shape[0]), int(coarse_grid.shape[1]), int(coarse_grid.shape[2]))
-        for d, mx in enumerate(grid_shape):
-            leg_ijk[:, d] = cp.clip(leg_ijk[:, d], 0, mx - 1)
-
-        stride_voxels = max(1, int(round(SPACE_TIME_HOP_DISTANCE / coarse_res)))
-        sub_idx = list(range(0, len(leg_ijk), stride_voxels))
-        if sub_idx[-1] != len(leg_ijk) - 1:
-            sub_idx.append(len(leg_ijk) - 1)
-        sub_ijk = leg_ijk[sub_idx]
-
-        straight_line_total += float(cp.linalg.norm(
-            xyz_all[curr_node] - xyz_all[prev_node]))
-
-        leg_plan_pos: list = []
-        leg_plan_t: list = []
-
-        for hop in range(1, len(sub_ijk)):
-            s_ijk = sub_ijk[hop - 1]
-            g_ijk = sub_ijk[hop]
-            if cp.array_equal(s_ijk, g_ijk):
-                continue
-
-            result = space_time_astar_gpu(
-                coarse_grid, s_ijk, g_ijk, t_cursor, reservation, coarse_res,
-            )
-
-            if result is None:
-                stats.astar_retries += 1
-                result = space_time_astar_gpu(
-                    coarse_grid, s_ijk, g_ijk, t_cursor, reservation,
-                    coarse_res, max_iterations=2 * GPU_SEARCH_MAX_ITERATIONS,
-                )
-
-            if result is None:
-                stats.astar_failures += 1
-                logger.warning(
-                    "[route_planner] ST-A* failed hop %d->%d (leg %d->%d, t=%d).",
-                    hop - 1, hop, prev_node, curr_node, t_cursor,
-                )
-                continue
-
-            seg_ijk, seg_t = result
-            start_idx = 0 if (not coarse_positions and not leg_plan_pos) else 1
-            if len(seg_ijk) > start_idx:
-                leg_plan_pos.append(seg_ijk[start_idx:])
-                leg_plan_t.append(seg_t[start_idx:])
-            t_cursor = int(seg_t[-1])
-
-        if not leg_plan_pos:
+        if cp.array_equal(s_ijk, g_ijk):
+            # Same voxel — just dwell
             if coarse_positions:
                 last = coarse_positions[-1][-1:]
                 last_world = world_positions[-1][-1:]
@@ -197,26 +115,73 @@ def plan_robot_route_st(
                 wp_schedule.append((t_dwell_start, int(t_cursor), curr_node))
             continue
 
-        planned_ijk = cp.concatenate(leg_plan_pos, axis=0)
-        planned_t = cp.concatenate(leg_plan_t, axis=0)
+        # Local time budget for this leg
+        t_leg = max(SPACE_TIME_MIN_LEG_STEPS,
+                    int(math.ceil(dist / cruise_speed / dt)) * SPACE_TIME_SAFETY_FACTOR)
+
+        result = space_time_astar_gpu(
+            coarse_og, s_ijk, g_ijk, t_cursor, reservation,
+            max_time_steps=t_leg,
+        )
+
+        if result is None:
+            stats.astar_retries += 1
+            result = space_time_astar_gpu(
+                coarse_og, s_ijk, g_ijk, t_cursor, reservation,
+                max_time_steps=t_leg * 2,
+                max_iterations=2 * GPU_SEARCH_MAX_ITERATIONS,
+            )
+
+        if result is None:
+            stats.astar_failures += 1
+            logger.warning(
+                "[route_planner] ST-A* failed leg %d->%d (t=%d).",
+                prev_node, curr_node, t_cursor,
+            )
+            # Dwell at last position if possible
+            if coarse_positions:
+                last = coarse_positions[-1][-1:]
+                last_world = world_positions[-1][-1:]
+                dwell_ijk = cp.tile(last, (hold_steps, 1))
+                dwell_world = cp.tile(last_world, (hold_steps, 1))
+                dwell_t = cp.arange(
+                    t_cursor + 1, t_cursor + hold_steps + 1, dtype=cp.intp,
+                )
+                coarse_positions.append(dwell_ijk)
+                world_positions.append(dwell_world)
+                coarse_times.append(dwell_t)
+                t_dwell_start = int(t_cursor) + 1
+                t_cursor += hold_steps
+                wp_schedule.append((t_dwell_start, int(t_cursor), curr_node))
+            continue
+
+        seg_ijk, seg_t = result
+        start_idx = 0 if not coarse_positions else 1
+        if len(seg_ijk) <= start_idx:
+            continue
+        planned_ijk = seg_ijk[start_idx:]
+        planned_t = seg_t[start_idx:]
+        t_cursor = int(seg_t[-1])
 
         final_ijk = planned_ijk
-        final_world = coarse_to_world(planned_ijk, coarse_origin, coarse_res)
+        final_world = coarse_og.voxel_to_world(planned_ijk)
 
         if fine_occupancy_grid is not None and len(planned_ijk) >= 3:
             smoothed_world = simplify_path_ompl(
                 final_world, fine_occupancy_grid, robot_radius,
                 max_time=OMPL_SIMPLIFY_MAX_TIME,
+                reservation=reservation,
+                time_steps=planned_t,
+                coarse_og=coarse_og,
             )
 
             if len(smoothed_world) >= 2:
                 resampled_world = arc_length_resample(smoothed_world, len(planned_t))
-                resampled_ijk = world_to_coarse(resampled_world, coarse_origin, coarse_res)
-                for d, mx in enumerate(grid_shape):
-                    resampled_ijk[:, d] = cp.clip(resampled_ijk[:, d], 0, mx - 1)
+                resampled_ijk = coarse_og.world_to_voxel(resampled_world)
+                for d in range(3):
+                    resampled_ijk[:, d] = cp.clip(resampled_ijk[:, d], 0, grid_shape[d] - 1)
 
-                pos_check = resampled_ijk
-                conflict = reservation.is_reserved_batch(pos_check, planned_t).any()
+                conflict = reservation.is_reserved_batch(resampled_ijk, planned_t).any()
 
                 if not bool(conflict):
                     final_ijk = resampled_ijk

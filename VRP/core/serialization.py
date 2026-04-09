@@ -22,7 +22,7 @@ def save_solution(result: "ExecutionResult", path: str) -> None:  # noqa: F821
             if robot_steps:
                 all_steps.append(np.stack(robot_steps))
             offsets.append(offsets[-1] + len(robot_steps))
-        arrays[field_name] = np.concatenate(all_steps) if all_steps else np.empty((0, 8))
+        arrays[field_name] = np.concatenate(all_steps) if all_steps else np.empty((0, 6))
         arrays[f"{field_name}_offsets"] = np.array(offsets, dtype=np.int64)
 
     arrays["initial_positions"] = np.array(result.initial_positions)

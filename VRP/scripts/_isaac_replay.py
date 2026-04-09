@@ -19,7 +19,6 @@ from VRP.core.constants import (
     MESH_PATH,
     MESH_POSE,
     MESH_TARGET_LENGTH,
-    STATIC_OBSTACLES,
 )
 from VRP.core.robot_config import load_local_robot_config
 from VRP.core.types import ExecutionResult
@@ -181,7 +180,6 @@ def replay_in_isaac_sim(
         mesh_path=MESH_PATH,
         mesh_pose=MESH_POSE,
         mesh_target_length=MESH_TARGET_LENGTH,
-        static_obstacles=STATIC_OBSTACLES,
     )
     my_world.scene.add_default_ground_plane()
 

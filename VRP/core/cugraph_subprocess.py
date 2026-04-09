@@ -28,7 +28,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from shared.grid_utils import OFFSETS_26 as _OFFSETS_26, WEIGHTS_26 as _WEIGHTS_26
+from VRP.core.constants import OFFSETS_26, WEIGHTS_26
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +69,11 @@ def cugraph_distance_matrix_main():
     flat_lookup = cp.full(Nx * Ny * Nz, -1, dtype=cp.int32)
     flat_lookup[free_flat_gpu] = cp.arange(F, dtype=cp.int32)
 
-    offsets_gpu = cp.array(_OFFSETS_26, dtype=cp.int32)  # (26, 3)
-    weights_gpu = cp.array(_WEIGHTS_26, dtype=cp.float32) * float(resolution)
+    weights = WEIGHTS_26 * float(resolution)
 
     src_all, dst_all, wt_all = [], [], []
     for oi in range(26):
-        nbr = free_ijk_gpu + offsets_gpu[oi]  # (F, 3) broadcast
+        nbr = free_ijk_gpu + OFFSETS_26[oi]  # (F, 3) broadcast
         valid = (
             (nbr[:, 0] >= 0) & (nbr[:, 0] < Nx) &
             (nbr[:, 1] >= 0) & (nbr[:, 1] < Ny) &
@@ -102,7 +101,7 @@ def cugraph_distance_matrix_main():
         edge_mask = (src_nodes >= 0) & (dst_nodes >= 0)
         src_all.append(src_nodes[edge_mask])
         dst_all.append(dst_nodes[edge_mask])
-        wt_all.append(cp.full(int(edge_mask.sum()), weights_gpu[oi], dtype=cp.float32))
+        wt_all.append(cp.full(int(edge_mask.sum()), weights[oi], dtype=cp.float32))
 
     src_arr = cp.concatenate(src_all)
     dst_arr = cp.concatenate(dst_all)

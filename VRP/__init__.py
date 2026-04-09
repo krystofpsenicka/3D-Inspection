@@ -8,7 +8,6 @@ from VRP.core.constants import (
     VOXEL_RESOLUTION,
     ROBOT_RADIUS,
     INFLATION_VOXELS,
-    BROV_CUBOID_DIMS,
 )
 
 # Core
@@ -30,7 +29,6 @@ __all__ = [
     "VRPBackend", "VRPResult", "ExecutionResult", "PlanningStats", "PipelineConfig",
     # Configuration
     "VOXEL_RESOLUTION", "ROBOT_RADIUS", "INFLATION_VOXELS",
-    "BROV_CUBOID_DIMS",
     # Core
     "OccupancyGrid",
     "compute_distance_matrix",

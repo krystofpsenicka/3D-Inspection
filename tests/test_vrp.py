@@ -32,7 +32,8 @@ from VRP.core.constants import RAPIDS_PYTHON, MIP_GAP
 
 pulp = pytest.importorskip("pulp", reason="PuLP not installed")
 
-from VRP.vrp.mip_makespan_solver import MIPMakespanCPU, MIPMakespanGPU
+from VRP.vrp.mip_solver_cpu import MIPSolverCPU as MIPMakespanCPU
+from VRP.vrp.mip_solver_gpu import MIPSolverGPU as MIPMakespanGPU
 
 _HAS_RAPIDS = os.path.isfile(RAPIDS_PYTHON)
 requires_rapids = pytest.mark.skipif(
@@ -546,14 +547,14 @@ class TestNearestNeighborWarmstart:
 
 class TestReservationTable:
 
-    def _make_table(self, shape=(10, 10, 10), T=20, half_extents=(0, 0, 0)):
-        from VRP.mapf.space_time_search import ReservationTable
-        return ReservationTable(shape, T, np.array(half_extents, dtype=np.intp))
+    def _make_table(self, shape=(10, 10, 10), T=20, radius=0.0):
+        from VRP.mapf.reservation_table import ReservationTable
+        return ReservationTable(shape, T, robot_collision_radius=radius)
 
     def test_commit_and_query(self):
         rt = self._make_table()
-        positions = np.array([[3, 4, 5], [3, 5, 5]], dtype=np.intp)
-        times = np.array([0, 1], dtype=np.intp)
+        positions = cp.array([[3, 4, 5], [3, 5, 5]], dtype=cp.intp)
+        times = cp.array([0, 1], dtype=cp.intp)
         rt.commit_trajectory(positions, times)
 
         assert rt.is_reserved(3, 4, 5, 0) is True
@@ -561,14 +562,15 @@ class TestReservationTable:
         assert rt.is_reserved(3, 4, 5, 1) is False  # different time
         assert rt.is_reserved(0, 0, 0, 0) is False   # uncommitted cell
 
-    def test_aabb_inflation(self):
-        """AABB with half_extents=[1,1,1] inflates point → 3×3×3 cube."""
-        rt = self._make_table(shape=(10, 10, 10), T=10, half_extents=(1, 1, 1))
-        positions = np.array([[5, 5, 5]], dtype=np.intp)
-        times = np.array([3], dtype=np.intp)
+    def test_sphere_inflation(self):
+        """Sphere with radius=1.75 covers all 27 cells in the 3x3x3 cube."""
+        rt = self._make_table(shape=(10, 10, 10), T=10, radius=1.75)
+        positions = cp.array([[5, 5, 5]], dtype=cp.intp)
+        times = cp.array([3], dtype=cp.intp)
         rt.commit_trajectory(positions, times)
 
         # All 27 cells in the 3x3x3 cube should be reserved
+        # (corner distance = sqrt(3) ~ 1.73 < 1.75)
         count = 0
         for dx in range(-1, 2):
             for dy in range(-1, 2):
@@ -577,24 +579,24 @@ class TestReservationTable:
                         count += 1
         assert count == 27, f"Expected 27 reserved cells, got {count}"
 
-        # Outside the cube should be free
+        # Outside the sphere should be free
         assert rt.is_reserved(5, 5, 5, 4) is False  # different time
-        assert rt.is_reserved(3, 5, 5, 3) is False   # outside AABB
+        assert rt.is_reserved(3, 5, 5, 3) is False   # outside sphere
 
     def test_boundary_no_crash(self):
-        """Commit near grid boundary with AABB doesn't crash."""
-        rt = self._make_table(shape=(5, 5, 5), T=5, half_extents=(2, 2, 2))
-        # Point at corner: (0, 0, 0) — AABB extends outside grid
-        positions = np.array([[0, 0, 0]], dtype=np.intp)
-        times = np.array([0], dtype=np.intp)
+        """Commit near grid boundary with inflation doesn't crash."""
+        rt = self._make_table(shape=(5, 5, 5), T=5, radius=2.5)
+        # Point at corner: (0, 0, 0) — sphere extends outside grid
+        positions = cp.array([[0, 0, 0]], dtype=cp.intp)
+        times = cp.array([0], dtype=cp.intp)
         rt.commit_trajectory(positions, times)  # should not crash
         assert rt.is_reserved(0, 0, 0, 0) is True
 
     def test_time_beyond_horizon(self):
-        """is_reserved(x,y,z, t>=T) returns False (line 145 of space_time_astar.py)."""
+        """is_reserved(x,y,z, t>=T) returns False."""
         rt = self._make_table(T=10)
-        positions = np.array([[5, 5, 5]], dtype=np.intp)
-        times = np.array([5], dtype=np.intp)
+        positions = cp.array([[5, 5, 5]], dtype=cp.intp)
+        times = cp.array([5], dtype=cp.intp)
         rt.commit_trajectory(positions, times)
 
         assert rt.is_reserved(5, 5, 5, 5) is True
@@ -608,19 +610,21 @@ class TestReservationTable:
 
 class TestSpaceTimeAStar:
 
-    def _make_grid_and_table(self, shape=(20, 20, 20), T=100):
-        from VRP.mapf.space_time_search import ReservationTable
-        grid = cp.zeros(shape, dtype=cp.uint8)
-        rt = ReservationTable(shape, T, np.array([0, 0, 0], dtype=np.intp))
-        return grid, rt
+    def _make_og_and_table(self, shape=(20, 20, 20), T=100):
+        from VRP.mapf.reservation_table import ReservationTable
+        from shared.occupancy_grid import OccupancyGrid
+        grid = cp.zeros(shape, dtype=cp.bool_)
+        og = OccupancyGrid(grid=grid, origin=cp.zeros(3, dtype=cp.float64), resolution=1.0)
+        rt = ReservationTable(shape, T, robot_collision_radius=0.0)
+        return og, rt
 
     def test_open_grid_finds_path(self):
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-        grid, rt = self._make_grid_and_table()
+        og, rt = self._make_og_and_table()
         start = cp.array([2, 2, 2], dtype=cp.intp)
         goal = cp.array([15, 15, 15], dtype=cp.intp)
 
-        result = space_time_astar(grid, start, goal, 0, rt, resolution=1.0)
+        result = space_time_astar(og, start, goal, 0, rt)
         assert result is not None
         path_ijk, path_t = result
         assert len(path_ijk) >= 2
@@ -630,49 +634,51 @@ class TestSpaceTimeAStar:
     def test_navigates_around_wall(self):
         """A* finds a path through a gap in a wall."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-        grid, rt = self._make_grid_and_table()
+        og, rt = self._make_og_and_table()
         # Build a wall at x=10 for all y except y=10
         for y in range(20):
             if y != 10:
-                grid[10, y, :] = 1
+                og.grid[10, y, :] = True
 
         start = cp.array([5, 5, 5], dtype=cp.intp)
         goal = cp.array([15, 5, 5], dtype=cp.intp)
 
-        result = space_time_astar(grid, start, goal, 0, rt, resolution=1.0)
+        result = space_time_astar(og, start, goal, 0, rt)
         assert result is not None
         path_ijk, _ = result
-        # Path must go through the gap at y=10
         np.testing.assert_array_equal(path_ijk[-1].get(), goal.get())
 
     def test_blocked_goal_returns_none(self):
-        """Occupied goal → None."""
+        """Occupied goal -> None."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-        grid, rt = self._make_grid_and_table()
-        grid[15, 15, 15] = 1  # block goal
+        og, rt = self._make_og_and_table()
+        og.grid[15, 15, 15] = True
 
-        start = np.array([2, 2, 2], dtype=np.intp)
-        goal = np.array([15, 15, 15], dtype=np.intp)
+        start = cp.array([2, 2, 2], dtype=cp.intp)
+        goal = cp.array([15, 15, 15], dtype=cp.intp)
 
-        result = space_time_astar(grid, start, goal, 0, rt, resolution=1.0)
+        result = space_time_astar(og, start, goal, 0, rt)
         assert result is None
 
     def test_avoids_reserved_cells(self):
         """A* detours around time-reserved cells."""
-        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar, ReservationTable
-        grid = cp.zeros((10, 10, 1), dtype=cp.uint8)
-        rt = ReservationTable((10, 10, 1), 50, np.array([0, 0, 0], dtype=np.intp))
+        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
+        from VRP.mapf.reservation_table import ReservationTable
+        from shared.occupancy_grid import OccupancyGrid
+        grid = cp.zeros((10, 10, 1), dtype=cp.bool_)
+        og = OccupancyGrid(grid=grid, origin=cp.zeros(3, dtype=cp.float64), resolution=1.0)
+        rt = ReservationTable((10, 10, 1), 50, robot_collision_radius=0.0)
 
         start = cp.array([0, 5, 0], dtype=cp.intp)
         goal = cp.array([9, 5, 0], dtype=cp.intp)
 
         # Reserve the direct path at the times A* would traverse it
         for x in range(1, 9):
-            positions = np.array([[x, 5, 0]], dtype=np.intp)
-            times = np.array([x], dtype=np.intp)
+            positions = cp.array([[x, 5, 0]], dtype=cp.intp)
+            times = cp.array([x], dtype=cp.intp)
             rt.commit_trajectory(positions, times)
 
-        result = space_time_astar(grid, start, goal, 0, rt, resolution=1.0)
+        result = space_time_astar(og, start, goal, 0, rt)
         assert result is not None
         path_ijk, path_t = result
         path_ijk_np = path_ijk.get()
@@ -689,10 +695,10 @@ class TestSpaceTimeAStar:
     def test_same_start_goal(self):
         """Returns single-point path when start == goal."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-        grid, rt = self._make_grid_and_table()
+        og, rt = self._make_og_and_table()
         point = cp.array([5, 5, 5], dtype=cp.intp)
 
-        result = space_time_astar(grid, point, point, 0, rt, resolution=1.0)
+        result = space_time_astar(og, point, point, 0, rt)
         assert result is not None
         path_ijk, path_t = result
         assert len(path_ijk) == 1
@@ -706,33 +712,40 @@ class TestSpaceTimeAStar:
 class TestCoordinateTransforms:
 
     def test_round_trip(self):
-        """world → coarse → world is within res/2 per axis."""
-        from VRP.mapf.space_time_search import world_to_coarse, coarse_to_world
+        """world -> voxel -> world is within res/2 per axis."""
+        from shared.occupancy_grid import OccupancyGrid
         res = 0.5
-        origin = np.array([0.0, 0.0, 0.0])
-        xyz = np.array([1.3, 2.7, 0.4])
+        og = OccupancyGrid(
+            grid=cp.zeros((100, 100, 100), dtype=cp.bool_),
+            origin=cp.array([0.0, 0.0, 0.0], dtype=cp.float64),
+            resolution=res,
+        )
+        xyz = cp.array([[1.3, 2.7, 0.4]], dtype=cp.float64)
 
-        ijk = world_to_coarse(xyz, origin, res)
-        recovered = coarse_to_world(ijk, origin, res).get()
+        ijk = og.world_to_voxel(xyz)
+        recovered = og.voxel_to_world(ijk).get()[0]
 
-        # Recovered is the voxel centre; should be within res/2 of original
-        diff = np.abs(recovered - xyz)
+        diff = np.abs(recovered - xyz.get()[0])
         assert np.all(diff <= res), (
             f"Round-trip error too large: diff={diff}, max allowed={res}"
         )
 
     def test_known_values(self):
-        """(1.0, 2.0, 3.0) at res=0.5 → voxel (2, 4, 6) → world (1.25, 2.25, 3.25)."""
-        from VRP.mapf.space_time_search import world_to_coarse, coarse_to_world
+        """(1.0, 2.0, 3.0) at res=0.5 -> voxel (2, 4, 6) -> world (1.25, 2.25, 3.25)."""
+        from shared.occupancy_grid import OccupancyGrid
         res = 0.5
-        origin = np.array([0.0, 0.0, 0.0])
-        xyz = np.array([1.0, 2.0, 3.0])
+        og = OccupancyGrid(
+            grid=cp.zeros((100, 100, 100), dtype=cp.bool_),
+            origin=cp.array([0.0, 0.0, 0.0], dtype=cp.float64),
+            resolution=res,
+        )
+        xyz = cp.array([[1.0, 2.0, 3.0]], dtype=cp.float64)
 
-        ijk = world_to_coarse(xyz, origin, res)
-        np.testing.assert_array_equal(ijk.get(), [2, 4, 6])
+        ijk = og.world_to_voxel(xyz)
+        np.testing.assert_array_equal(ijk.get()[0], [2, 4, 6])
 
-        world = coarse_to_world(ijk, origin, res)
-        np.testing.assert_allclose(world.get(), [1.25, 2.25, 3.25])
+        world = og.voxel_to_world(ijk)
+        np.testing.assert_allclose(world.get()[0], [1.25, 2.25, 3.25])
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -777,8 +790,8 @@ class TestTrajectoryCollisions:
         """Two robots moving in parallel far apart produce no collisions."""
         from VRP.core.collision import find_trajectory_collisions
         T = 50
-        traj_a = [np.array([0.0, 0.0, float(t) * 0.1], dtype=np.float32) for t in range(T)]
-        traj_b = [np.array([5.0, 5.0, float(t) * 0.1], dtype=np.float32) for t in range(T)]
+        traj_a = cp.array([[0.0, 0.0, float(t) * 0.1] for t in range(T)], dtype=cp.float32)
+        traj_b = cp.array([[5.0, 5.0, float(t) * 0.1] for t in range(T)], dtype=cp.float32)
         collisions = find_trajectory_collisions([traj_a, traj_b])
         assert collisions == []
 
@@ -787,8 +800,8 @@ class TestTrajectoryCollisions:
         from VRP.core.collision import find_trajectory_collisions
         T = 20
         # Robot A moves along +X, Robot B moves along -X; they cross at x=0
-        traj_a = [np.array([float(t) - 10.0, 0.0, 0.0], dtype=np.float32) for t in range(T)]
-        traj_b = [np.array([10.0 - float(t), 0.0, 0.0], dtype=np.float32) for t in range(T)]
+        traj_a = cp.array([[float(t) - 10.0, 0.0, 0.0] for t in range(T)], dtype=cp.float32)
+        traj_b = cp.array([[10.0 - float(t), 0.0, 0.0] for t in range(T)], dtype=cp.float32)
         collisions = find_trajectory_collisions([traj_a, traj_b])
         assert len(collisions) > 0
         # Verify tuple format: (step, robot_a, robot_b, penetration)
@@ -800,15 +813,15 @@ class TestTrajectoryCollisions:
         """Robots with different trajectory lengths are padded correctly."""
         from VRP.core.collision import find_trajectory_collisions
         # Robot A: 10 steps far away; Robot B: 5 steps far away
-        traj_a = [np.array([100.0, 0.0, 0.0], dtype=np.float32) for _ in range(10)]
-        traj_b = [np.array([-100.0, 0.0, 0.0], dtype=np.float32) for _ in range(5)]
+        traj_a = cp.array([[100.0, 0.0, 0.0]] * 10, dtype=cp.float32)
+        traj_b = cp.array([[-100.0, 0.0, 0.0]] * 5, dtype=cp.float32)
         collisions = find_trajectory_collisions([traj_a, traj_b])
         assert collisions == []
 
     def test_single_robot_no_collision(self):
         """A single robot cannot collide with itself."""
         from VRP.core.collision import find_trajectory_collisions
-        traj = [np.array([0.0, 0.0, float(t)], dtype=np.float32) for t in range(10)]
+        traj = cp.array([[0.0, 0.0, float(t)] for t in range(10)], dtype=cp.float32)
         collisions = find_trajectory_collisions([traj])
         assert collisions == []
 
@@ -816,7 +829,7 @@ class TestTrajectoryCollisions:
         """Function accepts CuPy arrays as trajectory positions."""
         from VRP.core.collision import find_trajectory_collisions
         T = 10
-        traj_a = [cp.array([0.0, 0.0, float(t)], dtype=cp.float32) for t in range(T)]
-        traj_b = [cp.array([100.0, 0.0, float(t)], dtype=cp.float32) for t in range(T)]
+        traj_a = cp.array([[0.0, 0.0, float(t)] for t in range(T)], dtype=cp.float32)
+        traj_b = cp.array([[100.0, 0.0, float(t)] for t in range(T)], dtype=cp.float32)
         collisions = find_trajectory_collisions([traj_a, traj_b])
         assert collisions == []

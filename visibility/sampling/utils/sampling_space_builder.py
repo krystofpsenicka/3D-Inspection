@@ -41,9 +41,9 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
     coarse_res = free_space_resolution
 
     # 1. Downsample OG to coarse resolution
-    coarse_grid, coarse_origin, actual_res = downsample_occupancy_grid(
-        og.grid, og.origin, og.resolution, coarse_res
-    )
+    coarse_og = downsample_occupancy_grid(og, coarse_res)
+    coarse_grid = coarse_og.grid
+    actual_res = coarse_og.resolution
 
     # 2. Get free voxel indices
     free_ijk = cp.argwhere(~coarse_grid)

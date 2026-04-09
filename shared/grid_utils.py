@@ -5,29 +5,14 @@
 from __future__ import annotations
 
 import logging
-import math
-from typing import List, Tuple
 
 import cupy as cp
 import numpy as np
 import matplotlib.cm as _cm
 
+from .occupancy_grid import OccupancyGrid
+
 logger = logging.getLogger(__name__)
-
-# 26-connected spatial offsets (without (0,0,0))
-OFFSETS_26: List[Tuple[int, int, int]] = [
-    (di, dj, dk)
-    for di in (-1, 0, 1)
-    for dj in (-1, 0, 1)
-    for dk in (-1, 0, 1)
-    if not (di == 0 and dj == 0 and dk == 0)
-]
-
-# Corresponding Euclidean distances (weights) for each offset
-WEIGHTS_26: np.ndarray = np.array(
-    [math.sqrt(di * di + dj * dj + dk * dk) for di, dj, dk in OFFSETS_26],
-    dtype=np.float64,
-)
 
 
 # ── Grid inflation ────────────────────────────────────────────────────────────
@@ -55,18 +40,19 @@ def inflate_grid(grid: cp.ndarray, inflation_voxels: int) -> cp.ndarray:
 # ── Grid down-sampling ───────────────────────────────────────────────────────
 
 def downsample_occupancy_grid(
-    fine_grid: cp.ndarray,
-    fine_origin: cp.ndarray,
-    fine_res: float,
+    og: OccupancyGrid,
     coarse_res: float,
-) -> Tuple[cp.ndarray, cp.ndarray, float]:
+) -> OccupancyGrid:
     """Down-sample an occupancy grid (GPU).
 
     A coarse voxel is **occupied** if **any** of its constituent fine
     voxels is occupied (no false free-space).
 
-    Returns ``(coarse_grid, coarse_origin, coarse_res)`` as CuPy arrays.
+    Returns an ``OccupancyGrid`` at the coarse resolution.
     """
+    fine_grid = og.grid
+    fine_origin = og.origin
+    fine_res = og.resolution
     factor = max(1, int(round(coarse_res / fine_res)))
     Fx, Fy, Fz = fine_grid.shape
 
@@ -99,7 +85,7 @@ def downsample_occupancy_grid(
         "[downsample] Grid: %s -> %s  (factor=%d, coarse_res=%.2fm)",
         fine_grid.shape, coarse.shape, factor, actual_res,
     )
-    return coarse, coarse_origin, actual_res
+    return OccupancyGrid(grid=coarse, origin=coarse_origin, resolution=actual_res)
 
 
 # ── ESDF colour mapping ─────────────────────────────────────────────────────

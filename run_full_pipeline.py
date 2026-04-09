@@ -437,17 +437,15 @@ def main() -> None:
         # Otherwise search for the coarsest factor that fits
         for factor in range(2, 32):
             target_res = fine_og.resolution * factor
-            cg, co, cr = downsample_occupancy_grid(
-                fine_og.grid, fine_og.origin, fine_og.resolution, target_res
-            )
-            free_count = int((~cg).sum())
+            coarse_og = downsample_occupancy_grid(fine_og, target_res)
+            free_count = int((~coarse_og.grid).sum())
             logger.info(
                 "  Dist-matrix OG candidate: factor=%d res=%.2fm grid=%s free=%d",
-                factor, cr, cg.shape, free_count,
+                factor, coarse_og.resolution, coarse_og.shape, free_count,
             )
             if free_count <= max_free:
-                return OccupancyGrid(grid=cg, origin=co, resolution=cr), factor, free_count
-        return OccupancyGrid(grid=cg, origin=co, resolution=cr), 31, int((~cg).sum())
+                return coarse_og, factor, free_count
+        return coarse_og, 31, int((~coarse_og.grid).sum())
 
     _dm_og, _dm_factor, _dm_free = _pick_distmatrix_og(og, _MAX_FREE_VOXELS)
     logger.info(

@@ -119,7 +119,6 @@ class ReplayVisualizer:
         mesh_path: str,
         mesh_pose: list,
         mesh_target_length: float,
-        static_obstacles: list[dict],
     ) -> list[str]:
         """Add static obstacles and mesh via cuRobo ``WorldConfig``.
 
@@ -133,7 +132,7 @@ class ReplayVisualizer:
         usd_help = UsdHelper()
         usd_help.load_stage(stage)
 
-        world_dict: dict = {"cuboid": static_obstacles}
+        world_dict: dict = {}
         if os.path.isfile(mesh_path):
             import trimesh as _tm
 

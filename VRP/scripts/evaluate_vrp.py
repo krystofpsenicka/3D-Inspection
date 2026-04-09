@@ -59,7 +59,6 @@ from VRP.vrp.vrp_solver import solve_vrp
 from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
 from VRP.mapf.route_executor import RouteExecutor
 from VRP.scripts.vrp_planner import _compute_start_grid
-from VRP.core.robot_config import load_local_robot_config
 from VRP.core.collision import find_trajectory_collisions
 from VRP.core.constants import (
     INFLATION_VOXELS,
@@ -69,7 +68,6 @@ from VRP.core.constants import (
     RAPIDS_PYTHON,
     ROBOT_RADIUS,
     VOXEL_RESOLUTION,
-    BROV_CUBOID_DIMS,
 )
 
 logger = logging.getLogger("vrp_eval")
@@ -121,7 +119,6 @@ def run_single(
     n_waypoints: int,
     seed: int,
     og: OccupancyGrid,
-    robot_cfg: dict,
     mesh_bounds_min: np.ndarray,
     mesh_bounds_max: np.ndarray,
     solver_backend: VRPBackend = VRPBackend.CUOPT,
@@ -162,7 +159,7 @@ def run_single(
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix,
             num_vehicles=K,
-            depot=home_indices,
+            depots=home_indices,
             backend=solver_backend,
             rapids_python=RAPIDS_PYTHON,
             time_limit=120,
@@ -212,23 +209,16 @@ def run_single(
         # ── Trajectory execution + collision avoidance ────────────
         t0 = time.perf_counter()
 
-        j_names = robot_cfg["kinematics"]["cspace"]["joint_names"]
-        default_cfg = robot_cfg["kinematics"]["cspace"]["retract_config"]
-
-        start_configs = []
-        for i in range(K):
-            s = list(default_cfg)
-            xyz = robot_start_xyzs[i]
-            s[0], s[1], s[2] = float(xyz[0]), float(xyz[1]), float(xyz[2])
-            start_configs.append(np.array(s, dtype=np.float32))
+        start_positions = [
+            np.array(xyz, dtype=np.float32) for xyz in robot_start_xyzs
+        ]
 
         import cupy as _cp
         wp_positions_gpu = _cp.asarray(all_positions, dtype=_cp.float32)
         wp_rotmats_gpu = _cp.asarray(all_rotmats, dtype=_cp.float32)
 
         executor = RouteExecutor(
-            start_configs=start_configs,
-            joint_names=j_names,
+            start_positions=start_positions,
             og=og,
         )
         exec_result: ExecutionResult = executor.execute(
@@ -236,6 +226,7 @@ def run_single(
             waypoint_positions=wp_positions_gpu,
             waypoint_rotmats=wp_rotmats_gpu,
             home_indices=set(home_indices),
+            dist_matrix=dist_matrix,
         )
         m.t_trajectory = time.perf_counter() - t0
 
@@ -248,7 +239,6 @@ def run_single(
 
         collisions = find_trajectory_collisions(
             exec_result.all_traj_positions,
-            dims=BROV_CUBOID_DIMS,
         )
         m.residual_collisions = len(collisions)
 
@@ -550,8 +540,6 @@ def main():
     logger.info("  Grid shape: %s  resolution: %.2fm  built in %.1fs",
                 og.grid.shape, og.resolution, t_grid)
 
-    robot_cfg = load_local_robot_config("brov.yml")
-
     # ── Sweep configurations ──────────────────────────────────────
     configs = list(itertools.product(
         args.fleet_sizes, args.waypoint_counts, args.seeds))
@@ -581,7 +569,6 @@ def main():
                 n_waypoints=nw,
                 seed=seed,
                 og=og,
-                robot_cfg=robot_cfg,
                 mesh_bounds_min=mesh_bounds_min,
                 mesh_bounds_max=mesh_bounds_max,
                 solver_backend=solver_backend,

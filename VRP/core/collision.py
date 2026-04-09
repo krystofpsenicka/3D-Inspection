@@ -1,63 +1,78 @@
-"""AABB inter-robot collision detection (GPU-vectorized)."""
+"""GPU-vectorized collision detection for trajectory safety checks."""
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import cupy as cp
-import numpy as np
 
-from .constants import BROV_CUBOID_DIMS
+from .constants import ROBOT_RADIUS
+from shared.occupancy_grid import OccupancyGrid
+
+
+def _pad_trajectories_to_tensor(
+    all_traj_positions: List[cp.ndarray],
+) -> Tuple[cp.ndarray, List[int]]:
+    """Pad ragged per-robot trajectories into a (R, T_max, 3) tensor.
+
+    Each element of all_traj_positions is a (T_i, D) CuPy array where
+    D >= 3. Only the first 3 columns (XYZ) are used.
+
+    Returns (stacked, lengths) where stacked is (R, T_max, 3) and
+    lengths[i] is the original length of robot i's trajectory.
+    """
+    num_robots = len(all_traj_positions)
+    lengths = [len(t) for t in all_traj_positions]
+    max_T = max(lengths) if lengths else 0
+    if max_T == 0:
+        return cp.empty((num_robots, 0, 3), dtype=cp.float32), lengths
+
+    stacked = cp.zeros((num_robots, max_T, 3), dtype=cp.float32)
+    for i, traj in enumerate(all_traj_positions):
+        n = len(traj)
+        if n == 0:
+            continue
+        stacked[i, :n] = traj[:, :3]
+        if n < max_T:
+            stacked[i, n:] = traj[-1, :3]
+
+    return stacked, lengths
 
 
 def find_trajectory_collisions(
-    all_traj_positions: List[List[np.ndarray | cp.ndarray]],
-    dims: Optional[np.ndarray | cp.ndarray] = None,
+    all_traj_positions: List[cp.ndarray],
+    radius: float = ROBOT_RADIUS,
 ) -> List[Tuple[int, int, int, float]]:
-    """Scan replay trajectories for AABB inter-robot collisions.
+    """Scan replay trajectories for sphere-based inter-robot collisions.
 
     Vectorized on GPU: pads all trajectories to equal length, stacks
-    into ``(R, T, 3)``, and broadcasts pairwise AABB overlap for all
+    into ``(R, T, 3)``, and broadcasts pairwise distance checks for all
     robot pairs and time-steps simultaneously.
+
+    Args:
+        all_traj_positions: Per-robot CuPy arrays, each (T_i, D) where D >= 3.
+        radius: Bounding-sphere radius per robot. Defaults to ROBOT_RADIUS.
 
     Returns list of (step, robot_a, robot_b, penetration_depth).
     """
-    if dims is None:
-        dims = np.array(BROV_CUBOID_DIMS, dtype=np.float32)
-    half = cp.asarray(dims, dtype=cp.float32) / 2.0
-
     num_robots = len(all_traj_positions)
     if num_robots < 2:
         return []
 
-    # Pad trajectories to equal length and stack into (R, T, 3)
-    lengths = [len(t) for t in all_traj_positions]
-    T = max(lengths)
-    if T == 0:
+    stacked, lengths = _pad_trajectories_to_tensor(all_traj_positions)
+    if stacked.shape[1] == 0:
         return []
 
-    stacked = cp.empty((num_robots, T, 3), dtype=cp.float32)
-    for i, traj in enumerate(all_traj_positions):
-        n = len(traj)
-        if n == 0:
-            stacked[i] = 0.0
-            continue
-        # Stack XYZ only (first 3 components of each joint-space vector)
-        arr = cp.array([cp.asarray(p[:3]) for p in traj], dtype=cp.float32)
-        stacked[i, :n] = arr
-        # Pad by repeating last position
-        if n < T:
-            stacked[i, n:] = arr[-1]
+    # Pairwise distances: (R, 1, T, 3) vs (1, R, T, 3)
+    a = stacked[:, None, :, :]
+    b = stacked[None, :, :, :]
+    dist = cp.linalg.norm(a - b, axis=3)  # (R, R, T)
 
-    # Pairwise AABB overlap: (R, 1, T, 3) vs (1, R, T, 3)
-    a = stacked[:, None, :, :]  # (R, 1, T, 3)
-    b = stacked[None, :, :, :]  # (1, R, T, 3)
-    gap = cp.abs(a - b) - 2.0 * half  # (R, R, T, 3)
+    # Collision when distance < 2 * radius
+    collision_threshold = 2.0 * radius
+    overlap = dist < collision_threshold
 
-    # Collision where all 3 axes overlap (gap < 0)
-    overlap = cp.all(gap < 0, axis=3)  # (R, R, T)
-
-    # Only upper triangle (a < b)
+    # Upper triangle only (a < b)
     ri, rj, ti = cp.where(overlap)
     mask = ri < rj
     ri, rj, ti = ri[mask], rj[mask], ti[mask]
@@ -65,10 +80,8 @@ def find_trajectory_collisions(
     if len(ri) == 0:
         return []
 
-    # Compute penetration depths
-    penetrations = -cp.max(gap[ri, rj, ti], axis=1)
+    penetrations = collision_threshold - dist[ri, rj, ti]
 
-    # Transfer to CPU and build result list
     ri_cpu = cp.asnumpy(ri)
     rj_cpu = cp.asnumpy(rj)
     ti_cpu = cp.asnumpy(ti)
@@ -78,3 +91,42 @@ def find_trajectory_collisions(
         (int(ti_cpu[k]), int(ri_cpu[k]), int(rj_cpu[k]), float(pen_cpu[k]))
         for k in range(len(ri_cpu))
     ]
+
+
+def find_environment_collisions(
+    all_traj_positions: List[cp.ndarray],
+    occupancy_grid: OccupancyGrid,
+) -> list[int]:
+    """Count per-robot collisions with the occupancy grid.
+
+    Flattens all robot positions into one batch, runs a single
+    vectorized ``is_free_world_batch`` check, then splits results
+    per robot.
+
+    Args:
+        all_traj_positions: Per-robot CuPy arrays, each (T_i, D) where D >= 3.
+        occupancy_grid: Fine-resolution occupancy grid.
+
+    Returns:
+        Per-robot collision counts.
+    """
+    lengths = [len(t) for t in all_traj_positions]
+    if sum(lengths) == 0:
+        return [0] * len(all_traj_positions)
+
+    all_xyz = cp.concatenate(
+        [t[:, :3] for t in all_traj_positions if len(t) > 0], axis=0,
+    )
+    free_mask = occupancy_grid.is_free_world_batch(all_xyz)
+
+    collision_counts: list[int] = []
+    offset = 0
+    for length in lengths:
+        if length == 0:
+            collision_counts.append(0)
+            continue
+        robot_collisions = int(cp.sum(~free_mask[offset:offset + length]))
+        collision_counts.append(robot_collisions)
+        offset += length
+
+    return collision_counts

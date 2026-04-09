@@ -2,7 +2,8 @@
 
 from ..core.types import ExecutionResult, PlanningStats
 from .route_executor import RouteExecutor
-from .space_time_search import ReservationTable, space_time_astar_gpu
+from .reservation_table import ReservationTable
+from .space_time_search import space_time_astar_gpu
 from .route_planner import plan_robot_route_st
 from .path_smoother import simplify_path_ompl, arc_length_resample
 from .orientation import apply_heading_orientation

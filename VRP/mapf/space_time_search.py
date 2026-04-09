@@ -12,9 +12,6 @@ heuristic-guided threshold selection (expanding nodes with f < f_min +
 delta) preserves A*'s search efficiency while enabling massive GPU
 parallelism, as demonstrated by the GATSA algorithm in Li et al. (2025).
 
-The reservation table is stored as a GPU-resident CuPy array, enabling
-vectorized batch queries and trajectory commits without CPU round-trips.
-
 References:
     Silver, D. (2005). Cooperative Pathfinding. AIIDE.
     Erdmann, M. & Lozano-Perez, T. (1987). On Multiple Moving Objects.
@@ -28,186 +25,68 @@ References:
 from __future__ import annotations
 
 import logging
-import math
 from typing import Optional, Tuple
 
 import cupy as cp
-import numpy as np
 
-from shared.grid_utils import downsample_occupancy_grid, OFFSETS_26, WEIGHTS_26
 from ..core.constants import (
-    SPACE_TIME_DT,
-    SPACE_TIME_MAX_HORIZON_S,
-    ST_ASTAR_MAX_EXPANSIONS,
+    OFFSETS_27,
+    WEIGHTS_27,
     GPU_SEARCH_MAX_ITERATIONS,
 )
+from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
-# 26-connected spatial offsets + wait action (0,0,0)
-_SPATIAL_OFFSETS = OFFSETS_26
-_SPATIAL_WEIGHTS = WEIGHTS_26
-_OFFSETS_27 = cp.array(_SPATIAL_OFFSETS + [(0, 0, 0)], dtype=cp.int32)
-_WEIGHTS_27 = cp.array(
-    list(_SPATIAL_WEIGHTS) + [0.0], dtype=cp.float32,
-)
-
-
-class ReservationTable:
-    """Dense 4D (T, Nx, Ny, Nz) reservation table on GPU.
-
-    Following Silver (2005), the reservation table records which
-    space-time cells are occupied by previously planned robots, allowing
-    subsequent robots to avoid collisions by construction.
-
-    Args:
-        grid_shape: (Nx, Ny, Nz) coarse spatial dimensions.
-        max_time_steps: number of discrete time slots.
-        robot_half_extents_voxels: (3,) per-axis half-width of robot AABB
-            in coarse voxels. Commits inflate point trajectories by this box.
-    """
-
-    def __init__(
-        self,
-        grid_shape: Tuple[int, int, int],
-        max_time_steps: int,
-        robot_half_extents_voxels: np.ndarray,
-    ):
-        self.Nx, self.Ny, self.Nz = grid_shape
-        self.T = max_time_steps
-        self._data = cp.zeros(
-            (self.T, self.Nx, self.Ny, self.Nz), dtype=cp.uint8,
-        )
-        self._half = np.asarray(robot_half_extents_voxels, dtype=np.intp)
-
-    def is_reserved(self, x: int, y: int, z: int, t: int) -> bool:
-        """Scalar query — pulls one element to CPU for control flow."""
-        if t >= self.T or t < 0:
-            return False
-        return bool(self._data[t, x, y, z])
-
-    def is_reserved_batch(
-        self, positions_ijk: cp.ndarray, time_steps: cp.ndarray,
-    ) -> cp.ndarray:
-        """Vectorized batch query. Returns (K,) bool CuPy array."""
-        t = time_steps.astype(cp.intp)
-        x = positions_ijk[:, 0].astype(cp.intp)
-        y = positions_ijk[:, 1].astype(cp.intp)
-        z = positions_ijk[:, 2].astype(cp.intp)
-        valid = (
-            (t >= 0) & (t < self.T)
-            & (x >= 0) & (x < self.Nx)
-            & (y >= 0) & (y < self.Ny)
-            & (z >= 0) & (z < self.Nz)
-        )
-        result = cp.zeros(len(t), dtype=cp.bool_)
-        if valid.any():
-            vi = cp.where(valid)[0]
-            result[vi] = self._data[t[vi], x[vi], y[vi], z[vi]].astype(cp.bool_)
-        return result
-
-    def commit_trajectory(
-        self,
-        positions_ijk: np.ndarray | cp.ndarray,
-        time_steps: np.ndarray | cp.ndarray,
-    ) -> None:
-        """Mark all AABB voxels around each (t, cx, cy, cz) sample."""
-        hx, hy, hz = int(self._half[0]), int(self._half[1]), int(self._half[2])
-
-        if isinstance(positions_ijk, np.ndarray):
-            positions_ijk = cp.asarray(positions_ijk)
-        if isinstance(time_steps, np.ndarray):
-            time_steps = cp.asarray(time_steps)
-
-        K = len(positions_ijk)
-        if K == 0:
-            return
-
-        ts = time_steps.astype(cp.intp)
-        pos = positions_ijk.astype(cp.intp)
-
-        valid = ts < self.T
-        if not valid.any():
-            return
-        ts = ts[valid]
-        pos = pos[valid]
-        cx, cy, cz = pos[:, 0], pos[:, 1], pos[:, 2]
-
-        for dx in range(-hx, hx + 1):
-            xi = cx + dx
-            mx = (xi >= 0) & (xi < self.Nx)
-            for dy in range(-hy, hy + 1):
-                yi = cy + dy
-                mxy = mx & (yi >= 0) & (yi < self.Ny)
-                for dz in range(-hz, hz + 1):
-                    zi = cz + dz
-                    m = mxy & (zi >= 0) & (zi < self.Nz)
-                    if not m.any():
-                        continue
-                    self._data[ts[m], xi[m], yi[m], zi[m]] = 1
-
-
-def world_to_coarse(
-    xyz: np.ndarray | cp.ndarray,
-    origin: np.ndarray | cp.ndarray,
-    res: float,
-) -> cp.ndarray:
-    """World-frame XYZ -> coarse-grid voxel index (floor)."""
-    xyz_g = cp.asarray(xyz, dtype=cp.float64)
-    origin_g = cp.asarray(origin, dtype=cp.float64)
-    return cp.floor((xyz_g - origin_g) / res).astype(cp.intp)
-
-
-def coarse_to_world(
-    ijk: np.ndarray | cp.ndarray,
-    origin: np.ndarray | cp.ndarray,
-    res: float,
-) -> cp.ndarray:
-    """Coarse voxel index -> world-frame XYZ (voxel centre)."""
-    ijk_g = cp.asarray(ijk, dtype=cp.float64)
-    origin_g = cp.asarray(origin, dtype=cp.float64)
-    return ijk_g * res + origin_g + res * 0.5
+from .reservation_table import ReservationTable  # noqa: E402
 
 
 def space_time_astar_gpu(
-    grid: cp.ndarray,
+    coarse_og: OccupancyGrid,
     start_ijk: cp.ndarray,
     goal_ijk: cp.ndarray,
-    t_start: int,
+    t_offset: int,
     reservation: ReservationTable,
-    resolution: float,
     time_step_cost: float = 0.01,
     max_time_steps: int = 0,
     max_iterations: int = GPU_SEARCH_MAX_ITERATIONS,
     f_threshold_delta: float = 2.0,
 ) -> Optional[Tuple[cp.ndarray, cp.ndarray]]:
-    """GPU parallel A* on a 4D space-time grid.
+    """GPU parallel A* on a 4D space-time grid with local time allocation.
 
     Uses heuristic-guided parallel frontier expansion (Zhou & Zeng, 2015):
     each iteration expands ALL frontier cells whose f-value is within
     ``f_threshold_delta`` of the current minimum, enabling GPU
     parallelism while preserving the A* heuristic's search efficiency.
 
+    All 27 neighbors (26-connected + wait) are expanded in a single
+    vectorized broadcast operation.
+
+    The search allocates ``g_cost`` only for ``max_time_steps`` local
+    time steps (not the full reservation horizon), starting at internal
+    index 0.  Reservation table queries use ``t_offset + local_t`` to
+    check absolute time.
+
     Args:
-        grid: (Nx, Ny, Nz) bool CuPy array (True = obstacle).
+        coarse_og: OccupancyGrid for the coarse planning grid.
         start_ijk: (3,) start voxel indices.
         goal_ijk: (3,) goal voxel indices.
-        t_start: starting time step.
+        t_offset: absolute time offset for reservation table queries.
         reservation: ReservationTable.
-        resolution: coarse grid resolution in metres.
         time_step_cost: cost per time step.
-        max_time_steps: planning horizon (0 = use reservation.T).
+        max_time_steps: local planning horizon. 0 = reservation.T - t_offset.
         max_iterations: maximum wavefront iterations.
         f_threshold_delta: controls parallelism vs optimality tradeoff.
-            Smaller = more A*-like (fewer cells expanded, more iterations).
-            Larger = more Dijkstra-like (more cells per iteration, fewer
-            iterations).
 
     Returns:
-        (path_ijk, path_t) as CuPy arrays, or None on failure.
+        (path_ijk, path_t) as CuPy arrays with absolute time steps,
+        or None on failure.
     """
-    Nx, Ny, Nz = int(grid.shape[0]), int(grid.shape[1]), int(grid.shape[2])
-    T_max = max_time_steps if max_time_steps > 0 else reservation.T
+    grid = coarse_og.grid
+    resolution = coarse_og.resolution
+    Nx, Ny, Nz = coarse_og.shape
+
+    T_local = max_time_steps if max_time_steps > 0 else max(1, reservation.T - t_offset)
 
     sx, sy, sz = int(start_ijk[0]), int(start_ijk[1]), int(start_ijk[2])
     gx, gy, gz = int(goal_ijk[0]), int(goal_ijk[1]), int(goal_ijk[2])
@@ -219,171 +98,192 @@ def space_time_astar_gpu(
     if (sx, sy, sz) == (gx, gy, gz):
         return (
             cp.array([[sx, sy, sz]], dtype=cp.intp),
-            cp.array([t_start], dtype=cp.intp),
+            cp.array([t_offset], dtype=cp.intp),
         )
 
-    # Heuristic: Euclidean distance to goal (spatial only)
-    def _h_grid():
-        """Precompute heuristic for the full spatial grid."""
-        xx = cp.arange(Nx, dtype=cp.float32) - gx
-        yy = cp.arange(Ny, dtype=cp.float32) - gy
-        zz = cp.arange(Nz, dtype=cp.float32) - gz
-        return cp.sqrt(
-            xx[:, None, None] ** 2 + yy[None, :, None] ** 2 + zz[None, None, :] ** 2
-        ) * resolution
+    # Heuristic: spatial Euclidean + temporal Chebyshev (admissible)
+    xx = cp.arange(Nx, dtype=cp.float32) - gx
+    yy = cp.arange(Ny, dtype=cp.float32) - gy
+    zz = cp.arange(Nz, dtype=cp.float32) - gz
+    spatial_h = cp.sqrt(
+        xx[:, None, None] ** 2 + yy[None, :, None] ** 2 + zz[None, None, :] ** 2
+    ) * resolution
+    chebyshev_h = cp.maximum(
+        cp.abs(xx[:, None, None]),
+        cp.maximum(cp.abs(yy[None, :, None]), cp.abs(zz[None, None, :]))
+    )
+    h_grid = spatial_h + chebyshev_h * time_step_cost  # (Nx, Ny, Nz)
 
-    h_grid = _h_grid()  # (Nx, Ny, Nz)
+    # g-cost and predecessor grids (local time: 0..T_local)
+    g_cost = cp.full((T_local, Nx, Ny, Nz), cp.inf, dtype=cp.float32)
+    g_cost[0, sx, sy, sz] = 0.0
 
-    # g-cost and predecessor grids
-    g_cost = cp.full((T_max, Nx, Ny, Nz), cp.inf, dtype=cp.float32)
-    g_cost[t_start, sx, sy, sz] = 0.0
+    pred = cp.full((T_local, Nx, Ny, Nz), -1, dtype=cp.int64)
 
-    # Predecessor: encode as flat index for path reconstruction
-    pred = cp.full((T_max, Nx, Ny, Nz), -1, dtype=cp.int64)
-
-    # Frontier mask: cells updated in the last iteration
-    frontier = cp.zeros((T_max, Nx, Ny, Nz), dtype=cp.bool_)
-    frontier[t_start, sx, sy, sz] = True
-
-    offsets_27 = _OFFSETS_27
-    weights_27 = _WEIGHTS_27
+    # Index-based frontier: (F, 4) array of [t_local, x, y, z]
+    frontier = cp.array([[0, sx, sy, sz]], dtype=cp.int32)
 
     for iteration in range(max_iterations):
         # Check if goal reached
-        if g_cost[t_start:, gx, gy, gz].min() < cp.inf:
-            # Find the time step with lowest g at goal
-            goal_costs = g_cost[:, gx, gy, gz]
-            t_goal = int(cp.argmin(goal_costs))
-            if goal_costs[t_goal] < cp.inf:
-                return _reconstruct_path(pred, g_cost, t_goal, gx, gy, gz,
-                                         t_start, sx, sy, sz, Nx, Ny, Nz)
+        goal_costs = g_cost[:, gx, gy, gz]
+        best_t = int(cp.argmin(goal_costs))
+        if goal_costs[best_t] < cp.inf:
+            return _reconstruct_path(
+                pred, t_offset, best_t, gx, gy, gz, sx, sy, sz, Nx, Ny, Nz,
+            )
 
-        if not frontier.any():
+        if len(frontier) == 0:
             break
 
         # Select expansion set: frontier cells where f < f_min + delta
-        frontier_indices = cp.argwhere(frontier)  # (F, 4) = [t, x, y, z]
-        if len(frontier_indices) == 0:
-            break
-
-        fi_t = frontier_indices[:, 0]
-        fi_x = frontier_indices[:, 1]
-        fi_y = frontier_indices[:, 2]
-        fi_z = frontier_indices[:, 3]
+        fi_t = frontier[:, 0]
+        fi_x = frontier[:, 1]
+        fi_y = frontier[:, 2]
+        fi_z = frontier[:, 3]
         f_vals = g_cost[fi_t, fi_x, fi_y, fi_z] + h_grid[fi_x, fi_y, fi_z]
         f_min = float(f_vals.min())
         expand_mask = f_vals <= f_min + f_threshold_delta
-        expand_idx = frontier_indices[expand_mask]  # (E, 4)
 
-        if len(expand_idx) == 0:
+        if not expand_mask.any():
             break
 
-        # Clear expanded cells from frontier
-        frontier[expand_idx[:, 0], expand_idx[:, 1],
-                 expand_idx[:, 2], expand_idx[:, 3]] = False
+        expand_idx = frontier[expand_mask]   # (E, 4)
+        remaining = frontier[~expand_mask]   # cells not expanded yet
 
         E = len(expand_idx)
-        et, ex, ey, ez = expand_idx[:, 0], expand_idx[:, 1], expand_idx[:, 2], expand_idx[:, 3]
+        et = expand_idx[:, 0]
+        ex = expand_idx[:, 1]
+        ey = expand_idx[:, 2]
+        ez = expand_idx[:, 3]
         cur_g = g_cost[et, ex, ey, ez]  # (E,)
 
-        # Next time step
-        nt = et + 1  # (E,)
-        time_valid = nt < T_max
+        # All 27 neighbors of all E cells in one vectorized operation
+        nt = (et + 1)[:, None].astype(cp.int32)       # (E, 1)
+        spatial = expand_idx[:, 1:4]                    # (E, 3)
+        nbr_pos = spatial[:, None, :] + OFFSETS_27[None, :, :]  # (E, 27, 3)
 
-        # For each of 27 neighbors, compute in parallel
-        new_frontier = cp.zeros((T_max, Nx, Ny, Nz), dtype=cp.bool_)
+        # Flatten to (E*27,)
+        flat_pos = nbr_pos.reshape(-1, 3)               # (E*27, 3)
+        flat_t = cp.broadcast_to(nt, (E, 27)).reshape(-1)  # (E*27,)
+        flat_w = cp.broadcast_to(WEIGHTS_27[None, :], (E, 27)).reshape(-1)
+        flat_parent = cp.broadcast_to(
+            cp.arange(E, dtype=cp.int32)[:, None], (E, 27),
+        ).reshape(-1)
 
-        for n_idx in range(27):
-            dx, dy, dz = int(offsets_27[n_idx, 0]), int(offsets_27[n_idx, 1]), int(offsets_27[n_idx, 2])
-            w = float(weights_27[n_idx])
+        nx, ny, nz = flat_pos[:, 0], flat_pos[:, 1], flat_pos[:, 2]
 
-            nx = ex + dx
-            ny = ey + dy
-            nz = ez + dz
+        # Bounds + time check
+        valid = (
+            (flat_t >= 0) & (flat_t < T_local)
+            & (nx >= 0) & (nx < Nx)
+            & (ny >= 0) & (ny < Ny)
+            & (nz >= 0) & (nz < Nz)
+        )
+        if not valid.any():
+            frontier = remaining
+            continue
 
-            # Bounds check
-            valid = (
-                time_valid
-                & (nx >= 0) & (nx < Nx)
-                & (ny >= 0) & (ny < Ny)
-                & (nz >= 0) & (nz < Nz)
-            )
-            if not valid.any():
-                continue
+        vi = cp.where(valid)[0]
+        nx, ny, nz = nx[vi], ny[vi], nz[vi]
+        vt = flat_t[vi]
+        vw = flat_w[vi]
+        vp = flat_parent[vi]
 
-            vi = cp.where(valid)[0]
-            vnx, vny, vnz, vnt = nx[vi], ny[vi], nz[vi], nt[vi]
+        # Obstacle check
+        free = ~grid[nx, ny, nz]
+        if not free.any():
+            frontier = remaining
+            continue
+        fi2 = cp.where(free)[0]
+        nx, ny, nz, vt, vw, vp = nx[fi2], ny[fi2], nz[fi2], vt[fi2], vw[fi2], vp[fi2]
 
-            # Obstacle check
-            free = ~grid[vnx, vny, vnz]
-            if not free.any():
-                continue
-            fi2 = cp.where(free)[0]
-            vi = vi[fi2]
-            vnx, vny, vnz, vnt = vnx[fi2], vny[fi2], vnz[fi2], vnt[fi2]
+        # Reservation check (absolute time)
+        abs_t = vt + t_offset
+        pos_check = cp.stack([nx, ny, nz], axis=1)
+        not_reserved = ~reservation.is_reserved_batch(pos_check, abs_t)
+        if not not_reserved.any():
+            frontier = remaining
+            continue
+        fi3 = cp.where(not_reserved)[0]
+        nx, ny, nz, vt, vw, vp = nx[fi3], ny[fi3], nz[fi3], vt[fi3], vw[fi3], vp[fi3]
 
-            # Reservation check
-            pos_check = cp.stack([vnx, vny, vnz], axis=1)
-            reserved = reservation.is_reserved_batch(pos_check, vnt)
-            not_reserved = ~reserved
-            if not not_reserved.any():
-                continue
-            fi3 = cp.where(not_reserved)[0]
-            vi = vi[fi3]
-            vnx, vny, vnz, vnt = vnx[fi3], vny[fi3], vnz[fi3], vnt[fi3]
+        # Compute tentative g
+        new_g = cur_g[vp] + vw * resolution + time_step_cost
 
-            # Compute tentative g
-            new_g = cur_g[vi] + w * resolution + time_step_cost
+        # Relaxation: keep only candidates that improve on current g-cost
+        old_g = g_cost[vt, nx, ny, nz]
+        improved = new_g < old_g
+        if not improved.any():
+            frontier = remaining
+            continue
 
-            # Relaxation: update if better
-            old_g = g_cost[vnt, vnx, vny, vnz]
-            improved = new_g < old_g
-            if not improved.any():
-                continue
+        imp = cp.where(improved)[0]
+        vt_imp, nx_imp, ny_imp, nz_imp = vt[imp], nx[imp], ny[imp], nz[imp]
+        new_g_imp = new_g[imp]
+        vp_imp = vp[imp]
 
-            imp = cp.where(improved)[0]
-            g_cost[vnt[imp], vnx[imp], vny[imp], vnz[imp]] = new_g[imp]
+        # Resolve duplicates: multiple parents may improve the same target
+        # cell. Sort by (target_key, g) so the best-g candidate comes first
+        # per target, then take only the first occurrence of each key.
+        flat_keys = (
+            vt_imp.astype(cp.int64) * (Nx * Ny * Nz)
+            + nx_imp.astype(cp.int64) * (Ny * Nz)
+            + ny_imp.astype(cp.int64) * Nz
+            + nz_imp.astype(cp.int64)
+        )
+        sort_order = cp.lexsort(cp.stack([new_g_imp, flat_keys]))
+        sorted_keys = flat_keys[sort_order]
+        first_mask = cp.ones(len(sorted_keys), dtype=cp.bool_)
+        first_mask[1:] = sorted_keys[1:] != sorted_keys[:-1]
+        winners = sort_order[first_mask]
 
-            # Store predecessor as flat index of the source cell
-            src_flat = (
-                et[vi[imp]] * (Nx * Ny * Nz)
-                + ex[vi[imp]] * (Ny * Nz)
-                + ey[vi[imp]] * Nz
-                + ez[vi[imp]]
-            )
-            pred[vnt[imp], vnx[imp], vny[imp], vnz[imp]] = src_flat
-            new_frontier[vnt[imp], vnx[imp], vny[imp], vnz[imp]] = True
+        # Write g-cost and predecessor only for the best candidate per cell
+        g_cost[vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]] = new_g_imp[winners]
 
-        frontier = new_frontier
+        src_flat = (
+            et[vp_imp[winners]] * (Nx * Ny * Nz)
+            + ex[vp_imp[winners]] * (Ny * Nz)
+            + ey[vp_imp[winners]] * Nz
+            + ez[vp_imp[winners]]
+        )
+        pred[vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]] = src_flat
+
+        # Winners are already deduplicated — use directly as new frontier
+        new_cells = cp.stack([vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]], axis=1)
+        frontier = cp.concatenate([remaining, new_cells], axis=0) if len(remaining) > 0 else new_cells
 
     # Final goal check
     goal_costs = g_cost[:, gx, gy, gz]
-    t_goal = int(cp.argmin(goal_costs))
-    if goal_costs[t_goal] < cp.inf:
-        return _reconstruct_path(pred, g_cost, t_goal, gx, gy, gz,
-                                 t_start, sx, sy, sz, Nx, Ny, Nz)
+    best_t = int(cp.argmin(goal_costs))
+    if goal_costs[best_t] < cp.inf:
+        return _reconstruct_path(
+            pred, t_offset, best_t, gx, gy, gz, sx, sy, sz, Nx, Ny, Nz,
+        )
 
     logger.warning("[ST-A*-GPU] No path found (start=(%d,%d,%d) goal=(%d,%d,%d) "
-                   "t=%d, %d iterations).",
-                   sx, sy, sz, gx, gy, gz, t_start, iteration + 1)
+                   "t_offset=%d, %d iterations).",
+                   sx, sy, sz, gx, gy, gz, t_offset, iteration + 1)
     return None
 
 
 def _reconstruct_path(
-    pred: cp.ndarray, g_cost: cp.ndarray,
-    t_goal: int, gx: int, gy: int, gz: int,
-    t_start: int, sx: int, sy: int, sz: int,
+    pred: cp.ndarray,
+    t_offset: int,
+    t_goal_local: int, gx: int, gy: int, gz: int,
+    sx: int, sy: int, sz: int,
     Nx: int, Ny: int, Nz: int,
 ) -> Tuple[cp.ndarray, cp.ndarray]:
-    """Backtrack through predecessor grid to reconstruct path."""
-    path = [(gx, gy, gz, t_goal)]
-    ct, cx, cy, cz = t_goal, gx, gy, gz
+    """Backtrack through predecessor grid to reconstruct path.
+
+    Returns absolute time steps (local + t_offset).
+    """
+    path = [(gx, gy, gz, t_goal_local)]
+    ct, cx, cy, cz = t_goal_local, gx, gy, gz
     stride_xyz = Nx * Ny * Nz
     stride_x = Ny * Nz
 
-    max_steps = 50000
-    for _ in range(max_steps):
-        if ct == t_start and cx == sx and cy == sy and cz == sz:
+    for _ in range(GPU_SEARCH_MAX_ITERATIONS):
+        if ct == 0 and cx == sx and cy == sy and cz == sz:
             break
         flat = int(pred[ct, cx, cy, cz])
         if flat < 0:
@@ -400,6 +300,6 @@ def _reconstruct_path(
     path.reverse()
     path_arr = cp.array(path, dtype=cp.intp)
     return (
-        path_arr[:, :3],  # (M, 3) ijk
-        path_arr[:, 3],   # (M,) time steps
+        path_arr[:, :3],              # (M, 3) ijk
+        path_arr[:, 3] + t_offset,    # (M,) absolute time steps
     )

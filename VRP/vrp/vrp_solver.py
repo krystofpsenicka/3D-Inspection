@@ -4,17 +4,15 @@
 and solves the VRP with a blended makespan/total-distance objective.
 
 Two MIP backends are available:
-- ``MIPMakespanGPU`` — cuOpt MILP solver (GPU).
-- ``MIPMakespanCPU`` — PuLP + HiGHS solver (CPU).
+- ``MIPSolverGPU`` — cuOpt MILP solver (GPU).
+- ``MIPSolverCPU`` — PuLP + HiGHS solver (CPU).
 """
 
 from __future__ import annotations
 
 import logging
-import math
 
 import cupy as cp
-import numpy as np
 
 from ..core.constants import (
     MIP_GAP,
@@ -34,7 +32,7 @@ logger = logging.getLogger(__name__)
 def solve_vrp(
     dist_matrix: cp.ndarray,
     num_vehicles: int,
-    depot: list[int] = None,
+    depots: list[int],
     alpha: float = 1.0,
     backend: VRPBackend = VRPBackend.HIGHS,
     rapids_python: str = RAPIDS_PYTHON,
@@ -45,9 +43,9 @@ def solve_vrp(
     """Solve the VRP using the specified MIP backend.
 
     Args:
-        dist_matrix: Square (N, N) cost matrix.
+        dist_matrix: Square (N, N) CuPy cost matrix.
         num_vehicles: Number of AUVs / robots.
-        depot: Per-vehicle depot index list.
+        depots: Per-vehicle depot index list.
         alpha: Objective blending in [0, 1]. 1.0 = makespan, 0.0 = total dist.
         backend: ``VRPBackend.CUOPT`` (GPU) or ``VRPBackend.HIGHS`` (CPU).
         rapids_python: Python binary path for the rapids_solver env.
@@ -63,31 +61,29 @@ def solve_vrp(
     if not isinstance(backend, VRPBackend):
         raise TypeError(f"backend must be a VRPBackend, got {backend!r}")
 
-    from .mip_makespan_solver import MIPMakespanCPU, MIPMakespanGPU
+    from .mip_solver_cpu import MIPSolverCPU
+    from .mip_solver_gpu import MIPSolverGPU
 
     warm_start_routes = _nearest_neighbor_warmstart(
-        dist_matrix, num_vehicles, depot,
+        dist_matrix, num_vehicles, depots,
     )
     logger.info("[solve_vrp] Nearest-neighbour warm-start ready.")
 
-    # MIP solvers are CPU-based; convert to numpy once
-    dist_matrix_np = cp.asnumpy(dist_matrix)
-
     if backend == VRPBackend.CUOPT:
-        solver = MIPMakespanGPU(
+        solver = MIPSolverGPU(
             rapids_python=rapids_python,
             time_limit=time_limit,
             mip_gap=mip_gap,
             timeout=gpu_timeout,
         )
     else:
-        solver = MIPMakespanCPU(
+        solver = MIPSolverCPU(
             time_limit=time_limit,
             mip_gap=mip_gap,
         )
 
     result = solver.solve(
-        dist_matrix_np, num_vehicles, depot,
+        dist_matrix, num_vehicles, depots,
         alpha=alpha,
         warm_start_routes=warm_start_routes,
     )

@@ -4,12 +4,11 @@ VRP Planner – Pipeline Orchestrator
 :class:`VRPPipeline` wires all modules together in the correct order:
 
 1. Build / load occupancy grid from the wreck mesh.
-2. Load robot config; determine depot position (retract config XYZ).
-   Load inspection waypoints and prepend the depot as node 0.
-3. Compute GPU distance matrix over all nodes (depot + inspection).
-4. Solve VRP (cuOpt GPU → OR-Tools CPU fallback); wrap routes with depot.
-5. Execute trajectories per robot (cuRobo robot-unaware + RRT* warm-start).
-   Post-planning AABB collision resolution via hold-step insertion.
+2. Determine depot positions above the mesh.
+   Load inspection waypoints and prepend depots as nodes 0..K-1.
+3. Compute GPU distance matrix over all nodes (depots + inspection).
+4. Solve VRP (cuOpt GPU or HiGHS CPU); wrap routes with depot indices.
+5. Execute trajectories per robot (Space-Time A* + OMPL smoothing).
 6. (Optional) Replay in Isaac Sim.
 """
 
@@ -38,11 +37,11 @@ from ..core.constants import (
 )
 from ..core.types import ExecutionResult, PipelineConfig, VRPResult
 from ..core.distance_matrix import compute_distance_matrix
+from ..core.geometry import viewpoints_to_robot_waypoints
 from shared.occupancy_grid import OccupancyGrid
 from shared.mesh_loader import load_and_transform_mesh
 from shared.grid_builder_utils import build_occupancy_grid as _shared_build_occupancy_grid
 from ..mapf.route_executor import RouteExecutor
-from ..core.robot_config import load_local_robot_config
 from ..vrp.vrp_solver import solve_vrp
 from ..core.waypoint_loader import load_waypoints
 
@@ -129,15 +128,11 @@ class VRPPipeline:
         # ── Stage 1: Occupancy grid ───────────────────────────────────
         logger.info("[1/5] Building occupancy grid …")
 
-        # ── Stage 2: Robot config + depot positions (computed BEFORE grid) ─
+        # ── Stage 2: Depot positions + waypoints (computed BEFORE grid) ──
         # Depot Z is anchored to the mesh top so the grid can be extended
         # to include the depots in one voxelisation pass, giving accurate
         # A* costs and path-cache trajectories to/from depot nodes.
-        logger.info("[2/5] Loading robot config and waypoints …")
-
-        robot_cfg   = load_local_robot_config("brov.yml")
-        j_names     = robot_cfg["kinematics"]["cspace"]["joint_names"]
-        default_cfg = robot_cfg["kinematics"]["cspace"]["retract_config"]
+        logger.info("[2/5] Computing depot positions and loading waypoints …")
 
         # Probe mesh bounds (fast — no voxelisation) so depot Z is stable.
         logger.info("      Probing mesh bounds for depot placement …")
@@ -202,22 +197,24 @@ class VRPPipeline:
         logger.info("      Total VRP nodes: %d (%d homes + %d inspection)",
                     len(all_positions), K, N)
 
+        # ── Convert to GPU early (needed for robot position offset) ────────
+        wp_positions_gpu = cp.asarray(all_positions, dtype=cp.float64)
+        wp_rotmats_gpu = cp.asarray(all_rotmats, dtype=cp.float64)
+        robot_positions_gpu = viewpoints_to_robot_waypoints(
+            wp_positions_gpu, wp_rotmats_gpu, set(home_indices),
+        )
+
         # ── Stage 3: Distance matrix (depot + inspection waypoints) ────────
         M = len(all_positions)
         logger.info("[3/5] Computing %dx%d distance matrix (cuGraph) …", M, M)
-        dist_matrix = compute_distance_matrix(og, all_positions)
+        dist_matrix = compute_distance_matrix(og, robot_positions_gpu)
         logger.info("      Distance matrix computed.  max_dist=%.2fm",
                     float(cp.max(dist_matrix[cp.isfinite(dist_matrix)])))
 
-        # ── Build start configs (shared across feedback iterations) ────
-        start_configs: List[np.ndarray] = []
-        for i in range(cfg.num_robots):
-            s    = list(default_cfg)
-            xyz  = robot_start_xyzs[i]
-            s[0] = float(xyz[0])
-            s[1] = float(xyz[1])
-            s[2] = float(xyz[2])
-            start_configs.append(np.array(s, dtype=np.float32))
+        # ── Build start positions (shared across feedback iterations) ──
+        start_positions: List[np.ndarray] = [
+            np.array(xyz, dtype=np.float32) for xyz in robot_start_xyzs
+        ]
 
         # ── Stage 4+5: VRP solve ↔ path planning feedback loop ──────────
         current_dist = dist_matrix.copy()
@@ -232,7 +229,7 @@ class VRPPipeline:
             vrp_result: VRPResult = solve_vrp(
                 dist_matrix    = current_dist,
                 num_vehicles   = cfg.num_robots,
-                depot          = home_indices,
+                depots         = home_indices,
                 alpha          = cfg.alpha,
                 backend        = cfg.solver_backend,
                 rapids_python  = cfg.rapids_python,
@@ -261,20 +258,17 @@ class VRPPipeline:
             logger.info("[5/5] Generating trajectories (iter=%d/%d) …",
                         iteration + 1, max_iters)
 
-            import cupy as _cp
-            wp_positions_gpu = _cp.asarray(all_positions, dtype=_cp.float32)
-            wp_rotmats_gpu = _cp.asarray(all_rotmats, dtype=_cp.float32)
-
             executor = RouteExecutor(
-                start_configs = start_configs,
-                joint_names   = j_names,
-                og            = og,
+                start_positions = start_positions,
+                og              = og,
             )
             exec_result = executor.execute(
                 routes             = routes,
-                waypoint_positions = wp_positions_gpu,
+                waypoint_positions = robot_positions_gpu,
                 waypoint_rotmats   = wp_rotmats_gpu,
                 home_indices       = set(home_indices),
+                dist_matrix        = current_dist,
+                alpha              = cfg.alpha,
             )
 
             # ── Check feedback convergence ───────────────────────────

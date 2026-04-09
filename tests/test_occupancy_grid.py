@@ -97,19 +97,22 @@ class TestInflateGrid:
 
 class TestDownsample:
     def test_output_shape(self):
-        grid = cp.zeros((20, 20, 20), dtype=cp.bool_)
-        cg, co, cr = downsample_occupancy_grid(grid, cp.zeros(3), 0.1, 0.2)
-        assert cg.shape == (10, 10, 10)
+        og = OccupancyGrid(grid=cp.zeros((20, 20, 20), dtype=cp.bool_),
+                           origin=cp.zeros(3, dtype=cp.float64), resolution=0.1)
+        coarse_og = downsample_occupancy_grid(og, 0.2)
+        assert coarse_og.shape == (10, 10, 10)
 
     def test_conservative(self):
         """If any fine voxel is occupied, coarse voxel must be occupied."""
         grid = cp.zeros((10, 10, 10), dtype=cp.bool_)
         grid[0, 0, 0] = True
-        cg, _, _ = downsample_occupancy_grid(grid, cp.zeros(3), 1.0, 2.0)
-        assert bool(cg[0, 0, 0])
+        og = OccupancyGrid(grid=grid, origin=cp.zeros(3, dtype=cp.float64), resolution=1.0)
+        coarse_og = downsample_occupancy_grid(og, 2.0)
+        assert bool(coarse_og.grid[0, 0, 0])
 
     def test_origin_preserved(self):
         origin = cp.array([1.0, 2.0, 3.0])
-        grid = cp.zeros((10, 10, 10), dtype=cp.bool_)
-        _, co, _ = downsample_occupancy_grid(grid, origin, 0.1, 0.2)
-        assert cp.allclose(co, origin)
+        og = OccupancyGrid(grid=cp.zeros((10, 10, 10), dtype=cp.bool_),
+                           origin=origin, resolution=0.1)
+        coarse_og = downsample_occupancy_grid(og, 0.2)
+        assert cp.allclose(coarse_og.origin, origin)
