@@ -77,36 +77,37 @@ def apply_heading_orientation(
 
     bins = cp.searchsorted(boundaries, t_dense, side="left")  # (N,)
 
-    # ── Pre-first segment (b == 0) ───────────────────────────────────
+    is_odd = (bins % 2) == 1
+
+    # ── Dwell segments (odd bins: b = 2i+1 → wp index i) ────────────
+    dwell_mask = is_odd & (bins >= 1) & (bins <= 2 * n_wp - 1)
+    wp_idx = (bins[dwell_mask] - 1) // 2
+    yaw[dwell_mask] = wp_yaws[wp_idx]
+    camera_pitch[dwell_mask] = wp_cpitch[wp_idx]
+
+    # ── Transition segments (even bins 2..2n_wp-2: b = 2i+2 → from i to i+1)
+    trans_mask = ~is_odd & (bins >= 2) & (bins <= 2 * n_wp - 2)
+    if trans_mask.any():
+        from_idx = bins[trans_mask] // 2 - 1  # source waypoint
+        to_idx = from_idx + 1
+
+        t0 = wp_t_de[from_idx]
+        t1 = wp_t_ds[to_idx]
+        dur = t1 - t0
+        safe_dur = cp.maximum(dur, 1e-12)
+        blend = cp.clip((t_dense[trans_mask] - t0) / safe_dur, 0.0, 1.0)
+        ease = 0.5 * (1.0 - cp.cos(math.pi * blend))
+
+        yaw[trans_mask] = wp_yaws[from_idx] + ease * (wp_yaws[to_idx] - wp_yaws[from_idx])
+        camera_pitch[trans_mask] = wp_cpitch[from_idx] + ease * (wp_cpitch[to_idx] - wp_cpitch[from_idx])
+
+    # ── Pre-first segment (b == 0) ──────────────────────────────────
     pre_mask = bins == 0
     yaw[pre_mask] = wp_yaws[0]
     camera_pitch[pre_mask] = 0.0
 
-    # ── Dwell segments (odd bins: b = 2i+1) ──────────────────────────
-    for i in range(n_wp):
-        dwell_mask = bins == (2 * i + 1)
-        yaw[dwell_mask] = wp_yaws[i]
-        camera_pitch[dwell_mask] = wp_cpitch[i]
-
-    # ── Transition segments (even bins > 0: b = 2i+2 for i=0..n_wp-2) ──
-    for i in range(n_wp - 1):
-        trans_mask = bins == (2 * i + 2)
-        if not trans_mask.any():
-            continue
-        t0 = wp_t_de[i]
-        t1 = wp_t_ds[i + 1]
-        dur = t1 - t0
-        if float(dur) > 0:
-            blend = (t_dense[trans_mask] - t0) / dur
-            ease = 0.5 * (1.0 - cp.cos(math.pi * blend))
-            yaw[trans_mask] = wp_yaws[i] + ease * (wp_yaws[i + 1] - wp_yaws[i])
-            camera_pitch[trans_mask] = wp_cpitch[i] + ease * (wp_cpitch[i + 1] - wp_cpitch[i])
-        else:
-            yaw[trans_mask] = wp_yaws[i]
-            camera_pitch[trans_mask] = wp_cpitch[i]
-
-    # ── Post-last segment (b >= 2*n_wp) ──────────────────────────────
-    post_mask = bins >= (2 * n_wp)
+    # ── Post-last segment (b >= 2*n_wp) ─────────────────────────────
+    post_mask = bins >= 2 * n_wp
     yaw[post_mask] = wp_yaws[-1]
     camera_pitch[post_mask] = 0.0
 
