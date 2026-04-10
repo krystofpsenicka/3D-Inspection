@@ -54,9 +54,6 @@ def plan_robot_route_st(
 ) -> Tuple[cp.ndarray, cp.ndarray, list, PlanningStats]:
     """Plan one robot through its full VRP route using GPU Space-Time A*.
 
-    ``waypoint_positions`` must already be robot body-centre positions
-    (see :func:`~VRP.core.geometry.viewpoints_to_robot_waypoints`).
-
     Each leg is planned with a single A* call using a local time budget
     proportional to the leg distance.
 

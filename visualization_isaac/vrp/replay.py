@@ -2,7 +2,7 @@
 
 Extracts reusable scene-building operations from the VRP replay pipeline.
 The lifecycle orchestration (SimulationApp, World, replay loop) lives in
-``VRP.scripts._isaac_replay``.
+``visualization_isaac.vrp.isaac_replay``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import List, Tuple
 
 import numpy as np
 
-from .._usd_primitives import create_cuboid_prim
+from .._usd_primitives import create_cuboid_prim, create_mesh_prim, set_prim_pose
 
 logger = logging.getLogger(__name__)
 
@@ -120,44 +120,111 @@ class ReplayVisualizer:
         mesh_pose: list,
         mesh_target_length: float,
     ) -> list[str]:
-        """Add static obstacles and mesh via cuRobo ``WorldConfig``.
+        """Add the inspection mesh as a USD prim.
+
+        The mesh is loaded via trimesh, scaled to ``mesh_target_length``,
+        and positioned according to ``mesh_pose``.
 
         Returns
         -------
-        List of created prim paths (opaque — cuRobo manages internals).
+        List of created prim paths.
         """
-        from curobo.util.usd_helper import UsdHelper
-        from curobo.wrap.reacher.motion_gen import WorldConfig
+        from shared.mesh_loader import load_and_transform_mesh
 
-        usd_help = UsdHelper()
-        usd_help.load_stage(stage)
-
-        world_dict: dict = {}
-        if os.path.isfile(mesh_path):
-            import trimesh as _tm
-
-            _raw = _tm.load(mesh_path, force="mesh")
-            if isinstance(_raw, _tm.Scene):
-                _raw = _tm.util.concatenate(list(_raw.geometry.values()))
-            _longest = float(_raw.extents.max())
-            _mesh_scale = mesh_target_length / _longest if _longest > 0 else 1.0
-
-            world_dict["mesh"] = {
-                "duke_of_lancaster": {
-                    "file_path": mesh_path,
-                    "pose": mesh_pose,
-                    "scale": [_mesh_scale] * 3,
-                }
-            }
-            logger.info("Adding mesh: %s  scale=%.4f", mesh_path, _mesh_scale)
-        else:
+        paths: list[str] = []
+        if not os.path.isfile(mesh_path):
             logger.warning("Mesh not found at %s — skipping.", mesh_path)
+            return paths
 
-        usd_help.add_world_to_stage(
-            WorldConfig.from_dict(world_dict),
-            base_frame=base_path,
+        mesh = load_and_transform_mesh(mesh_path, mesh_target_length, mesh_pose)
+        prim_path = f"{base_path}/inspection_mesh"
+        create_mesh_prim(stage, prim_path, mesh, color=(0.6, 0.65, 0.7), opacity=0.8)
+        paths.append(prim_path)
+        logger.info("Added mesh obstacle: %s", prim_path)
+        return paths
+
+    # ── Robot spawning ──────────────────────────────────────────────
+
+    def add_robots(
+        self, stage, base_path: str,
+        urdf_path: str,
+        num_robots: int,
+    ) -> list:
+        """Import a URDF robot and spawn ``num_robots`` instances.
+
+        Returns
+        -------
+        List of (Robot, prim) tuples for the replay loop to animate.
+        """
+        ISAAC_SIM_45 = False
+        try:
+            from omni.importer.urdf import _urdf
+        except ImportError:
+            from isaacsim.asset.importer.urdf import _urdf  # type: ignore
+            ISAAC_SIM_45 = True
+
+        from omni.isaac.core.robots import Robot
+        import omni.usd  # type: ignore
+
+        urdf_iface = _urdf.acquire_urdf_interface()
+
+        import_config = _urdf.ImportConfig()
+        import_config.merge_fixed_joints = False
+        import_config.convex_decomp = False
+        import_config.fix_base = True
+        import_config.make_default_prim = True
+        import_config.self_collision = False
+        import_config.create_physics_scene = True
+        import_config.import_inertia_tensor = False
+        import_config.default_drive_strength = 100_000.0
+        import_config.default_position_drive_damping = 10_000.0
+        import_config.default_drive_type = (
+            _urdf.UrdfJointTargetType.JOINT_DRIVE_POSITION
         )
-        return []
+        import_config.distance_scale = 1
+        import_config.density = 0.0
+
+        robot_dir = os.path.dirname(urdf_path)
+        urdf_file = os.path.basename(urdf_path)
+
+        if ISAAC_SIM_45:
+            import omni.kit.commands  # type: ignore
+            dest_usd = os.path.join(
+                robot_dir,
+                os.path.splitext(urdf_file)[0] + "_vrp_temp.usd",
+            )
+            _, inner_prim_path = omni.kit.commands.execute(
+                "URDFParseAndImportFile",
+                urdf_path=os.path.join(robot_dir, urdf_file),
+                import_config=import_config,
+                dest_path=dest_usd,
+            )
+        else:
+            imported = urdf_iface.parse_urdf(robot_dir, urdf_file, import_config)
+            inner_prim_path = urdf_iface.import_robot(
+                robot_dir, urdf_file, imported, import_config, ""
+            )
+            dest_usd = None
+
+        robots = []
+        rob_prims = []
+        for i in range(num_robots):
+            dp = str(stage.GetDefaultPrim().GetPath())
+            pp = omni.usd.get_stage_next_free_path(
+                stage, dp + inner_prim_path, False,
+            )
+            stage.OverridePrim(pp).GetReferences().AddReference(dest_usd)
+            robot = Robot(prim_path=pp, name=f"brov_{i}")
+            set_prim_pose(
+                stage.GetPrimAtPath(pp),
+                np.zeros(3, dtype=np.float64),
+                np.array([1, 0, 0, 0], dtype=np.float64),
+            )
+            robots.append(robot)
+            rob_prims.append(stage.GetPrimAtPath(pp))
+            logger.info("Spawned robot %d  prim=%s", i, pp)
+
+        return list(zip(robots, rob_prims))
 
     # ── Scene setup helpers ──────────────────────────────────────────
 

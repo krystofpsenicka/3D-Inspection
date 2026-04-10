@@ -10,7 +10,8 @@ import time
 from typing import Dict, Any
 import matplotlib.pyplot as plt
 
-from visibility.core.types import FrustumParams, OptimizationResult, Side
+from visibility.core.types import FrustumParams, OptimizationResult
+from shared.types import Side
 from visibility.sampling import WeightedViewpointSampler
 from shared.surface_sampler import SurfacePointSampler
 from visibility.visibility.raycast import RaycastingVisibilityQuery

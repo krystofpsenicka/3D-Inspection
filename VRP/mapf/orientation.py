@@ -4,9 +4,6 @@ Sets body yaw and camera pitch on a densely sampled trajectory.
 During dwell windows the robot holds the waypoint's viewing direction;
 between dwells yaw and camera pitch are cosine-eased.
 
-All computation runs on GPU (CuPy). Callers are responsible for
-converting inputs to CuPy and outputs back to NumPy if needed.
-
 Trajectory layout: [x, y, z, yaw, cam_pitch, cam_roll]
 """
 
@@ -22,21 +19,17 @@ def apply_heading_orientation(
     traj: cp.ndarray,
     t_dense: cp.ndarray,
     dt: float,
-    wp_schedule_s: Optional[list] = None,
+    wp_schedule_s: Optional[cp.ndarray] = None,
     waypoint_rotmats: Optional[cp.ndarray] = None,
 ) -> cp.ndarray:
     """Set yaw and camera pitch on a dense trajectory.
-
-    Trajectory layout: [x, y, z, yaw, cam_pitch, cam_roll]
-        yaw       = column 3
-        cam_pitch = column 4
 
     Args:
         traj: (N, 6) CuPy — dense trajectory samples.
         t_dense: (N,) CuPy — dense time grid.
         dt: replay time step (seconds).
-        wp_schedule_s: list of (t_dwell_start, t_dwell_end, node_idx)
-            tuples, in seconds.
+        wp_schedule_s: (n_wp, 3) CuPy — columns [t_dwell_start, t_dwell_end,
+            node_idx].  ``None`` disables waypoint-based orientation.
         waypoint_rotmats: (M, 3, 3) CuPy — rotation matrices for all
             VRP nodes (column 0 = forward direction).
 
@@ -50,64 +43,72 @@ def apply_heading_orientation(
     yaw = cp.empty(N)
     camera_pitch = cp.zeros(N)
 
-    if not wp_schedule_s or waypoint_rotmats is None:
+    if wp_schedule_s is None or waypoint_rotmats is None or len(wp_schedule_s) == 0:
         yaw[:] = traj[0, 3]
         traj[:, 3] = (yaw + math.pi) % (2 * math.pi) - math.pi
         return traj
 
-    wp_yaws: list = []
-    wp_cpitch: list = []
-    wp_t_ds: list = []
-    wp_t_de: list = []
-
-    for (t_ds, t_de, node_idx) in wp_schedule_s:
-        forward = waypoint_rotmats[node_idx, :, 0]
-        fx, fy, fz = float(forward[0]), float(forward[1]), float(forward[2])
-        xy_norm = math.sqrt(fx * fx + fy * fy)
-        wp_yaws.append(math.atan2(fy, fx))
-        wp_cpitch.append(-math.atan2(fz, xy_norm) if xy_norm > 1e-9 else 0.0)
-        wp_t_ds.append(t_ds)
-        wp_t_de.append(t_de)
-
-    wp_yaws = list(cp.asnumpy(cp.unwrap(cp.asarray(wp_yaws))))
     n_wp = len(wp_schedule_s)
+    wp_t_ds = wp_schedule_s[:, 0]
+    wp_t_de = wp_schedule_s[:, 1]
+    node_indices = wp_schedule_s[:, 2].astype(cp.intp)
 
-    def _dense_idx(t: float, side: str = "left") -> int:
-        return max(0, min(int(cp.searchsorted(t_dense, t, side=side)), N))
+    # ── Vectorized yaw/pitch extraction from rotation matrices ───────
+    forwards = waypoint_rotmats[node_indices, :, 0]  # (n_wp, 3)
+    xy_norm = cp.linalg.norm(forwards[:, :2], axis=1)
 
-    d_start_0 = _dense_idx(wp_t_ds[0])
-    yaw[:d_start_0] = wp_yaws[0]
-    camera_pitch[:d_start_0] = 0.0
+    wp_yaws = cp.unwrap(cp.arctan2(forwards[:, 1], forwards[:, 0]))
+    wp_cpitch = cp.where(
+        xy_norm > 1e-9,
+        -cp.arctan2(forwards[:, 2], xy_norm),
+        cp.zeros(n_wp, dtype=forwards.dtype),
+    )
 
+    # ── Classify each dense sample into a segment ────────────────────
+    # Build interleaved boundary array:
+    #   [t_ds[0], t_de[0], t_ds[1], t_de[1], ...]
+    # searchsorted gives bin b for each t:
+    #   b=0: before first dwell
+    #   b=2i+1: inside dwell i  (odd)
+    #   b=2i+2: transition i→i+1  (even, >0), or post-last for i=n_wp-1
+    boundaries = cp.empty(2 * n_wp, dtype=cp.float64)
+    boundaries[0::2] = wp_t_ds
+    boundaries[1::2] = wp_t_de
+
+    bins = cp.searchsorted(boundaries, t_dense, side="left")  # (N,)
+
+    # ── Pre-first segment (b == 0) ───────────────────────────────────
+    pre_mask = bins == 0
+    yaw[pre_mask] = wp_yaws[0]
+    camera_pitch[pre_mask] = 0.0
+
+    # ── Dwell segments (odd bins: b = 2i+1) ──────────────────────────
     for i in range(n_wp):
-        d_start = _dense_idx(wp_t_ds[i])
-        d_end = _dense_idx(wp_t_de[i], side="right")
+        dwell_mask = bins == (2 * i + 1)
+        yaw[dwell_mask] = wp_yaws[i]
+        camera_pitch[dwell_mask] = wp_cpitch[i]
 
-        yaw[d_start:d_end] = wp_yaws[i]
-        camera_pitch[d_start:d_end] = wp_cpitch[i]
-
-        if i < n_wp - 1:
-            next_start = _dense_idx(wp_t_ds[i + 1])
-            if next_start > d_end:
-                ts = t_dense[d_end:next_start]
-                t0_t = t_dense[d_end]
-                t1_t = t_dense[min(next_start, N - 1)]
-                dur = t1_t - t0_t
-                if float(dur) > 0:
-                    blend = (ts - t0_t) / dur
-                    ease = 0.5 * (1.0 - cp.cos(math.pi * blend))
-                    yaw[d_end:next_start] = (
-                        wp_yaws[i] + ease * (wp_yaws[i + 1] - wp_yaws[i])
-                    )
-                    camera_pitch[d_end:next_start] = (
-                        wp_cpitch[i] + ease * (wp_cpitch[i + 1] - wp_cpitch[i])
-                    )
-                else:
-                    yaw[d_end:next_start] = wp_yaws[i]
-                    camera_pitch[d_end:next_start] = wp_cpitch[i]
+    # ── Transition segments (even bins > 0: b = 2i+2 for i=0..n_wp-2) ──
+    for i in range(n_wp - 1):
+        trans_mask = bins == (2 * i + 2)
+        if not trans_mask.any():
+            continue
+        t0 = wp_t_de[i]
+        t1 = wp_t_ds[i + 1]
+        dur = t1 - t0
+        if float(dur) > 0:
+            blend = (t_dense[trans_mask] - t0) / dur
+            ease = 0.5 * (1.0 - cp.cos(math.pi * blend))
+            yaw[trans_mask] = wp_yaws[i] + ease * (wp_yaws[i + 1] - wp_yaws[i])
+            camera_pitch[trans_mask] = wp_cpitch[i] + ease * (wp_cpitch[i + 1] - wp_cpitch[i])
         else:
-            yaw[d_end:] = wp_yaws[i]
-            camera_pitch[d_end:] = 0.0
+            yaw[trans_mask] = wp_yaws[i]
+            camera_pitch[trans_mask] = wp_cpitch[i]
+
+    # ── Post-last segment (b >= 2*n_wp) ──────────────────────────────
+    post_mask = bins >= (2 * n_wp)
+    yaw[post_mask] = wp_yaws[-1]
+    camera_pitch[post_mask] = 0.0
 
     traj[:, 3] = yaw
     if traj.shape[1] > 4:

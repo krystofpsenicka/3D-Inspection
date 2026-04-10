@@ -10,7 +10,8 @@ import numpy as np
 import cupy as cp
 import open3d as o3d
 import time
-from visibility.core import FrustumParams, Side
+from visibility.core import FrustumParams
+from shared.types import Side
 from shared.surface_sampler import SurfacePointSampler
 from visibility.sampling import WeightedViewpointSampler
 from visibility.visibility.raycast import RaycastingVisibilityQuery

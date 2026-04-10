@@ -52,7 +52,7 @@ if VISIBILITY_DIR not in sys.path:
     sys.path.insert(0, os.path.dirname(VISIBILITY_DIR))
 
 from VRP.core import constants as _vrp_cfg
-from visibility.core.types import Side
+from shared.types import Side
 
 # The GLB file stores vertices in Y-up convention (glTF standard).
 # Isaac Sim's GLB→USD converter implicitly prepends a Y-up→Z-up rotation
@@ -388,7 +388,7 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[7/9] Building occupancy grid & distance matrix …")
 
-    from VRP.scripts.vrp_planner import _compute_start_grid
+    from VRP.core.geometry import compute_start_grid as _compute_start_grid
     from VRP.core.distance_matrix import compute_distance_matrix
 
     # Reuse mesh bounds from Stage 1 (already loaded as raw_tm)
@@ -463,7 +463,7 @@ def main() -> None:
 
     from VRP.vrp.vrp_solver import solve_vrp
     from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
-    from VRP.mapf.route_executor import RouteExecutor
+    from VRP.mapf.route_executor import MultiAgentPathPlanner
     from VRP.core.robot_config import load_local_robot_config
 
     vrp_backend = VRPBackend(args.solver)
@@ -496,7 +496,7 @@ def main() -> None:
         s[0], s[1], s[2] = float(xyz[0]), float(xyz[1]), float(xyz[2])
         start_configs.append(np.array(s, dtype=np.float32))
 
-    executor = RouteExecutor(
+    executor = MultiAgentPathPlanner(
         start_configs=start_configs,
         joint_names=j_names,
         og=og,

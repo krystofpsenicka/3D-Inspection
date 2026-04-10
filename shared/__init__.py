@@ -1,3 +1,4 @@
+from .types import Side
 from .occupancy_grid import OccupancyGrid
 from .grid_utils import inflate_grid, downsample_occupancy_grid
 from .grid_builder_utils import (

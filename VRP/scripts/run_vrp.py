@@ -5,14 +5,17 @@ VRP Planner – CLI Entry Point
 Usage examples
 --------------
 
-Random 5 waypoints, 2 AUVs (auto backend: cuOpt → OR-Tools), save solution:
+Random 5 waypoints, 2 AUVs, save solution:
     python run_vrp.py --num_robots 2 --random_waypoints 5 --save_solution solution.pkl
 
-Load waypoints from JSON, 3 AUVs, force OR-Tools:
-    python run_vrp.py --num_robots 3 --waypoints_file waypoints.json --solver ortools --save_solution sol.pkl
+Load waypoints from JSON, 3 AUVs, force HiGHS:
+    python run_vrp.py --num_robots 3 --waypoints_file waypoints.json --solver highs --save_solution sol.pkl
 
 Import waypoints from 3D-Inspection output:
-    python run_vrp.py --num_robots 2 --waypoints_from_inspection 3D-Inspection/methods_analysis/models --save_solution sol.pkl
+    python run_vrp.py --num_robots 2 --waypoints_from_inspection methods_analysis/models --save_solution sol.pkl
+
+Inside inspection (routes traverse mesh interior):
+    python run_vrp.py --num_robots 2 --random_waypoints 5 --side inside
 
 Visualize a previously planned solution in Isaac Sim (activate Isaac Sim env first):
     python VRP/visualize_solution.py --solution_file solution.pkl
@@ -30,8 +33,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import cupy as cp
+import numpy as np
+
 from VRP.core.types import PipelineConfig, VRPBackend
-from VRP.scripts.vrp_planner import VRPPipeline
+from shared.types import Side
+from VRP.core.vrp_orchestrator import VRPFeedbackOrchestrator
+from VRP.core.waypoint_loader import load_waypoints
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,7 +52,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_robots", "-n", type=int, default=2,
                    help="Number of AUV robots.")
     p.add_argument("--headless", action="store_true",
-                   help="Isaac Sim headless flag (passed through to visualize_solution.py).")
+                   help="Isaac Sim headless flag.")
+    p.add_argument("--side", choices=["outside", "inside"],
+                   default="outside",
+                   help="Inspection side: 'outside' (routes around mesh) "
+                        "or 'inside' (routes inside mesh).")
 
     # ── Waypoint source ────────────────────────────────────────────────
     wp_group = p.add_mutually_exclusive_group()
@@ -97,7 +109,7 @@ def main():
         format="%(levelname)-8s %(name)s: %(message)s",
     )
 
-    # ── Build waypoint source string ──────────────────────────────────
+    # ── Load waypoints (caller responsibility) ───────────────────────
     if args.waypoints_file:
         waypoint_source = args.waypoints_file
         n_random = 0
@@ -108,30 +120,36 @@ def main():
         waypoint_source = "random"
         n_random = args.random_waypoints
 
+    positions_np, rotmats_np = load_waypoints(
+        source=waypoint_source,
+        n_random=n_random,
+        random_seed=args.random_seed,
+    )
+    insp_positions = cp.asarray(positions_np, dtype=cp.float64)
+    insp_rotmats = cp.asarray(rotmats_np, dtype=cp.float64)
+
     # ── Build config ──────────────────────────────────────────────────
     from VRP.core.constants import RAPIDS_PYTHON as DEFAULT_RAPIDS_PYTHON
 
     cfg = PipelineConfig(
-        num_robots          = args.num_robots,
-        solver_backend      = VRPBackend(args.solver),
-        alpha               = args.alpha,
-        rapids_python       = args.rapids_python or DEFAULT_RAPIDS_PYTHON,
-        gpu_timeout         = args.gpu_timeout,
-        mip_time_limit      = args.mip_time_limit,
-        mip_gap             = args.mip_gap,
-        feedback_iterations = args.feedback_iterations,
-        waypoint_source     = waypoint_source,
-        n_random_waypoints  = n_random,
-        random_seed         = args.random_seed,
-        save_solution_path  = args.save_solution,
+        num_robots=args.num_robots,
+        side=Side(args.side),
+        solver_backend=VRPBackend(args.solver),
+        alpha=args.alpha,
+        rapids_python=args.rapids_python or DEFAULT_RAPIDS_PYTHON,
+        gpu_timeout=args.gpu_timeout,
+        mip_time_limit=args.mip_time_limit,
+        mip_gap=args.mip_gap,
+        feedback_iterations=args.feedback_iterations,
+        save_solution_path=args.save_solution,
     )
 
     # ── Run ───────────────────────────────────────────────────────────
-    pipeline = VRPPipeline(cfg)
-    result   = pipeline.run()
+    orchestrator = VRPFeedbackOrchestrator(cfg)
+    result = orchestrator.run(insp_positions, insp_rotmats)
 
     # ── Summary ───────────────────────────────────────────────────────
-    total_wps  = sum(len(r) for r in result.all_waypoints)
+    total_wps = sum(len(r) for r in result.all_waypoints)
     total_fail = sum(result.fail_counts)
     print("\n" + "=" * 60)
     print(f"VRP planning complete")

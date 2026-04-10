@@ -1,5 +1,3 @@
-from enum import Enum
-
 import cupy as cp
 import numpy as np
 from numpy.linalg import norm
@@ -14,12 +12,6 @@ def normalize_vector(v: np.ndarray) -> np.ndarray:
     if n < NORM_EPS:
         return np.zeros(3)
     return v / n
-
-
-class Side(Enum):
-    """Which side of the surface to sample viewpoints from."""
-    OUTSIDE = "outside"
-    INSIDE = "inside"
 
 
 @dataclass

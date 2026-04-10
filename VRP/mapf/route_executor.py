@@ -123,24 +123,24 @@ logger = logging.getLogger(__name__)
 
 # ─── Executor ────────────────────────────────────────────────────────────────
 
-class RouteExecutor:
+class MultiAgentPathPlanner:
     """Priority-Based Sequential Planner from Space-Time A* paths.
 
     Parameters
     ----------
     start_positions:
-        Per-robot initial XYZ positions, each ``(3,)`` numpy array.
+        Per-robot initial XYZ positions, each ``(3,)`` CuPy or numpy array.
     og:
         Fine-resolution occupancy grid for collision checks.
     """
 
     def __init__(
         self,
-        start_positions: List[np.ndarray],
+        start_positions: List[cp.ndarray] | List[np.ndarray],
         og: OccupancyGrid | None = None,
     ):
         self.num_robots = len(start_positions)
-        self.start_positions = start_positions
+        self.start_positions = [cp.asarray(p, dtype=cp.float32) for p in start_positions]
         self.og = og
 
     def _plan_sequential(
@@ -265,7 +265,7 @@ class RouteExecutor:
         )
         collision_radius_vox = ROBOT_RADIUS / coarse_og.resolution + SPLINE_SAFETY_VOXELS
 
-        logger.info("[RouteExecutor] Coarse grid %s  T=%d  collision_radius_vox=%.2f",
+        logger.info("[MultiAgentPathPlanner] Coarse grid %s  T=%d  collision_radius_vox=%.2f",
                     coarse_og.shape, max_time_steps, collision_radius_vox)
 
         # ── 2. Estimate route costs for priority ordering ────────────
@@ -277,7 +277,7 @@ class RouteExecutor:
         default_order = sorted(
             range(num_robots), key=lambda i: -route_costs[i]
         )
-        logger.info("[RouteExecutor] Default priority (longest first): %s  "
+        logger.info("[MultiAgentPathPlanner] Default priority (longest first): %s  "
                     "costs=%s",
                     default_order,
                     [f"{route_costs[i]:.1f}" for i in default_order])
@@ -300,7 +300,7 @@ class RouteExecutor:
         best_result, best_objective = _run_trial(default_order)
         best_order = default_order
         best_stats = best_result[5]
-        logger.info("[RouteExecutor] Default order (longest-first) "
+        logger.info("[MultiAgentPathPlanner] Default order (longest-first) "
                     "objective: %.1f  makespan: %.1f s",
                     best_objective, best_result[3])
 
@@ -309,7 +309,7 @@ class RouteExecutor:
         if n_priority_trials > trials_used:
             reverse_order = list(reversed(default_order))
             trial_result, trial_objective = _run_trial(reverse_order)
-            logger.info("[RouteExecutor] Shortest-first order "
+            logger.info("[MultiAgentPathPlanner] Shortest-first order "
                         "objective: %.1f  makespan: %.1f s",
                         trial_objective, trial_result[3])
             if trial_objective < best_objective:
@@ -329,7 +329,7 @@ class RouteExecutor:
             )
             if conflict_order != default_order:
                 trial_result, trial_objective = _run_trial(conflict_order)
-                logger.info("[RouteExecutor] Most conflicted order %s "
+                logger.info("[MultiAgentPathPlanner] Most conflicted order %s "
                             "objective: %.1f  makespan: %.1f s",
                             conflict_order, trial_objective, trial_result[3])
                 if trial_objective < best_objective:
@@ -351,7 +351,7 @@ class RouteExecutor:
                 trial_result, trial_objective = _run_trial(
                     least_conflict_order,
                 )
-                logger.info("[RouteExecutor] Least conflicted order %s "
+                logger.info("[MultiAgentPathPlanner] Least conflicted order %s "
                             "objective: %.1f  makespan: %.1f s",
                             least_conflict_order, trial_objective,
                             trial_result[3])
@@ -365,7 +365,7 @@ class RouteExecutor:
         for trial in range(trials_used, n_priority_trials):
             random_order = list(np.random.permutation(num_robots))
             trial_result, trial_objective = _run_trial(random_order)
-            logger.info("[RouteExecutor] Random trial %d order %s "
+            logger.info("[MultiAgentPathPlanner] Random trial %d order %s "
                         "objective: %.1f  makespan: %.1f s",
                         trial + 1, random_order,
                         trial_objective, trial_result[3])
@@ -375,7 +375,7 @@ class RouteExecutor:
                 best_order = random_order
                 best_stats = trial_result[5]
 
-        logger.info("[RouteExecutor] Best priority order: %s  "
+        logger.info("[MultiAgentPathPlanner] Best priority order: %s  "
                     "objective=%.1f  makespan=%.1f s  (%d trials)",
                     best_order, best_objective, best_result[3],
                     n_priority_trials)
@@ -404,10 +404,14 @@ class RouteExecutor:
             coarse_time_steps_gpu = robot_coarse_times[robot_idx]
 
             waypoint_schedule = robot_waypoint_schedules[robot_idx] or []
-            waypoint_schedule_seconds = [
-                (int(ts) * SPACE_TIME_DT, int(te) * SPACE_TIME_DT, node)
-                for ts, te, node in waypoint_schedule
-            ]
+            if waypoint_schedule:
+                wp_sched_arr = cp.array(waypoint_schedule, dtype=cp.float64)
+                wp_schedule_gpu = cp.empty_like(wp_sched_arr)
+                wp_schedule_gpu[:, 0] = wp_sched_arr[:, 0] * SPACE_TIME_DT
+                wp_schedule_gpu[:, 1] = wp_sched_arr[:, 1] * SPACE_TIME_DT
+                wp_schedule_gpu[:, 2] = wp_sched_arr[:, 2]
+            else:
+                wp_schedule_gpu = None
 
             if world_positions_gpu is None or len(world_positions_gpu) == 0:
                 fail_counts[robot_idx] = len(routes[robot_idx]) - 1
@@ -446,7 +450,7 @@ class RouteExecutor:
                 trajectory,
                 t_dense=dense_time_samples,
                 dt=TRAJ_DT,
-                wp_schedule_s=waypoint_schedule_seconds,
+                wp_schedule_s=wp_schedule_gpu,
                 waypoint_rotmats=waypoint_rotmats,
             )
 
@@ -478,7 +482,7 @@ class RouteExecutor:
                 for robot_idx, count in enumerate(env_collision_counts):
                     if count > 0:
                         logger.warning(
-                            "[RouteExecutor] Robot %d: %d / %d trajectory "
+                            "[MultiAgentPathPlanner] Robot %d: %d / %d trajectory "
                             "steps collide with fine OG.",
                             robot_idx, count, len(all_trajectories_gpu[robot_idx]),
                         )
@@ -488,7 +492,7 @@ class RouteExecutor:
             )
             if inter_robot_collisions:
                 logger.warning(
-                    "[RouteExecutor] %d inter-robot collision events detected.",
+                    "[MultiAgentPathPlanner] %d inter-robot collision events detected.",
                     len(inter_robot_collisions),
                 )
 
@@ -507,15 +511,17 @@ class RouteExecutor:
         actual_makespan = (
             max(actual_per_vehicle_times) if actual_per_vehicle_times else 0.0
         )
-        logger.info("[RouteExecutor] Actual makespan: %.1f s  per_vehicle: %s",
+        logger.info("[MultiAgentPathPlanner] Actual makespan: %.1f s  per_vehicle: %s",
                     actual_makespan,
                     [f"{t:.1f}" for t in actual_per_vehicle_times])
+
+        initial_positions_np = [cp.asnumpy(p) for p in initial_positions]
 
         return ExecutionResult(
             all_traj_positions=all_trajectory_positions,
             all_traj_velocities=all_trajectory_velocities,
             all_waypoints=all_waypoints,
-            initial_positions=initial_positions,
+            initial_positions=initial_positions_np,
             fail_counts=fail_counts,
             actual_makespan=actual_makespan,
             actual_per_vehicle_times=actual_per_vehicle_times,

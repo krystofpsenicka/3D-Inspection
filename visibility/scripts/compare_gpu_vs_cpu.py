@@ -14,7 +14,8 @@ import sys
 import time
 from typing import List, Tuple
 
-from visibility.core.types import FrustumParams, Side
+from visibility.core.types import FrustumParams
+from shared.types import Side
 from visibility.sampling import WeightedViewpointSampler
 from shared.surface_sampler import SurfacePointSampler
 

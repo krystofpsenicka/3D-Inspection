@@ -66,6 +66,9 @@ TRAJ_DT = 0.02
 
 ST_ASTAR_MAX_EXPANSIONS = 500_000
 OMPL_SIMPLIFY_MAX_TIME = 0.5
+# Minimum gap (in time steps) between the estimated traversal time and
+# any reserved time step at the same voxel during OMPL path smoothing.
+PATH_SMOOTHER_RESERVATION_MARGIN = 10
 
 # ── Camera offset ────────────────────────────────────────────────────────────
 
@@ -81,6 +84,10 @@ AUV_MAX_ACCEL = 1.5
 
 VRP_ALPHA = 1.0
 MIP_TIME_LIMIT = 120
+# Relative optimality gap: the MIP solver stops when
+# (best_bound - incumbent) / incumbent <= MIP_GAP.
+# 0.05 = within 5% of optimal. Lower = better solution, longer solve.
+# Used by HiGHS (gapRel) and cuOpt (CUOPT_MIP_RELATIVE_GAP).
 MIP_GAP = 0.05
 
 # ── GPU search (parallel A*) ────────────────────────────────────────────────

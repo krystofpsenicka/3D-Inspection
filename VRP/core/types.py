@@ -6,6 +6,8 @@ import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
 
+from shared.types import Side
+
 
 class VRPBackend(Enum):
     """MIP solver backend for VRP."""
@@ -62,6 +64,7 @@ class ExecutionResult:
 class PipelineConfig:
     """All user-facing settings for one VRP planning run."""
     num_robots: int = 2
+    side: Side = Side.OUTSIDE
     solver_backend: VRPBackend = VRPBackend.HIGHS
     alpha: float = 1.0
     rapids_python: str = ""
@@ -70,9 +73,6 @@ class PipelineConfig:
     mip_gap: float = 0.05
     feedback_iterations: int = 3
     feedback_threshold: float = 0.20
-    waypoint_source: str = "random"
-    n_random_waypoints: int = 5
-    random_seed: int = 42
     headless: bool = True
     replay_in_isaac: bool = False
     save_solution_path: str | None = None

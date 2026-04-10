@@ -4,8 +4,9 @@ OMPL ``PathSimplifier`` removes grid-aligned detours (shortcutting)
 and rounds corners (B-spline smoothing) while guaranteeing the result
 is collision-free with respect to the fine-resolution occupancy grid.
 When a reservation table is provided, the validity checker also
-rejects states that fall inside reserved space-time cells (time is
-approximated via nearest-neighbour lookup on the original path).
+rejects states that fall inside reserved space-time cells using a
+two-stage approach: fast spatial rejection via a precomputed
+any-time-reserved map, followed by a margin-based time check.
 
 Future direction
 ----------------
@@ -30,8 +31,10 @@ from typing import Optional
 import cupy as cp
 import numpy as np
 
-from ..core.constants import OMPL_SIMPLIFY_MAX_TIME
+from ..core.constants import OMPL_SIMPLIFY_MAX_TIME, PATH_SMOOTHER_RESERVATION_MARGIN
 from shared.occupancy_grid import OccupancyGrid
+from .reservation_table import ReservationTable
+
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +44,10 @@ def simplify_path_ompl(
     occupancy_grid: OccupancyGrid,
     robot_radius: float = 0.35,
     max_time: float = OMPL_SIMPLIFY_MAX_TIME,
-    reservation=None,
+    reservation: Optional[ReservationTable] = None,
     time_steps: Optional[cp.ndarray] = None,
     coarse_og: Optional[OccupancyGrid] = None,
+    reservation_margin: int = PATH_SMOOTHER_RESERVATION_MARGIN,
 ) -> cp.ndarray:
     """Simplify a 3D path using OMPL PathSimplifier.
 
@@ -53,9 +57,12 @@ def simplify_path_ompl(
 
     When *reservation*, *time_steps* and *coarse_og* are all provided,
     the validity checker additionally rejects states that overlap with
-    previously committed robot trajectories.  Time is estimated by
-    nearest-neighbour lookup on the original path — this is approximate
-    but steers OMPL away from reserved corridors during shortcutting.
+    previously committed robot trajectories.  A precomputed spatial map
+    gives fast rejection for positions that are never reserved.  For
+    positions that *are* reserved at some time, the estimated traversal
+    time (nearest-neighbour lookup on the original path) must be at
+    least ``reservation_margin`` time steps away from every reserved
+    time step at that voxel.
 
     Args:
         path_xyz: (M, 3) world-frame path waypoints.
@@ -66,6 +73,8 @@ def simplify_path_ompl(
         time_steps: (M,) CuPy coarse time indices matching *path_xyz*.
         coarse_og: coarse OccupancyGrid for world-to-voxel conversion
             when checking the reservation table.
+        reservation_margin: minimum gap (in time steps) between estimated
+            traversal time and any reserved time at the same voxel.
 
     Returns:
         (K, 3) CuPy array of simplified path waypoints (K <= M).
@@ -82,33 +91,62 @@ def simplify_path_ompl(
     import ompl.base as ob
     import ompl.geometric as og_ompl
 
-    # Precompute nearest-neighbour data for reservation time estimation.
+    # Precompute reservation data for the validity checker.
     check_reservation = (
         reservation is not None
         and time_steps is not None
         and coarse_og is not None
     )
+    any_reserved_map = None
     if check_reservation:
         orig_path_gpu = path_xyz.copy()
         orig_time_gpu = time_steps.copy()
+        # Precompute spatial-only reservation map: True where the voxel
+        # is reserved at ANY time step. Gives fast rejection for most 
+        # free voxels.
+        any_reserved_map = reservation._data.any(axis=0)  # (Nx, Ny, Nz)
 
     class _Checker(ob.StateValidityChecker):
         def __init__(self, si):
             super().__init__(si)
 
-        def isValid(self, state):  # noqa: N802
+        def isValid(self, state):
             xyz = cp.array([state[0], state[1], state[2]])
+
+            # 1. Static obstacle check (fine grid)
             if not bool(occupancy_grid.is_free_world(xyz)):
                 return False
+
+            # 2. Reservation check (two-stage: spatial then temporal)
             if check_reservation:
+                ijk = coarse_og.world_to_voxel(xyz.reshape(1, 3))[0]
+                ix, iy, iz = int(ijk[0]), int(ijk[1]), int(ijk[2])
+
+                # Bounds check
+                if not (0 <= ix < reservation.Nx
+                        and 0 <= iy < reservation.Ny
+                        and 0 <= iz < reservation.Nz):
+                    return True
+
+                # Fast spatial rejection: never reserved -> safe
+                if not bool(any_reserved_map[ix, iy, iz]):
+                    return True
+
+                # Estimate time using nearest-neighbour from original path
                 dists = cp.linalg.norm(orig_path_gpu - xyz, axis=1)
                 nearest_idx = int(cp.argmin(dists))
-                t = int(orig_time_gpu[nearest_idx])
-                ijk = coarse_og.world_to_voxel(xyz.reshape(1, 3))[0]
-                if reservation.is_reserved(
-                    int(ijk[0]), int(ijk[1]), int(ijk[2]), t,
-                ):
-                    return False
+                t_est = int(orig_time_gpu[nearest_idx])
+
+                # Get all reserved time steps at this voxel
+                time_occupancy = reservation._data[:, ix, iy, iz]
+                reserved_times = cp.where(time_occupancy > 0)[0]
+
+                if len(reserved_times) > 0:
+                    # Check if any reserved time is within margin
+                    min_gap = int(cp.min(cp.abs(reserved_times - t_est)))
+                    if min_gap < reservation_margin:
+                        return False
+
             return True
 
     space = ob.RealVectorStateSpace(3)

@@ -57,8 +57,8 @@ from VRP.core.waypoint_loader import load_waypoints
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
 from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
-from VRP.mapf.route_executor import RouteExecutor
-from VRP.scripts.vrp_planner import _compute_start_grid
+from VRP.mapf.route_executor import MultiAgentPathPlanner
+from VRP.core.geometry import compute_start_grid as _compute_start_grid
 from VRP.core.collision import find_trajectory_collisions
 from VRP.core.constants import (
     INFLATION_VOXELS,
@@ -217,7 +217,7 @@ def run_single(
         wp_positions_gpu = _cp.asarray(all_positions, dtype=_cp.float32)
         wp_rotmats_gpu = _cp.asarray(all_rotmats, dtype=_cp.float32)
 
-        executor = RouteExecutor(
+        executor = MultiAgentPathPlanner(
             start_positions=start_positions,
             og=og,
         )
