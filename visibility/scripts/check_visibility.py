@@ -37,14 +37,12 @@ def main():
     parser = argparse.ArgumentParser(description="Visual inspection of visibility results.")
     parser.add_argument("mesh_path", nargs="?", default=None,
                         help="Path to mesh file (default: sphere r=5)")
-    parser.add_argument("--method", choices=["raycast", "epsilon", "epsilon_cuda", "raycast_cuda"], default="raycast",
-                        help="Visibility method to visualize (default: raycast)")
-    parser.add_argument("--num-viewpoints", type=int, default=5,
-                        help="Number of viewpoints to generate (default: 5)")
+    parser.add_argument("--method", choices=["raycast", "epsilon", "epsilon_cuda", "raycast_cuda"], default="raycast_cuda",
+                        help="Visibility method to visualize (default: raycast_cuda)")
+    parser.add_argument("--num-viewpoints", type=int, default=200,
+                        help="Number of viewpoints to generate (default: 200)")
     parser.add_argument("--num-points", type=int, default=2000,
                         help="Number of surface points to sample (default: 2000)")
-    parser.add_argument("--sampler", choices=["free_space"], default="free_space",
-                        help="Sampling method for viewpoints (default: free_space)")
     parser.add_argument("--side", choices=["outside", "inside"], default="outside",
                         help="Whether to sample viewpoints outside or inside the mesh (default: outside)")
     parser.add_argument("--separate", action="store_true", default=False,

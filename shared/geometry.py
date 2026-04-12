@@ -93,3 +93,34 @@ def directions_rolls_to_rotmats(directions_gpu, rolls_gpu):
     z_r = -sin_r * y + cos_r * z
 
     return cp.stack([x, y_r, z_r], axis=-1)   # (N, 3, 3)
+
+
+def rotmats_to_directions_rolls(rotmats_gpu):
+    """(N,3,3) rotation matrices -> (N,3) directions + (N,) roll angles (GPU).
+
+    Inverse of :func:`directions_rolls_to_rotmats`.
+    Convention: camera looks along local +X.
+    """
+    NORM_EPS = 1e-12
+
+    # Forward direction
+    directions = rotmats_gpu[:, :, 0]  # (N, 3)
+
+    # Reconstruct zero-roll y and z axes
+    x = directions
+    up = cp.tile(cp.array([0.0, 0.0, 1.0], dtype=cp.float32), (len(x), 1))
+    up[cp.abs(x[:, 2]) > 0.99] = cp.array([0.0, 1.0, 0.0], dtype=cp.float32)
+
+    y0 = cp.cross(up, x)
+    y0 /= cp.maximum(cp.linalg.norm(y0, axis=1, keepdims=True), NORM_EPS)
+    z0 = cp.cross(x, y0)
+
+    # Actual y-axis from the rotation matrix
+    y_actual = rotmats_gpu[:, :, 1]  # (N, 3)
+
+    # y_r = cos(roll)*y0 + sin(roll)*z0  →  roll = atan2(y_r·z0, y_r·y0)
+    cos_roll = cp.sum(y_actual * y0, axis=1)
+    sin_roll = cp.sum(y_actual * z0, axis=1)
+    rolls = cp.arctan2(sin_roll, cos_roll)
+
+    return directions, rolls

@@ -67,8 +67,6 @@ class PipelineConfig:
     side: Side = Side.OUTSIDE
     solver_backend: VRPBackend = VRPBackend.HIGHS
     alpha: float = 1.0
-    rapids_python: str = ""
-    gpu_timeout: int = 300
     mip_time_limit: int = 120
     mip_gap: float = 0.05
     feedback_iterations: int = 3

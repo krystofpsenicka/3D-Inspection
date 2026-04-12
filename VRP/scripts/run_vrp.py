@@ -79,10 +79,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--solver", choices=["cuopt", "highs"],
                    default="highs",
                    help="MIP backend: 'cuopt' (GPU) or 'highs' (CPU).")
-    p.add_argument("--gpu_timeout", type=int, default=300,
-                   help="cuOpt subprocess timeout (seconds).")
-    p.add_argument("--rapids_python", type=str, default="",
-                   help="Path to rapids_solver env Python (default: read from config).")
     p.add_argument("--mip_time_limit", type=int, default=120,
                    help="MIP solver time budget (seconds).")
     p.add_argument("--mip_gap", type=float, default=0.05,
@@ -129,15 +125,11 @@ def main():
     insp_rotmats = cp.asarray(rotmats_np, dtype=cp.float64)
 
     # ── Build config ──────────────────────────────────────────────────
-    from VRP.core.constants import RAPIDS_PYTHON as DEFAULT_RAPIDS_PYTHON
-
     cfg = PipelineConfig(
         num_robots=args.num_robots,
         side=Side(args.side),
         solver_backend=VRPBackend(args.solver),
         alpha=args.alpha,
-        rapids_python=args.rapids_python or DEFAULT_RAPIDS_PYTHON,
-        gpu_timeout=args.gpu_timeout,
         mip_time_limit=args.mip_time_limit,
         mip_gap=args.mip_gap,
         feedback_iterations=args.feedback_iterations,

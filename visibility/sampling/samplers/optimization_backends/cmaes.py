@@ -37,7 +37,7 @@ class CMAESBackend(OptimizationBackend):
     """CMA-ES optimization via EvoTorch."""
 
     def optimize(self, objective_fn, n_dims, popsize, maxiter,
-                 verbose=False) -> cp.ndarray:
+                 verbose=False, center_init=None) -> cp.ndarray:
         """Run CMA-ES in [0,1]^n_dims.
 
         Args:
@@ -46,12 +46,17 @@ class CMAESBackend(OptimizationBackend):
             popsize:      population size.
             maxiter:      max generations.
             verbose:      log per-generation progress.
+            center_init:  optional ``(D,)`` CuPy array — initial centre of the
+                          search distribution in [0,1]^D.
 
         Returns:
             (D,) CuPy array — best solution found.
         """
         problem = _EvoTorchObjective(objective_fn, n_dims, popsize)
-        searcher = CMAES(problem, stdev_init=1.0 / 3.0, popsize=popsize)
+        cmaes_kwargs = dict(stdev_init=1.0 / 3.0, popsize=popsize)
+        if center_init is not None:
+            cmaes_kwargs["center_init"] = torch.as_tensor(center_init, device="cuda")
+        searcher = CMAES(problem, **cmaes_kwargs)
 
         for gen_i in range(maxiter):
             searcher.step()

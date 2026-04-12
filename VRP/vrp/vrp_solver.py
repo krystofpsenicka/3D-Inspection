@@ -17,7 +17,6 @@ import cupy as cp
 from ..core.constants import (
     MIP_GAP,
     MIP_TIME_LIMIT,
-    RAPIDS_PYTHON,
 )
 from ..core.types import VRPBackend, VRPResult
 from ._helpers import (
@@ -35,9 +34,7 @@ def solve_vrp(
     depots: list[int],
     alpha: float = 1.0,
     backend: VRPBackend = VRPBackend.HIGHS,
-    rapids_python: str = RAPIDS_PYTHON,
     time_limit: int = MIP_TIME_LIMIT,
-    gpu_timeout: int = 300,
     mip_gap: float = MIP_GAP,
 ) -> VRPResult:
     """Solve the VRP using the specified MIP backend.
@@ -48,9 +45,7 @@ def solve_vrp(
         depots: Per-vehicle depot index list.
         alpha: Objective blending in [0, 1]. 1.0 = makespan, 0.0 = total dist.
         backend: ``VRPBackend.CUOPT`` (GPU) or ``VRPBackend.HIGHS`` (CPU).
-        rapids_python: Python binary path for the rapids_solver env.
         time_limit: MIP solver time budget (seconds).
-        gpu_timeout: Wall-clock timeout for cuOpt subprocess (seconds).
         mip_gap: Relative optimality gap.
 
     Raises:
@@ -71,10 +66,8 @@ def solve_vrp(
 
     if backend == VRPBackend.CUOPT:
         solver = MIPSolverGPU(
-            rapids_python=rapids_python,
             time_limit=time_limit,
             mip_gap=mip_gap,
-            timeout=gpu_timeout,
         )
     else:
         solver = MIPSolverCPU(

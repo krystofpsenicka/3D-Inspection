@@ -9,7 +9,7 @@ from typing import Tuple
 from shared.geometry import directions_rolls_to_rotmats
 
 from ...core.constants import DEFAULT_MAX_DIR_NOISE_RAD, NORM_EPS
-from ...core.types import Side
+from shared.types import Side
 from ..utils.direction import knn_centroid_direction, apply_angular_noise
 from .base import ProbabilisticSampler
 

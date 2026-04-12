@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import itertools
 import math
-import os
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -26,7 +25,7 @@ from VRP.vrp._helpers import (
     per_vehicle_costs as _per_vehicle_costs,
 )
 from VRP.vrp.vrp_solver import solve_vrp
-from VRP.core.constants import RAPIDS_PYTHON, MIP_GAP
+from VRP.core.constants import MIP_GAP
 
 # ── Skip conditions ──────────────────────────────────────────────────────────
 
@@ -35,16 +34,11 @@ pulp = pytest.importorskip("pulp", reason="PuLP not installed")
 from VRP.vrp.mip_solver_cpu import MIPSolverCPU as MIPMakespanCPU
 from VRP.vrp.mip_solver_gpu import MIPSolverGPU as MIPMakespanGPU
 
-_HAS_RAPIDS = os.path.isfile(RAPIDS_PYTHON)
-requires_rapids = pytest.mark.skipif(
-    not _HAS_RAPIDS, reason="RAPIDS env not found"
-)
-
 
 # ─── Brute-force reference solver ───────────────────────────────────────────
 
 def brute_force_vrp(
-    dist_matrix: np.ndarray,
+    dist_matrix,
     num_vehicles: int,
     depots: List[int],
     max_stops_per_vehicle: Optional[int] = None,
@@ -58,6 +52,7 @@ def brute_force_vrp(
     permutations), then tracks the best total-distance and best makespan
     across all assignments.
     """
+    dist_matrix = cp.asnumpy(dist_matrix) if hasattr(dist_matrix, 'get') else np.asarray(dist_matrix)
     n = dist_matrix.shape[0]
     depot_set = set(depots)
     customers = [i for i in range(n) if i not in depot_set]
@@ -112,9 +107,9 @@ def brute_force_vrp(
 
 # ─── Benchmark instances ─────────────────────────────────────────────────────
 
-def _eilon7_dist_matrix() -> np.ndarray:
-    """Eilon 7-node benchmark (E-n7, depot=0, customers 1-6)."""
-    return np.array([
+def _eilon7_dist_matrix() -> cp.ndarray:
+    """Eilon 7-node benchmark (E-n7, depots=0, customers 1-6)."""
+    return cp.array([
         [0,  10, 20, 25, 12, 20,  2],
         [10,  0, 25, 20, 20, 10, 11],
         [20, 25,  0, 10, 25, 11, 25],
@@ -122,20 +117,20 @@ def _eilon7_dist_matrix() -> np.ndarray:
         [12, 20, 25, 30,  0, 30, 20],
         [20, 10, 11, 22, 30,  0, 12],
         [2,  11, 25, 10, 20, 12,  0],
-    ], dtype=np.float64)
+    ], dtype=cp.float64)
 
 
-def _asymmetric4_dist_matrix() -> np.ndarray:
-    """Custom asymmetric 4-node instance (depot=0)."""
-    return np.array([
+def _asymmetric4_dist_matrix() -> cp.ndarray:
+    """Custom asymmetric 4-node instance (depots=0)."""
+    return cp.array([
         [0, 1, 4, 6],
         [2, 0, 3, 5],
         [4, 3, 0, 1],
         [6, 5, 2, 0],
-    ], dtype=np.float64)
+    ], dtype=cp.float64)
 
 
-def _multi_depot_line() -> Tuple[np.ndarray, List[int]]:
+def _multi_depot_line() -> Tuple[cp.ndarray, List[int]]:
     """6-node line graph with 2 depots. depots=[0,1], customers=2..5."""
     positions = [0, 10, 1, 2, 8, 9]
     n = len(positions)
@@ -143,10 +138,10 @@ def _multi_depot_line() -> Tuple[np.ndarray, List[int]]:
     for i in range(n):
         for j in range(n):
             dm[i, j] = abs(positions[i] - positions[j])
-    return dm, [0, 1]
+    return cp.asarray(dm), [0, 1]
 
 
-def _eilon22_dist_matrix() -> Tuple[np.ndarray, int]:
+def _eilon22_dist_matrix() -> Tuple[cp.ndarray, int]:
     """E-n22-k4 benchmark. Returns (dist_matrix, num_vehicles=4).
 
     Coordinates from Christofides & Eilon (1969). Published optimal = 375.
@@ -167,7 +162,7 @@ def _eilon22_dist_matrix() -> Tuple[np.ndarray, int]:
             dx = coords[i, 0] - coords[j, 0]
             dy = coords[i, 1] - coords[j, 1]
             dm[i, j] = round(math.sqrt(dx * dx + dy * dy))
-    return dm, 4
+    return cp.asarray(dm), 4
 
 
 # ─── Helper: solver factory ─────────────────────────────────────────────────
@@ -177,7 +172,7 @@ def _make_solver(name: str, alpha: float = 1.0):
     if name == "mip_cpu":
         return MIPMakespanCPU(time_limit=60, mip_gap=MIP_GAP), alpha
     elif name == "mip_gpu":
-        return MIPMakespanGPU(time_limit=60, mip_gap=MIP_GAP, timeout=120), alpha
+        return MIPMakespanGPU(time_limit=60, mip_gap=MIP_GAP), alpha
     else:
         raise ValueError(f"Unknown solver: {name}")
 
@@ -196,12 +191,8 @@ def _solver_ids(solvers):
 
 
 # Solver groups
-MAKESPAN_SOLVERS = ["mip_cpu"]
-ALL_CPU_SOLVERS = ["mip_cpu"]
-
-if _HAS_RAPIDS:
-    MAKESPAN_SOLVERS.append("mip_gpu")
-    ALL_CPU_SOLVERS.append("mip_gpu")
+MAKESPAN_SOLVERS = ["mip_cpu", "mip_gpu"]
+ALL_CPU_SOLVERS = ["mip_cpu", "mip_gpu"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -220,7 +211,7 @@ class TestSolverOptimality:
         _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
 
         solver, alpha = _make_solver(solver_name, alpha=1.0)
-        result = solver.solve(dm, num_vehicles=2, depot=[0, 0], alpha=alpha)
+        result = solver.solve(dm, num_vehicles=2, depots=[0, 0], alpha=alpha)
         _skip_on_subprocess_error(result, solver_name)
         tol = MIP_GAP + 0.01  # MIP gap + small numerical margin
         assert result.makespan <= bf_makespan * (1 + tol), (
@@ -237,7 +228,7 @@ class TestSolverOptimality:
         bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
 
         solver, alpha = _make_solver(solver_name, alpha=0.0)
-        result = solver.solve(dm, num_vehicles=2, depot=[0, 0], alpha=alpha)
+        result = solver.solve(dm, num_vehicles=2, depots=[0, 0], alpha=alpha)
         _skip_on_subprocess_error(result, solver_name)
         tol = MIP_GAP + 0.01
         assert result.total_cost <= bf_total * (1 + tol), (
@@ -254,7 +245,7 @@ class TestSolverOptimality:
         _, bf_makespan = brute_force_vrp(dm, 2, depots, max_stops_per_vehicle=4)
 
         solver, alpha = _make_solver(solver_name, alpha=1.0)
-        result = solver.solve(dm, num_vehicles=2, depot=depots, alpha=alpha)
+        result = solver.solve(dm, num_vehicles=2, depots=depots, alpha=alpha)
         _skip_on_subprocess_error(result, solver_name)
         tol = MIP_GAP + 0.01
         assert result.makespan <= bf_makespan * (1 + tol), (
@@ -274,11 +265,11 @@ class TestCVRPLIBBenchmark:
         """MIP on E-n22-k4 should produce a feasible solution with consistent costs."""
         dm, k = _eilon22_dist_matrix()
         solver = MIPMakespanCPU(time_limit=60, mip_gap=0.10)
-        result = solver.solve(dm, num_vehicles=k, depot=[0] * k, alpha=1.0)
+        result = solver.solve(dm, num_vehicles=k, depots=[0] * k, alpha=1.0)
         assert result.status == "success"
         assert result.makespan > 0
         # Recompute and verify consistency
-        per_v = _per_vehicle_costs(result.routes, dm, depot=[0] * k)
+        per_v = _per_vehicle_costs(result.routes, dm, depots=[0] * k)
         assert abs(max(per_v) - result.makespan) < 1e-6
         assert abs(sum(per_v) - result.total_cost) < 1e-6
 
@@ -295,7 +286,7 @@ class TestSolverFeasibility:
         solver_name = request.param
         dm = _eilon7_dist_matrix()
         solver, alpha = _make_solver(solver_name, alpha=1.0)
-        result = solver.solve(dm, num_vehicles=2, depot=[0, 0], alpha=alpha)
+        result = solver.solve(dm, num_vehicles=2, depots=[0, 0], alpha=alpha)
         if result.status != "success":
             pytest.skip(f"{solver_name} did not find a solution")
         return result, dm
@@ -316,14 +307,14 @@ class TestSolverFeasibility:
 
     def test_reported_cost_matches_recomputation(self, solved):
         result, dm = solved
-        recomputed = _compute_route_cost(result.routes, dm, depot=[0, 0])
+        recomputed = _compute_route_cost(result.routes, dm, depots=[0, 0])
         assert abs(result.total_cost - recomputed) < 1e-3, (
             f"reported={result.total_cost:.4f} vs recomputed={recomputed:.4f}"
         )
 
     def test_makespan_is_max_per_vehicle(self, solved):
         result, dm = solved
-        per_v = _per_vehicle_costs(result.routes, dm, depot=[0, 0])
+        per_v = _per_vehicle_costs(result.routes, dm, depots=[0, 0])
         expected_makespan = max(per_v) if per_v else 0.0
         assert abs(result.makespan - expected_makespan) < 1e-3, (
             f"makespan={result.makespan:.4f} vs max(per_v)={expected_makespan:.4f}"
@@ -331,7 +322,7 @@ class TestSolverFeasibility:
 
     def test_per_vehicle_sum_is_total(self, solved):
         result, dm = solved
-        per_v = _per_vehicle_costs(result.routes, dm, depot=[0, 0])
+        per_v = _per_vehicle_costs(result.routes, dm, depots=[0, 0])
         assert abs(sum(per_v) - result.total_cost) < 1e-3
 
     def test_closed_route_cost_includes_return(self, solved):
@@ -345,7 +336,7 @@ class TestSolverFeasibility:
                 float(dm[full[i], full[i + 1]])
                 for i in range(len(full) - 1)
             )
-            actual = _per_vehicle_costs([route], dm, depot=[0])[0]
+            actual = _per_vehicle_costs([route], dm, depots=[0])[0]
             assert abs(actual - expected) < 1e-6, (
                 f"Vehicle {v}: closed-route cost mismatch "
                 f"({actual:.4f} vs {expected:.4f})"
@@ -360,23 +351,23 @@ class TestSolverEdgeCases:
 
     def test_single_customer(self):
         """2 nodes, 1 vehicle → should visit the only customer."""
-        dm = np.array([[0, 5], [5, 0]], dtype=np.float64)
+        dm = cp.array([[0, 5], [5, 0]], dtype=cp.float64)
         solver = MIPMakespanCPU(time_limit=30, mip_gap=0.05)
-        result = solver.solve(dm, num_vehicles=1, depot=[0], alpha=1.0)
+        result = solver.solve(dm, num_vehicles=1, depots=[0], alpha=1.0)
         assert result.status == "success"
         assert result.routes == [[1]]
         assert abs(result.total_cost - 10.0) < 1e-6  # 5 out + 5 back
 
     def test_more_vehicles_than_customers(self):
         """3 customers, 5 vehicles via MIP."""
-        dm = np.array([
+        dm = cp.array([
             [0, 1, 2, 3],
             [1, 0, 1, 2],
             [2, 1, 0, 1],
             [3, 2, 1, 0],
-        ], dtype=np.float64)
+        ], dtype=cp.float64)
         solver = MIPMakespanCPU(time_limit=30, mip_gap=0.05)
-        result = solver.solve(dm, num_vehicles=5, depot=[0, 0, 0, 0, 0], alpha=1.0)
+        result = solver.solve(dm, num_vehicles=5, depots=[0, 0, 0, 0, 0], alpha=1.0)
         assert result.status == "success"
         visited = set()
         for route in result.routes:
@@ -394,7 +385,7 @@ class TestSolveVRPEntryPoint:
         """solve_vrp with alpha=1.0 returns valid makespan-optimised result."""
         dm = _eilon7_dist_matrix()
         result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depot=[0, 0],
+            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
             alpha=1.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
@@ -407,7 +398,7 @@ class TestSolveVRPEntryPoint:
         """solve_vrp with alpha=0.0 returns valid total-distance result."""
         dm = _eilon7_dist_matrix()
         result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depot=[0, 0],
+            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
             alpha=0.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
@@ -425,14 +416,14 @@ class TestSolveVRPEntryPoint:
         total-distance-objective solution (or within tolerance)."""
         dm = _eilon7_dist_matrix()
         td_result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depot=[0, 0],
+            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
             alpha=0.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
             mip_gap=0.05,
         )
         ms_result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depot=[0, 0],
+            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
             alpha=1.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
@@ -459,7 +450,7 @@ class TestCombinedObjective:
         """alpha=1.0 should produce near-optimal makespan."""
         dm = _eilon7_dist_matrix()
         _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depot=[0, 0], alpha=1.0,
+        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=1.0,
                            backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
         assert result.status == "success"
         tol = MIP_GAP + 0.01
@@ -469,7 +460,7 @@ class TestCombinedObjective:
         """alpha=0.0 should produce near-optimal total distance."""
         dm = _eilon7_dist_matrix()
         bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depot=[0, 0], alpha=0.0,
+        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=0.0,
                            backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
         assert result.status == "success"
         tol = MIP_GAP + 0.01
@@ -478,7 +469,7 @@ class TestCombinedObjective:
     def test_alpha_05_tradeoff(self):
         """alpha=0.5 should produce a valid intermediate solution."""
         dm = _eilon7_dist_matrix()
-        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depot=[0, 0], alpha=0.5,
+        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=0.5,
                            backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
         assert result.status == "success"
         assert result.alpha == 0.5
@@ -495,15 +486,15 @@ class TestCombinedObjective:
         """alpha outside [0,1] should raise ValueError."""
         dm = _eilon7_dist_matrix()
         with pytest.raises(ValueError):
-            solve_vrp(cp.asarray(dm), num_vehicles=2, depot=[0, 0], alpha=1.5)
+            solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=1.5)
         with pytest.raises(ValueError):
-            solve_vrp(cp.asarray(dm), num_vehicles=2, depot=[0, 0], alpha=-0.1)
+            solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=-0.1)
 
     def test_objective_value_field(self):
         """VRPResult.objective_value should be alpha*makespan + (1-alpha)*total_cost."""
         dm = _eilon7_dist_matrix()
         for alpha in [0.0, 0.3, 0.7, 1.0]:
-            result = solve_vrp(cp.asarray(dm), num_vehicles=2, depot=[0, 0], alpha=alpha,
+            result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=alpha,
                                backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
             if result.status == "success":
                 expected = alpha * result.makespan + (1 - alpha) * result.total_cost
@@ -518,7 +509,7 @@ class TestNearestNeighborWarmstart:
 
     def test_all_customers_visited(self):
         dm = _eilon7_dist_matrix()
-        routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depot=[0, 0])
+        routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depots=[0, 0])
         visited = set()
         for r in routes:
             visited.update(r)
@@ -526,13 +517,13 @@ class TestNearestNeighborWarmstart:
 
     def test_no_depot_in_routes(self):
         dm = _eilon7_dist_matrix()
-        routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depot=[0, 0])
+        routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depots=[0, 0])
         for r in routes:
             assert 0 not in r
 
     def test_multi_depot(self):
         dm, depots = _multi_depot_line()
-        routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depot=depots)
+        routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depots=depots)
         visited = set()
         for r in routes:
             visited.update(r)
@@ -756,26 +747,26 @@ class TestHelperFunctions:
 
     def test_cost_uses_forward_direction(self):
         """Asymmetric matrix: cost(0→1→2→0) uses d[0,1]+d[1,2]+d[2,0]."""
-        dm = np.array([
+        dm = cp.array([
             [0, 1, 99],
             [99, 0, 2],
             [3, 99, 0],
-        ], dtype=np.float64)
-        cost = _compute_route_cost([[1, 2]], dm, depot=[0])
+        ], dtype=cp.float64)
+        cost = _compute_route_cost([[1, 2]], dm, depots=[0])
         # 0→1 + 1→2 + 2→0 = 1 + 2 + 3 = 6
         assert abs(cost - 6.0) < 1e-6
 
     def test_per_vehicle_costs_multi_depot(self):
         """Each vehicle's cost computed from its own depot."""
-        dm = np.array([
+        dm = cp.array([
             [0, 10, 20, 30],
             [10, 0, 15, 25],
             [20, 15, 0, 5],
             [30, 25, 5, 0],
-        ], dtype=np.float64)
-        # Vehicle 0: depot=0, route=[2] → 0→2→0 = 20+20 = 40
-        # Vehicle 1: depot=1, route=[3] → 1→3→1 = 25+25 = 50
-        per_v = _per_vehicle_costs([[2], [3]], dm, depot=[0, 1])
+        ], dtype=cp.float64)
+        # Vehicle 0: depots=0, route=[2] → 0→2→0 = 20+20 = 40
+        # Vehicle 1: depots=1, route=[3] → 1→3→1 = 25+25 = 50
+        per_v = _per_vehicle_costs([[2], [3]], dm, depots=[0, 1])
         assert abs(per_v[0] - 40.0) < 1e-6
         assert abs(per_v[1] - 50.0) < 1e-6
 

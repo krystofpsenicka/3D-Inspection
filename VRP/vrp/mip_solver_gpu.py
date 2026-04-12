@@ -1,16 +1,15 @@
-"""GPU backend for VRP MIP — cuOpt MILP solver via subprocess."""
+"""GPU backend for VRP MIP — cuOpt MILP solver (in-process)."""
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
-import subprocess
 import tempfile
 from typing import List, Optional
 
 import cupy as cp
+import numpy as np
 
 from ._helpers import per_vehicle_costs as _per_vehicle_costs
 from ._solver_base import VRPSolverBase
@@ -19,26 +18,68 @@ from .mip_model import build_vrp_mip
 logger = logging.getLogger(__name__)
 
 
+def _extract_routes_gpu(var_values: dict, num_vehicles: int, depots: list[int], n: int):
+    """GPU-vectorized route extraction from solved variable values."""
+    depot_set = set(depots)
+
+    active_i, active_j, active_v = [], [], []
+    for var_name, val in var_values.items():
+        if var_name.startswith("x_") and val > 0.5:
+            parts = var_name.split("_")
+            active_i.append(int(parts[1]))
+            active_j.append(int(parts[2]))
+            active_v.append(int(parts[3]))
+
+    if not active_i:
+        return [[] for _ in range(num_vehicles)]
+
+    K = num_vehicles
+    next_node = cp.full((K, n), -1, dtype=cp.int32)
+    next_node[
+        cp.array(active_v, dtype=cp.int32),
+        cp.array(active_i, dtype=cp.int32),
+    ] = cp.array(active_j, dtype=cp.int32)
+
+    is_depot = cp.zeros(n, dtype=cp.bool_)
+    for d in depot_set:
+        is_depot[d] = True
+
+    depots_gpu = cp.array(depots, dtype=cp.int32)
+    vehicle_range = cp.arange(K, dtype=cp.int32)
+    current = next_node[vehicle_range, depots_gpu]
+    active = (current >= 0) & ~is_depot[current]
+
+    route_matrix = cp.full((K, n), -1, dtype=cp.int32)
+    for step in range(n):
+        if not active.any():
+            break
+        route_matrix[active, step] = current[active]
+        next_step = cp.full(K, -1, dtype=cp.int32)
+        next_step[active] = next_node[vehicle_range[active], current[active]]
+        current = next_step
+        active = (current >= 0) & ~is_depot[current]
+
+    route_matrix_cpu = cp.asnumpy(route_matrix)
+    return [
+        [int(node) for node in route_matrix_cpu[v] if node >= 0]
+        for v in range(K)
+    ]
+
+
 class MIPSolverGPU(VRPSolverBase):
     """Combined-objective VRP via MIP — cuOpt MILP solver (GPU).
 
-    Builds the MIP with PuLP, exports to MPS, and runs the cuOpt MILP
-    solver in a subprocess inside the ``rapids_solver`` conda environment.
+    Builds the MIP with PuLP, exports to MPS, and solves with the
+    cuOpt MILP solver directly in-process.
     """
 
     def __init__(
         self,
-        rapids_python: str = "",
         time_limit: int = 120,
         mip_gap: float = 0.05,
-        timeout: int = 300,
     ):
-        from ..core.constants import RAPIDS_PYTHON, VRP_ROOT
-        self.rapids_python = os.path.expanduser(rapids_python or RAPIDS_PYTHON)
         self.time_limit = time_limit
         self.mip_gap = mip_gap
-        self.timeout = timeout
-        self._script = os.path.join(VRP_ROOT, "vrp", "mip_vrp_subprocess.py")
 
     def solve(
         self,
@@ -69,56 +110,38 @@ class MIPSolverGPU(VRPSolverBase):
         mps_path = tempfile.mktemp(suffix=".mps")
         prob.writeMPS(mps_path)
 
-        cfg = {
-            "mps_path": mps_path,
-            "time_limit": self.time_limit,
-            "mip_gap": self.mip_gap,
-            "num_vehicles": num_vehicles,
-            "depots": depots,
-            "n": n,
-        }
-        if warm_start:
-            cfg["warm_start"] = warm_start
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as cfg_f:
-            json.dump(cfg, cfg_f)
-            cfg_path = cfg_f.name
-
-        out_path = cfg_path.replace(".json", "_out.json")
-
         try:
-            cmd = [self.rapids_python, self._script, cfg_path, out_path]
-            logger.info("[MIPSolverGPU] Running cuOpt MILP subprocess: %s",
-                        " ".join(cmd))
-
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=self.timeout,
+            from cuopt.linear_programming import Solve, SolverSettings
+            from cuopt.linear_programming.cuopt_mps_parser import ParseMps
+            from cuopt.linear_programming.solver.solver_parameters import (
+                CUOPT_TIME_LIMIT, CUOPT_MIP_RELATIVE_GAP,
             )
 
-            if proc.returncode != 0:
-                logger.warning(
-                    "[MIPSolverGPU] Subprocess failed (rc=%d):\n%s",
-                    proc.returncode, proc.stderr,
-                )
-                return VRPResult(
-                    routes=[], total_cost=float("inf"),
-                    solver="cuopt_mip",
-                    status=f"subprocess_error rc={proc.returncode}",
-                )
+            data_model = ParseMps(mps_path)
 
-            with open(out_path) as f:
-                result = json.load(f)
+            settings = SolverSettings()
+            settings.set_parameter(CUOPT_TIME_LIMIT, str(self.time_limit))
+            settings.set_parameter(CUOPT_MIP_RELATIVE_GAP, str(self.mip_gap))
 
-            if result.get("status") != "success":
-                return VRPResult(
-                    routes=[], total_cost=float("inf"),
-                    solver="cuopt_mip",
-                    status=result.get("status", "unknown"),
-                )
+            if warm_start:
+                var_names = data_model.get_variable_names()
+                initial = np.zeros(len(var_names), dtype=np.float64)
+                name_to_idx = {name: i for i, name in enumerate(var_names)}
+                for var_name, val in warm_start.items():
+                    if var_name in name_to_idx:
+                        initial[name_to_idx[var_name]] = val
+                data_model.set_initial_primal_solution(initial)
 
-            routes = result["routes"]
+            logger.info("[MIPSolverGPU] Solving with cuOpt MILP (limit=%ds, gap=%.1f%%) ...",
+                        self.time_limit, self.mip_gap * 100)
+            solution = Solve(data_model, settings)
+
+            if solution.get_error_status() != 0:
+                raise RuntimeError(f"cuOpt MILP error: {solution.get_error_message()}")
+
+            var_values = solution.get_vars()
+            routes = _extract_routes_gpu(var_values, num_vehicles, depots, n)
+
             per_v = _per_vehicle_costs(routes, dist_matrix, depots)
             makespan = max(per_v) if per_v else 0.0
             total_cost = sum(per_v)
@@ -137,18 +160,12 @@ class MIPSolverGPU(VRPSolverBase):
                 status="success",
             )
 
-        except subprocess.TimeoutExpired:
-            logger.error("[MIPSolverGPU] Subprocess timed out after %ds",
-                         self.timeout)
-            return VRPResult(routes=[], total_cost=float("inf"),
-                             solver="cuopt_mip", status="timeout")
         except Exception as exc:
-            logger.error("[MIPSolverGPU] Unexpected error: %s", exc)
+            logger.error("[MIPSolverGPU] Solver error: %s", exc)
             return VRPResult(routes=[], total_cost=float("inf"),
                              solver="cuopt_mip", status=f"error: {exc}")
         finally:
-            for p in (mps_path, cfg_path, out_path):
-                try:
-                    os.unlink(p)
-                except FileNotFoundError:
-                    pass
+            try:
+                os.unlink(mps_path)
+            except FileNotFoundError:
+                pass

@@ -9,7 +9,8 @@ from shared.grid_utils import downsample_occupancy_grid
 from shared.occupancy_grid import OccupancyGrid
 
 from ...core.constants import NORM_EPS, CURVATURE_POSITION_WEIGHT
-from ...core.types import Side
+
+from shared.types import Side
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
 
     # 6. Convert feasible coarse indices to world coordinates
     feasible_centers = (feasible_ijk.astype(cp.float32) * actual_res
-                        + coarse_origin.astype(cp.float32) + 0.5 * actual_res)
+                        + coarse_og.origin.astype(cp.float32) + 0.5 * actual_res)
 
     # 7. Compute sampling weights: w = sdf^2 (footprint area ~ d^2)
     weights = feasible_sdf ** 2

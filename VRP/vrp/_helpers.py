@@ -17,7 +17,7 @@ def per_vehicle_costs(
 
     Args:
         routes: Per-vehicle customer node lists (excluding depots).
-        dist_matrix: (N, N) CuPy distance matrix.
+        dist_matrix: (N, N) CuPy or NumPy distance matrix.
         depots: Per-vehicle depot indices.
     """
     costs: list[float] = []

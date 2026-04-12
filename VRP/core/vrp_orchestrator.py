@@ -7,7 +7,7 @@ VRP Feedback Orchestrator
 1. Probe mesh bounds and compute depot positions.
 2. Assemble VRP nodes (depots + inspection waypoints).
 3. Build occupancy grid covering all robot positions.
-4. Compute GPU distance matrix over all nodes.
+4. Compute GPU distance matrix over all nodes (cuGraph).
 5. Solve VRP (cuOpt GPU or HiGHS CPU).
 6. Execute trajectories per robot (Space-Time A* + OMPL smoothing).
 
@@ -176,9 +176,7 @@ class VRPFeedbackOrchestrator:
                 depots=home_indices,
                 alpha=cfg.alpha,
                 backend=cfg.solver_backend,
-                rapids_python=cfg.rapids_python,
                 time_limit=cfg.mip_time_limit,
-                gpu_timeout=cfg.gpu_timeout,
                 mip_gap=cfg.mip_gap,
             )
             logger.info("      VRP status=%s  total_cost=%.2f  makespan=%.2f  "

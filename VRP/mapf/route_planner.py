@@ -95,21 +95,46 @@ def plan_robot_route_st(
         straight_line_total += dist
 
         if cp.array_equal(s_ijk, g_ijk):
-            # Same voxel — just dwell
-            if coarse_positions:
-                last = coarse_positions[-1][-1:]
-                last_world = world_positions[-1][-1:]
-                dwell_ijk = cp.tile(last, (hold_steps, 1))
-                dwell_world = cp.tile(last_world, (hold_steps, 1))
-                dwell_t = cp.arange(
-                    t_cursor + 1, t_cursor + hold_steps + 1, dtype=cp.intp,
+            # Same coarse voxel — no A* needed, but still navigate to g_xyz
+            # and record orientation.
+
+            if not coarse_positions:
+                # Bootstrap: seed arrays with the start position so subsequent
+                # appends work correctly.
+                coarse_positions.append(s_ijk.reshape(1, 3))
+                world_positions.append(s_xyz.reshape(1, 3))
+                coarse_times.append(cp.array([t_cursor], dtype=cp.intp))
+
+            last_world = world_positions[-1][-1:]  # (1, 3) world
+            g_world = g_xyz.reshape(1, 3)
+
+            # Short linear interpolation from last_world → g_xyz
+            sub_dist = float(cp.linalg.norm(g_world - last_world))
+            n_interp = max(1, int(math.ceil(sub_dist / (cruise_speed * dt))))
+            if n_interp > 1:
+                alphas = cp.linspace(0.0, 1.0, n_interp, dtype=cp.float64)[:, None]
+                interp_world = last_world + alphas * (g_world - last_world)
+                interp_ijk = cp.tile(g_ijk.reshape(1, 3), (n_interp, 1))
+                interp_t = cp.arange(
+                    t_cursor + 1, t_cursor + n_interp + 1, dtype=cp.intp,
                 )
-                coarse_positions.append(dwell_ijk)
-                world_positions.append(dwell_world)
-                coarse_times.append(dwell_t)
-                t_dwell_start = int(t_cursor) + 1
-                t_cursor += hold_steps
-                wp_schedule.append((t_dwell_start, int(t_cursor), curr_node))
+                coarse_positions.append(interp_ijk)
+                world_positions.append(interp_world)
+                coarse_times.append(interp_t)
+                t_cursor += n_interp
+
+            # Dwell at g_xyz
+            dwell_ijk = cp.tile(g_ijk.reshape(1, 3), (hold_steps, 1))
+            dwell_world = cp.tile(g_world, (hold_steps, 1))
+            dwell_t = cp.arange(
+                t_cursor + 1, t_cursor + hold_steps + 1, dtype=cp.intp,
+            )
+            coarse_positions.append(dwell_ijk)
+            world_positions.append(dwell_world)
+            coarse_times.append(dwell_t)
+            t_dwell_start = int(t_cursor) + 1
+            t_cursor += hold_steps
+            wp_schedule.append((t_dwell_start, int(t_cursor), curr_node))
             continue
 
         # Local time budget for this leg

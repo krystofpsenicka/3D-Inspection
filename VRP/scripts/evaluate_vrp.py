@@ -65,7 +65,6 @@ from VRP.core.constants import (
     MESH_PATH,
     MESH_POSE,
     MESH_TARGET_LENGTH,
-    RAPIDS_PYTHON,
     ROBOT_RADIUS,
     VOXEL_RESOLUTION,
 )
@@ -77,7 +76,7 @@ logger = logging.getLogger("vrp_eval")
 FLEET_SIZES     = [1, 2, 3, 4, 5, 6]
 WAYPOINT_COUNTS = [10, 20, 30, 50, 75, 100]
 SEEDS           = [42, 123, 7]
-SOLVER_BACKEND  = "cuopt"
+SOLVER_BACKEND  = "highs"
 
 
 # ── Metrics dataclass ─────────────────────────────────────────────────────────
@@ -121,7 +120,7 @@ def run_single(
     og: OccupancyGrid,
     mesh_bounds_min: np.ndarray,
     mesh_bounds_max: np.ndarray,
-    solver_backend: VRPBackend = VRPBackend.CUOPT,
+    solver_backend: VRPBackend = VRPBackend.HIGHS,
 ) -> RunMetrics:
     """Execute one pipeline configuration and collect metrics."""
     m = RunMetrics(fleet_size=fleet_size, n_waypoints=n_waypoints, seed=seed)
@@ -161,9 +160,7 @@ def run_single(
             num_vehicles=K,
             depots=home_indices,
             backend=solver_backend,
-            rapids_python=RAPIDS_PYTHON,
             time_limit=120,
-            gpu_timeout=300,
         )
         m.t_vrp_solve = time.perf_counter() - t0
         m.solver = vrp_result.solver
@@ -499,7 +496,7 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+",
                         default=SEEDS)
     parser.add_argument("--solver", default=SOLVER_BACKEND,
-                        choices=["cuopt", "highs", "auto"],
+                        choices=["cuopt", "highs"],
                         help="VRP solver backend")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()

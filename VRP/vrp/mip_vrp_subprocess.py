@@ -1,4 +1,11 @@
 """
+DEPRECATED: cuOpt is now called directly in-process in mip_solver_gpu.py.
+This file is no longer used and can be safely deleted.
+
+---
+
+Original docstring:
+
 VRP MIP – cuOpt MILP Subprocess Script
 =======================================
 

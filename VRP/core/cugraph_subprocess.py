@@ -1,4 +1,12 @@
-"""cuGraph all-pairs Dijkstra subprocess.
+"""DEPRECATED: cuGraph is now called directly in-process in distance_matrix.py.
+
+This file is no longer used and can be safely deleted.
+
+---
+
+Original docstring:
+
+cuGraph all-pairs Dijkstra subprocess.
 
 Runs inside the ``rapids_solver`` conda environment. Reads a JSON config
 from argv[1], builds a cuGraph graph from the occupancy grid's free voxels,

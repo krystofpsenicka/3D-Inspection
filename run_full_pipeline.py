@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
                    help="Frustum vertical FOV (degrees).")
     p.add_argument("--frustum_aspect", type=float, default=1.0,
                    help="Frustum aspect ratio (width/height).")
-    p.add_argument("--solver", choices=["auto", "cuopt", "highs"],
+    p.add_argument("--solver", choices=["cuopt", "highs"],
                    default="cuopt", help="MIP solver backend.")
     p.add_argument("--alpha", type=float, default=1.0,
                    help="Objective blending: 1.0=makespan, 0.0=total distance.")
@@ -324,6 +324,7 @@ def main() -> None:
                     collision_radius=_vrp_cfg.ROBOT_RADIUS,
                     occupancy_grid=sampling_og,
                     backend=CMAESBackend(),
+                    random_sampler=sampler,
                 )
                 opt_pos_gpu, opt_rot_gpu = opt_sampler.sample_optimized(
                     n_targeted, coverage_count_gpu, raycast_query,

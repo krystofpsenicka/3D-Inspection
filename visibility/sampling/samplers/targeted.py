@@ -10,7 +10,7 @@ from ...core.constants import (
     PROXIMITY_KNN_FRACTION,
     TARGETED_PROXIMITY_SIGMA_FACTOR, DEFAULT_K_COVERAGE,
 )
-from ...core.types import Side
+from shared.types import Side
 from .weighted import WeightedViewpointSampler
 from ...visibility.base import VisibilityQueryBase
 from ..utils.proximity import compute_knn_proximity_weights
@@ -87,9 +87,19 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             else:
                 uncovered_pts_gpu = self.target_points[uncovered_indices]
 
+            # Deficit-weighted targets: repeat each point by its deficit so
+            # high-deficit points contribute more to proximity and direction.
+            if coverage_count_gpu is not None and k_coverage > 1:
+                idx = under_k_indices if visibility_query is not None else uncovered_indices
+                deficit_per_pt = cp.maximum(
+                    k_coverage - coverage_count_gpu[idx], 0).astype(cp.int32)
+                prox_dir_targets = cp.repeat(uncovered_pts_gpu, deficit_per_pt, axis=0)
+            else:
+                prox_dir_targets = uncovered_pts_gpu
+
             sigma = TARGETED_PROXIMITY_SIGMA_FACTOR * coarse_res
             prox_w = self._compute_uncovered_proximity_weights(
-                centers_gpu, uncovered_pts_gpu, sigma)
+                centers_gpu, prox_dir_targets, sigma)
 
             blended = base_weights_gpu * prox_w
             blended_sum = float(blended.sum())
@@ -103,7 +113,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             batch_pos_gpu, batch_rot_gpu = self._sample_from_free_space(
                 centers_gpu, blended, coarse_res, n_this,
                 max_dir_noise_rad=max_dir_noise_rad,
-                direction_targets_gpu=uncovered_pts_gpu,
+                direction_targets_gpu=prox_dir_targets,
                 curvature_weighting=curvature_weighting,
             )
             if len(batch_pos_gpu) == 0:

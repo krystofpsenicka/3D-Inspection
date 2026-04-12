@@ -9,7 +9,7 @@ import open3d as o3d
 from typing import Tuple
 from ..utils.sampling_grid_builder import build_sampling_occupancy_grid, build_sdf_grid
 from ..utils.sampling_space_builder import build_sampling_space
-from ...core.types import Side
+from shared.types import Side
 
 logger = logging.getLogger(__name__)
 

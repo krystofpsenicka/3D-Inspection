@@ -7,16 +7,41 @@ name = "3d-inspection"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy",
-    "scipy",
+    "numpy>=2.0,<2.3",
+    "scipy>=1.10",
     "trimesh",
     "open3d",
-    "cupy-cuda12x",
+    "matplotlib",
+    "Pillow",
+    "pyyaml",
+    "pulp",
+    "highspy",
+    "evotorch",
+    # OptiX raycasting — requires OptiX SDK >= 7.7 (see README) and torch
+    # not on PyPI: pip install git+https://github.com/lcp29/trimesh-ray-optix.git
+    "triro",
 ]
 
 [project.optional-dependencies]
+rapids = [
+    "cupy-cuda12x",
+    "cudf-cu12>=26.2",
+    "cugraph-cu12>=26.2",
+    "cuopt-cu12>=26.2",
+]
+isaac = [
+    # PyTorch — install with:
+    #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    "torch>=2.1",
+    "torchvision",
+    "torchaudio",
+    # IsaacSim + IsaacLab — install with:
+    #   pip install "isaacsim[all]==5.0.0.0" isaaclab==2.2.0 --extra-index-url https://pypi.nvidia.com
+    # (or use scripts/setup_env.sh to symlink from an existing isaaclab installation)
+    "isaacsim==5.0.0.0",
+    "isaaclab==2.2.0",
+]
 test = ["pytest>=7.0"]
-vrp = ["highspy"]
 
 [tool.setuptools.packages.find]
 include = ["VRP*", "visibility*", "shared*"]

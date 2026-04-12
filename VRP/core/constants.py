@@ -27,26 +27,6 @@ INFLATION_VOXELS = int(ROBOT_RADIUS / VOXEL_RESOLUTION) + 1
 # ── Robot physical constants ─────────────────────────────────────────────────
 
 
-# ── RAPIDS / cuGraph subprocess ──────────────────────────────────────────────
-
-def _find_rapids_python() -> str:
-    """Search common conda/mamba prefixes for a rapids_solver environment."""
-    search_roots = [
-        os.path.expanduser("~/miniconda3"),
-        os.path.expanduser("~/anaconda3"),
-        os.path.expanduser("~/miniforge3"),
-        os.path.expanduser("~/mambaforge"),
-        os.path.expanduser("~/.conda"),
-    ]
-    for root in search_roots:
-        candidate = os.path.join(root, "envs", "rapids_solver", "bin", "python")
-        if os.path.isfile(candidate):
-            return candidate
-    return os.path.expanduser("~/miniconda3/envs/rapids_solver/bin/python")
-
-
-RAPIDS_PYTHON = os.environ.get("RAPIDS_PYTHON", _find_rapids_python())
-
 # ── Space-Time A* collision avoidance ────────────────────────────────────────
 
 SPACE_TIME_RESOLUTION = 0.50
@@ -87,7 +67,6 @@ MIP_TIME_LIMIT = 120
 # Relative optimality gap: the MIP solver stops when
 # (best_bound - incumbent) / incumbent <= MIP_GAP.
 # 0.05 = within 5% of optimal. Lower = better solution, longer solve.
-# Used by HiGHS (gapRel) and cuOpt (CUOPT_MIP_RELATIVE_GAP).
 MIP_GAP = 0.05
 
 # ── GPU search (parallel A*) ────────────────────────────────────────────────

@@ -1,0 +1,104 @@
+# 3D Inspection
+
+GPU-accelerated 3D inspection path planning: visibility analysis, vehicle routing (VRP), and Isaac Lab simulation.
+
+## Prerequisites
+
+| Requirement | Version |
+|-------------|---------|
+| CUDA Toolkit / driver | >= 12.0 |
+| Conda / Mamba | any recent |
+| GPU compute capability | >= 7.0 (Volta+) |
+| NVIDIA OptiX SDK | >= 7.7 (for `triro` raycasting) |
+
+**OptiX SDK**: Download from the [NVIDIA developer portal](https://developer.nvidia.com/optix). After installing, set the environment variable before running the setup script:
+```bash
+export OptiX_INSTALL_DIR=/home/troja_robot_lab/NVIDIA-OptiX-SDK-8.0.0  # default used by setup_env.sh
+```
+
+---
+
+## Setup
+
+### Option A — Quick setup (recommended)
+
+Reuses the existing `isaaclab` conda environment's torch and IsaacSim installation via symlinks, avoiding a ~14 GB re-download:
+
+```bash
+git clone <repo-url>
+cd 3D-Inspection
+bash scripts/setup_env.sh
+conda activate inspection
+```
+
+### Option B — Fresh setup (no existing IsaacSim)
+
+```bash
+conda create -n inspection python=3.11 -y
+conda activate inspection
+
+# 1. PyTorch with CUDA 12.8
+pip install torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# 2. IsaacSim 5.0 + IsaacLab 2.2 (~12.6 GB from NVIDIA PyPI)
+pip install "isaacsim[all]==5.0.0.0" isaaclab==2.2.0 \
+    --extra-index-url https://pypi.nvidia.com
+
+# 3. RAPIDS — cuGraph (GPU Dijkstra), cuOpt (GPU MIP), cuDF, cuPy
+pip install cupy-cuda12x cudf-cu12 cugraph-cu12 cuopt-cu12 \
+    --extra-index-url https://pypi.nvidia.com
+
+# 4. triro (not on PyPI — install from GitHub)
+pip install "git+https://github.com/lcp29/trimesh-ray-optix.git"
+
+# 5. Install this project (pulls in numpy, scipy, trimesh, evotorch, etc.)
+pip install -e .
+```
+
+---
+
+## Running the pipeline
+
+```bash
+conda activate inspection
+
+# Full 3D inspection pipeline (visibility + VRP + simulation)
+python run_full_pipeline.py --solver cuopt
+
+# VRP only (random waypoints)
+python VRP/scripts/run_vrp.py --num_robots 2 --random_waypoints 5 --solver cuopt
+
+# Use HiGHS (CPU) instead of cuOpt (GPU)
+python VRP/scripts/run_vrp.py --num_robots 2 --random_waypoints 5 --solver highs
+
+# Tests
+python -m pytest tests/ -v
+```
+
+---
+
+## Optional: Restore the `isaaclab` environment
+
+After creating the `inspection` env, you can remove the RAPIDS and cuRobo packages that were installed in `isaaclab` to free up space and restore it to its original state:
+
+```bash
+conda activate isaaclab
+pip uninstall -y \
+    cugraph-cu12 libcugraph-cu12 pylibcugraph-cu12 dask-cuda dask-cudf-cu12 \
+    cuopt-cu12 \
+    cudf-cu12 libcudf-cu12 \
+    cupy-cuda12x \
+    curobo nvidia-curobo 2>/dev/null || true
+```
+
+---
+
+## Package groups
+
+| Group | Install command | Contents |
+|-------|----------------|----------|
+| Core (auto) | `pip install -e .` | numpy, scipy, trimesh, open3d, matplotlib, pulp, highspy, evotorch, triro |
+| `rapids` | `pip install -e ".[rapids]"` | cupy-cuda12x, cudf-cu12, cugraph-cu12, cuopt-cu12 |
+| `isaac` | `pip install -e ".[isaac]"` | torch, torchvision, torchaudio, isaacsim, isaaclab |
+| `test` | `pip install -e ".[test]"` | pytest |
