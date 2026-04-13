@@ -121,6 +121,22 @@ from .orientation import apply_heading_orientation
 logger = logging.getLogger(__name__)
 
 
+def _per_leg_travel_times(wp_schedule, dt):
+    """Travel-only time per leg (dwell excluded), in seconds.
+
+    wp_schedule: list of (t_dwell_start, t_dwell_end, node_idx) in coarse
+    timesteps, in route order, one entry per non-start node.
+    Each leg's travel time is the gap between the end of the previous
+    dwell (or t=0 for the first leg) and the start of this leg's dwell.
+    Returns list[float] in seconds, one entry per wp_schedule entry.
+    """
+    times, prev_end = [], 0
+    for t_dwell_start, t_dwell_end, _ in wp_schedule:
+        times.append(max(0.0, (t_dwell_start - prev_end) * dt))
+        prev_end = t_dwell_end
+    return times
+
+
 # ─── Executor ────────────────────────────────────────────────────────────────
 
 class MultiAgentPathPlanner:
@@ -515,6 +531,13 @@ class MultiAgentPathPlanner:
                     actual_makespan,
                     [f"{t:.1f}" for t in actual_per_vehicle_times])
 
+        actual_per_leg_times = [
+            _per_leg_travel_times(
+                robot_waypoint_schedules[i] or [], SPACE_TIME_DT,
+            )
+            for i in range(num_robots)
+        ]
+
         initial_positions_np = [cp.asnumpy(p) for p in initial_positions]
 
         return ExecutionResult(
@@ -525,4 +548,5 @@ class MultiAgentPathPlanner:
             fail_counts=fail_counts,
             actual_makespan=actual_makespan,
             actual_per_vehicle_times=actual_per_vehicle_times,
+            actual_per_leg_times=actual_per_leg_times,
         )

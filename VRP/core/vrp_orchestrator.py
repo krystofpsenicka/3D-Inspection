@@ -25,6 +25,7 @@ import cupy as cp
 import numpy as np
 
 from .constants import (
+    AUV_CRUISE_SPEED,
     INFLATION_VOXELS,
     MESH_PATH,
     MESH_POSE,
@@ -214,17 +215,20 @@ class VRPFeedbackOrchestrator:
             )
 
             # ── Check feedback convergence ───────────────────────────
-            vrp_makespan = vrp_result.makespan
-            actual_makespan = exec_result.actual_makespan
+            # VRP solver works on the distance matrix (metres); the
+            # executor reports time (seconds). Convert to a common unit
+            # (metres) via the nominal cruise speed.
+            vrp_makespan_m = vrp_result.makespan
+            actual_makespan_m = exec_result.actual_makespan * AUV_CRUISE_SPEED
 
-            if vrp_makespan < 1e-6:
+            if vrp_makespan_m < 1e-6:
                 logger.info("      VRP makespan near zero; skipping feedback.")
                 break
 
-            ratio = abs(actual_makespan - vrp_makespan) / vrp_makespan
-            logger.info("      Feedback: VRP makespan=%.1f  actual=%.1f  "
+            ratio = abs(actual_makespan_m - vrp_makespan_m) / vrp_makespan_m
+            logger.info("      Feedback: VRP makespan=%.1f m  actual=%.1f m  "
                         "ratio=%.2f  threshold=%.2f",
-                        vrp_makespan, actual_makespan, ratio,
+                        vrp_makespan_m, actual_makespan_m, ratio,
                         cfg.feedback_threshold)
 
             if ratio <= cfg.feedback_threshold:
@@ -233,20 +237,38 @@ class VRPFeedbackOrchestrator:
                 break
 
             if iteration < max_iters - 1:
-                # Vectorized distance matrix update using CuPy
+                # Vectorized distance matrix update using CuPy.
+                # Use the real per-leg travel time from Space-Time A*,
+                # converted from seconds to metres so it is comparable
+                # to the dist matrix.
                 logger.info("      Updating distance matrix for re-solve …")
-                all_a, all_b, all_actual = [], [], []
+                a_parts, b_parts, cost_parts = [], [], []
                 for v, route in enumerate(routes):
-                    n_legs = max(1, len(route) - 1)
-                    actual_leg = exec_result.actual_per_vehicle_times[v] / n_legs
-                    for leg in range(1, len(route)):
-                        all_a.append(route[leg - 1])
-                        all_b.append(route[leg])
-                        all_actual.append(actual_leg)
+                    leg_times_s = exec_result.actual_per_leg_times[v]
+                    n_legs = len(route) - 1
+                    if len(leg_times_s) != n_legs:
+                        logger.warning(
+                            "      Vehicle %d: per-leg times length %d != "
+                            "route legs %d; skipping feedback update for "
+                            "this vehicle.",
+                            v, len(leg_times_s), n_legs,
+                        )
+                        continue
+                    route_arr = cp.asarray(route, dtype=cp.intp)
+                    a_parts.append(route_arr[:-1])
+                    b_parts.append(route_arr[1:])
+                    cost_parts.append(
+                        cp.asarray(leg_times_s, dtype=current_dist.dtype)
+                    )
 
-                a_idx = cp.array(all_a, dtype=cp.intp)
-                b_idx = cp.array(all_b, dtype=cp.intp)
-                actual_costs = cp.array(all_actual, dtype=current_dist.dtype)
+                if not a_parts:
+                    logger.info("      No per-leg data available; skipping update.")
+                    continue
+
+                a_idx = cp.concatenate(a_parts)
+                b_idx = cp.concatenate(b_parts)
+                # s -> m via cruise speed, in one fused op
+                actual_costs = cp.concatenate(cost_parts) * AUV_CRUISE_SPEED
                 est = current_dist[a_idx, b_idx]
                 mask = actual_costs > est * (1.0 + cfg.feedback_threshold)
                 current_dist[a_idx[mask], b_idx[mask]] = actual_costs[mask]

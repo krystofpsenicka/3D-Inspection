@@ -54,10 +54,13 @@ class ExecutionResult:
     fail_counts: list[int]
     actual_makespan: float = 0.0
     actual_per_vehicle_times: list[float] = None
+    actual_per_leg_times: list[list[float]] = None
 
     def __post_init__(self):
         if self.actual_per_vehicle_times is None:
             self.actual_per_vehicle_times = []
+        if self.actual_per_leg_times is None:
+            self.actual_per_leg_times = []
 
 
 @dataclass
