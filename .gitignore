@@ -33,6 +33,7 @@ pip-wheel-metadata/
 *.glb
 experiments/*.pdf
 experiments/*.png
+experiments/*.txt
 comparison_results/
 solution_snapshots_*/
 eval_results/
