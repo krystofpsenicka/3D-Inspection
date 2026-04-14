@@ -36,18 +36,22 @@ def lp_relaxation_set_cover(
         ceil(LP_optimal) as a lower bound on the integer optimum.
     """
     N, M = V_binary.shape
-    target_points = int(M * target_coverage)
+    n_required = int(math.ceil(M * target_coverage))
 
-    # If we only need to cover target_points, pick the target_points
-    # with highest coverage potential (gives tightest bound).
-    # For simplicity, use all points and the LP will handle it.
-    # min c^T x  s.t.  Ax >= b, 0 <= x <= 1
-    c = np.ones(N)  # minimize sum(x_i)
+    # Select the n_required hardest-to-cover points (lowest column sums).
+    # Any n_required-point subset gives a valid LP lower bound; this selection
+    # maximises the bound (tightest guarantee) without exceeding OPT.
+    col_sums = V_binary.sum(axis=0)
+    selected = np.argsort(col_sums)[:n_required]
+    V_sub = V_binary[:, selected]  # (N, n_required)
 
-    # Each point j that needs coverage: sum_i V[i,j]*x_i >= 1
-    # linprog uses <= so: -V^T x <= -1
-    A_ub = -V_binary.T.astype(np.float64)
-    b_ub = -np.ones(M)
+    # min c^T x  s.t.  A_ub x <= b_ub, 0 <= x <= 1
+    c = np.ones(N)
+
+    # Each of the n_required selected points must be covered by ≥ 1 viewpoint.
+    # linprog uses <=, so: -V_sub^T x <= -1
+    A_ub = -V_sub.T.astype(np.float64)   # (n_required, N)
+    b_ub = -np.ones(n_required)
 
     bounds = [(0, 1)] * N
 

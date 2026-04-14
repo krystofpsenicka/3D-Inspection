@@ -33,7 +33,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import ModelConfig, SEEDS_3, RESULTS_DIR
-from experiments.common.runner import set_seed, timed
+from experiments.common.runner import set_seed, timed, free_gpu_memory
 from experiments.common.pipeline_setup import PipelineContext, DegenerateNormalsError
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
@@ -254,6 +254,8 @@ def main():
                                     result["total_speedup"])
                     except Exception as e:
                         logger.error("  FAILED: %s", e, exc_info=True)
+                    finally:
+                        free_gpu_memory()
     else:
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):

@@ -35,6 +35,8 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
                         k_coverage: int = DEFAULT_K_COVERAGE,
                         coverage_count_gpu: cp.ndarray | None = None,
                         samples_per_iteration: int | None = None,
+                        curvature_knn_k: int | None = None,
+                        position_weight: float | None = None,
                         ) -> Tuple[cp.ndarray, cp.ndarray]:
         """Sample candidates biased toward uncovered surface regions.
 
@@ -49,16 +51,19 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             uncovered_indices, num_candidates, side, min_distance,
             max_distance_offset, max_dir_noise_rad, curvature_weighting,
             visibility_query, k_coverage, coverage_count_gpu,
-            samples_per_iteration)
+            samples_per_iteration, curvature_knn_k, position_weight)
 
     def _sample_targeted_iterative(self, uncovered_indices: cp.ndarray, num_candidates: int,
                                    side: Side, min_distance: float | None, max_distance_offset: float,
                                    max_dir_noise_rad: float, curvature_weighting: bool,
                                    visibility_query, k_coverage: int,
-                                   coverage_count_gpu, samples_per_iteration: int):
+                                   coverage_count_gpu, samples_per_iteration: int,
+                                   curvature_knn_k: int | None = None,
+                                   position_weight: float | None = None):
         """Sample viewpoints in batches, optionally updating coverage after each."""
         centers_gpu, base_weights_gpu, coarse_res = self.get_feasible_sampling_data(
-            side, min_distance, max_distance_offset, curvature_weighting)
+            side, min_distance, max_distance_offset, curvature_weighting,
+            curvature_knn_k=curvature_knn_k, position_weight=position_weight)
         if int(len(centers_gpu)) == 0:
             return cp.empty((0, 3), dtype=cp.float32), cp.empty((0, 3, 3), dtype=cp.float32)
 
@@ -93,7 +98,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
                 idx = under_k_indices if visibility_query is not None else uncovered_indices
                 deficit_per_pt = cp.maximum(
                     k_coverage - coverage_count_gpu[idx], 0).astype(cp.int32)
-                prox_dir_targets = cp.repeat(uncovered_pts_gpu, deficit_per_pt, axis=0)
+                prox_dir_targets = cp.repeat(uncovered_pts_gpu, deficit_per_pt.tolist(), axis=0)
             else:
                 prox_dir_targets = uncovered_pts_gpu
 

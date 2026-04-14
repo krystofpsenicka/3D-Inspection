@@ -36,7 +36,7 @@ class RaycastingVisibilityQuery(VisibilityQuery):
         candidate_indices = self.points_in_frustum_with_kdtree(viewpoint, rotation)
 
         if len(candidate_indices) == 0:
-            return np.array([]), time.perf_counter() - start
+            return np.array([], dtype=np.intp), time.perf_counter() - start
 
         candidate_points = self.target_points[candidate_indices]
         num_candidates = len(candidate_indices)

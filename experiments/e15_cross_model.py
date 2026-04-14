@@ -1,16 +1,30 @@
 #!/usr/bin/env python3
 """E15: Cross-Model Generalization
 
-Runs the full inspection pipeline on all TOSCA models + Duke of Lancaster
-to evaluate generalization. Uses targeted_50 strategy, target_coverage=0.95,
-3 seeds per model.
+Runs the full 8-stage inspection pipeline on Duke of Lancaster + TOSCA_ALL to
+evaluate how well the pipeline generalizes across shape complexity.
 
-Models: Duke of Lancaster + TOSCA_ALL (9 models).
+Pipeline stages timed:
+  1. Mesh loading
+  2. Surface sampling
+  3. Occupancy grid
+  4. Viewpoint sampling  (targeted_50 — chosen based on e01 results)
+  5. Visibility          (GPU raycast — ground truth, from e03 results)
+  6. Set cover           (LazyGreedy CPU — fastest solver, from e04 results)
+  7. VRP routing         (HiGHS, K=2 robots — from e08 results)
+  8. MAPF trajectory     (resolution 0.5 m — from e10 results)
+
+Implementation choice rationale (printed in summary and figure annotations):
+  - Sampler: targeted_50 achieves the best coverage/viewpoints ratio (e01)
+  - Visibility: GPU raycast is exact and fastest for N≤5K candidates (e03)
+  - Set cover: LazyGreedy (CPU) beats LazyGreedy (GPU) for N~1500 due to heap (e04)
+  - VRP: HiGHS LP solver achieves near-optimal within time limit (e08)
+  - MAPF: 0.5 m voxel resolution balances path quality vs planning cost (e10)
 
 Usage:
     conda run -n isaaclab python -m experiments.e15_cross_model
     conda run -n isaaclab python -m experiments.e15_cross_model --plots_only
-    conda run -n isaaclab python -m experiments.e15_cross_model --models duke_of_lancaster wolf0 cat0
+    conda run -n isaaclab python -m experiments.e15_cross_model --models duke_of_lancaster wolf0
 """
 
 from __future__ import annotations
@@ -33,104 +47,205 @@ if _PROJECT_ROOT not in sys.path:
 from experiments.common.config import (
     ModelConfig, SEEDS_3, TOSCA_ALL, RESULTS_DIR,
 )
-from experiments.common.runner import set_seed, timed
+from experiments.common.runner import set_seed, timed, free_gpu_memory
 from experiments.common.pipeline_setup import PipelineContext, DegenerateNormalsError
 from experiments.common.persistence import save_run_result, load_run_result
+from experiments.common.sampling_dispatch import sample_strategy
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, grouped_bar, stacked_bar,
     THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
 )
-
-from shared.types import Side
-from visibility.set_cover import LazyGreedySetCoverCuda
+from visibility.set_cover import LazyGreedySetCover
 
 logger = logging.getLogger(__name__)
 
 ALL_MODELS = ["duke_of_lancaster"] + TOSCA_ALL
 TARGET_COVERAGE = 0.95
+FLEET_SIZE = 2   # robots for VRP/MAPF
+
+_IMPLEMENTATION_CHOICES = (
+    "Sampler: targeted_50 (best coverage/viewpoints, e01)  |  "
+    "Visibility: GPU raycast (exact, e03)  |  "
+    "Set cover: LazyGreedy CPU (O(log N) heap, fastest, e04)  |  "
+    "VRP: HiGHS (near-optimal, e08)  |  "
+    "MAPF: 0.5 m resolution (e10)"
+)
+
+# Graceful import of VRP/MAPF stack
+try:
+    from VRP.core.distance_matrix import compute_distance_matrix
+    from VRP.vrp.vrp_solver import solve_vrp
+    from VRP.core.types import VRPBackend, ExecutionResult
+    from VRP.mapf.route_executor import MultiAgentPathPlanner
+    from VRP.core.geometry import compute_start_grid
+    _VRP_AVAILABLE = True
+except ImportError as _vrp_err:
+    logger.warning("VRP/MAPF stack not available (%s) — stages 7/8 will be skipped.", _vrp_err)
+    _VRP_AVAILABLE = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Single run logic
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_single(model_cfg: ModelConfig, seed: int) -> dict:
-    """Run full pipeline on one model with one seed."""
-    set_seed(seed)
-    ctx = PipelineContext(model_cfg)
-
-    # Mesh loading
-    with timed() as t_mesh:
-        ctx.load_mesh()
-    tm, _ = ctx.load_mesh()
-    mesh_vertices = len(tm.vertices)
-    mesh_faces = len(tm.faces)
-
-    # Surface sampling
-    with timed() as t_surface:
-        target_points, normals = ctx.sample_surface()  # fixed seed, disk-cached
-
-    # OG
-    with timed() as t_og:
-        ctx.build_sampling_og()
-
-    # Sampling (targeted_50)
-    with timed() as t_sample:
-        sampler = ctx.build_sampler("targeted")
-        num_candidates = model_cfg.num_candidates
-        n_uniform = int(num_candidates * 0.50)
-        n_targeted = num_candidates - n_uniform
-        pos_gpu, rot_gpu = sampler.sample(
-            cp.arange(len(target_points)), n_uniform,
-            side=Side.OUTSIDE, curvature_weighting=False,
-        )
-        vis_query = ctx.build_visibility_query("raycast")
-        V_init, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
-        coverage_count = V_init.astype(cp.int32).sum(axis=0)
-        uncovered = cp.where(coverage_count < 1)[0]
-        if len(uncovered) > 0 and n_targeted > 0:
-            t_pos, t_rot = sampler.sample(
-                uncovered, n_targeted, side=Side.OUTSIDE,
-                curvature_weighting=False,
-            )
-            pos_gpu = cp.concatenate([pos_gpu, t_pos])
-            rot_gpu = cp.concatenate([rot_gpu, t_rot])
-
-    # Visibility
-    with timed() as t_vis:
-        V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
-
-    # Set cover
-    with timed() as t_opt:
-        optimizer = LazyGreedySetCoverCuda(
-            len(target_points), pos_gpu, rot_gpu, V,
-        )
-        opt_result = optimizer.optimize(
-            target_coverage=TARGET_COVERAGE, max_viewpoints=1000,
-        )
-
-    return {
+def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
+    """Run full 8-stage pipeline on one model with one seed."""
+    result: dict = {
         "model": model_cfg.name,
         "seed": seed,
-        "mesh_vertices": mesh_vertices,
-        "mesh_faces": mesh_faces,
-        "num_viewpoints": opt_result.num_viewpoints,
-        "coverage": float(opt_result.total_coverage),
-        "redundancy": float(opt_result.redundancy),
-        "t_mesh": t_mesh.elapsed,
-        "t_surface": t_surface.elapsed,
-        "t_og": t_og.elapsed,
-        "t_sample": t_sample.elapsed,
-        "t_vis": t_vis.elapsed,
-        "t_opt": t_opt.elapsed,
-        "total_time": (t_mesh.elapsed + t_surface.elapsed + t_og.elapsed +
-                       t_sample.elapsed + t_vis.elapsed + t_opt.elapsed),
+        # Stage timings
+        "t_mesh": 0.0, "t_surface": 0.0, "t_og": 0.0,
+        "t_sample": 0.0, "t_vis": 0.0, "t_opt": 0.0,
+        "t_vrp": 0.0, "t_mapf": 0.0,
+        # Metrics
+        "mesh_vertices": 0, "mesh_faces": 0,
+        "num_viewpoints": 0, "coverage": 0.0, "redundancy": 0.0,
+        "vrp_makespan": float("nan"), "vrp_status": "skipped",
+        "mapf_steps": 0, "mapf_collisions": 0,
     }
+
+    # 1. Mesh loading
+    with timed() as t_mesh:
+        tm, _ = ctx.load_mesh()
+    result["t_mesh"] = t_mesh.elapsed
+    result["mesh_vertices"] = len(tm.vertices)
+    result["mesh_faces"] = len(tm.faces)
+
+    # 2. Surface sampling
+    with timed() as t_surface:
+        target_points, normals = ctx.sample_surface()
+    result["t_surface"] = t_surface.elapsed
+
+    # 3. Occupancy grid
+    with timed() as t_og:
+        og = ctx.build_sampling_og()
+    result["t_og"] = t_og.elapsed
+
+    # 4. Viewpoint sampling (targeted_50)
+    set_seed(seed)
+    vis_query = ctx.build_visibility_query("raycast")
+    with timed() as t_sample:
+        pos_gpu, rot_gpu, _, _, _ = sample_strategy(
+            ctx, "targeted_50", model_cfg.num_candidates,
+            target_points, normals, vis_query, model_cfg,
+        )
+    result["t_sample"] = t_sample.elapsed
+
+    # 5. Visibility (GPU raycast)
+    with timed() as t_vis:
+        V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
+    result["t_vis"] = t_vis.elapsed
+
+    # 6. Set cover (LazyGreedy CPU)
+    V_np = cp.asnumpy(V)
+    pos_np = cp.asnumpy(pos_gpu)
+    rot_np = cp.asnumpy(rot_gpu)
+    num_points = int(len(target_points))
+
+    with timed() as t_opt:
+        optimizer = LazyGreedySetCover(num_points, pos_np, rot_np, V_np)
+        opt_result = optimizer.optimize(
+            target_coverage=TARGET_COVERAGE, max_viewpoints=1000)
+    result["t_opt"] = t_opt.elapsed
+
+    result["num_viewpoints"] = opt_result.num_viewpoints
+    result["coverage"] = float(opt_result.total_coverage)
+    result["redundancy"] = float(opt_result.redundancy)
+
+    # Selected viewpoint positions / rotations
+    sel_idx = opt_result.selected_indices
+    if hasattr(sel_idx, "get"):
+        sel_idx = sel_idx.get()
+    sel_idx = np.asarray(sel_idx)
+    insp_positions = pos_np[sel_idx]   # (N_vp, 3)
+    insp_rotmats = rot_np[sel_idx]     # (N_vp, 3, 3)
+
+    if not _VRP_AVAILABLE or opt_result.num_viewpoints == 0:
+        result["total_time"] = sum(
+            result[k] for k in ("t_mesh", "t_surface", "t_og",
+                                 "t_sample", "t_vis", "t_opt"))
+        return result
+
+    # 7. VRP routing (HiGHS, K=FLEET_SIZE robots)
+    try:
+        bounds_min, bounds_max = ctx.mesh_bounds
+        robot_starts = compute_start_grid(FLEET_SIZE, bounds_min, bounds_max)
+        home_positions = np.array(
+            [[float(xyz[0]), float(xyz[1]), float(xyz[2])] for xyz in robot_starts],
+            dtype=np.float32)
+        home_rotmats = np.tile(np.eye(3, dtype=np.float32), (FLEET_SIZE, 1, 1))
+        all_positions = np.vstack([home_positions, insp_positions])
+        all_rotmats = np.concatenate([home_rotmats, insp_rotmats])
+        home_indices = list(range(FLEET_SIZE))
+
+        with timed() as t_vrp:
+            dist_matrix = compute_distance_matrix(og, cp.asarray(all_positions))
+            vrp_result = solve_vrp(
+                dist_matrix=dist_matrix,
+                num_vehicles=FLEET_SIZE,
+                depots=home_indices,
+                backend=VRPBackend.HIGHS,
+                time_limit=60,
+            )
+        result["t_vrp"] = t_vrp.elapsed
+        result["vrp_status"] = vrp_result.status
+
+        if any(vrp_result.routes):
+            from VRP.vrp._helpers import per_vehicle_costs
+            rc = np.array(per_vehicle_costs(
+                vrp_result.routes, dist_matrix, home_indices))
+            result["vrp_makespan"] = float(rc.max())
+
+            # 8. MAPF trajectory planning
+            routes = [
+                [home_indices[i]] + list(r) + [home_indices[i]]
+                for i, r in enumerate(vrp_result.routes)
+            ]
+            start_positions = [
+                np.array(xyz, dtype=np.float32) for xyz in robot_starts
+            ]
+            wp_pos_gpu = cp.asarray(all_positions, dtype=cp.float32)
+            wp_rot_gpu = cp.asarray(all_rotmats, dtype=cp.float32)
+
+            with timed() as t_mapf:
+                executor = MultiAgentPathPlanner(
+                    start_positions=start_positions, og=og)
+                exec_result = executor.execute(
+                    routes=routes,
+                    waypoint_positions=wp_pos_gpu,
+                    waypoint_rotmats=wp_rot_gpu,
+                    home_indices=set(home_indices),
+                    dist_matrix=dist_matrix,
+                )
+            result["t_mapf"] = t_mapf.elapsed
+
+            if exec_result.all_traj_positions:
+                result["mapf_steps"] = max(
+                    len(t) for t in exec_result.all_traj_positions)
+            result["mapf_collisions"] = sum(exec_result.fail_counts)
+        else:
+            result["vrp_status"] = "empty_routes"
+
+    except Exception as e:
+        logger.error("VRP/MAPF stage failed: %s", e, exc_info=True)
+        result["vrp_status"] = f"error: {e}"
+
+    result["total_time"] = sum(
+        result[k] for k in ("t_mesh", "t_surface", "t_og",
+                             "t_sample", "t_vis", "t_opt",
+                             "t_vrp", "t_mapf"))
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Plot generation
 # ═══════════════════════════════════════════════════════════════════════════
+
+_STAGE_NAMES = ["Mesh", "Surface", "OG", "Sampling", "Visibility",
+                "Set Cover", "VRP", "MAPF"]
+_STAGE_KEYS = ["t_mesh", "t_surface", "t_og", "t_sample", "t_vis",
+               "t_opt", "t_vrp", "t_mapf"]
+
 
 def generate_plots(results: list[dict], output_dir: str):
     """Generate all E15 figures."""
@@ -142,81 +257,106 @@ def generate_plots(results: list[dict], output_dir: str):
         logger.warning("No results for plotting")
         return
 
-    models = sorted(set(r["model"] for r in results),
-                    key=lambda m: np.mean([r["mesh_faces"] for r in results if r["model"] == m]))
+    models = sorted(
+        set(r["model"] for r in results),
+        key=lambda m: np.mean([r["mesh_faces"] for r in results if r["model"] == m]),
+    )
 
-    # ── Fig 1: Grouped bar - viewpoints by model ───────────────────
+    def _mm(model, metric):
+        vals = [r[metric] for r in results if r["model"] == model
+                and not (isinstance(r[metric], float) and np.isnan(r[metric]))]
+        return float(np.mean(vals)) if vals else float("nan")
+
+    def _ms(model, metric):
+        vals = [r[metric] for r in results if r["model"] == model
+                and not (isinstance(r[metric], float) and np.isnan(r[metric]))]
+        return float(np.std(vals)) if vals else 0.0
+
+    subtitle = f"\n{_IMPLEMENTATION_CHOICES}"
+
+    # ── Fig 1: Viewpoints by model ─────────────────────────────────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    vp_data = {"Viewpoints": [np.mean([r["num_viewpoints"] for r in results if r["model"] == m])
-                               for m in models]}
-    vp_errs = {"Viewpoints": [np.std([r["num_viewpoints"] for r in results if r["model"] == m])
-                               for m in models]}
-    grouped_bar(ax, vp_data, models, yerr=vp_errs,
-                ylabel="Selected viewpoints",
-                title="Viewpoints by Model", value_labels=True, fmt="%.0f")
-    ax.tick_params(axis="x", rotation=35)
-    save_figure(fig, os.path.join(fig_dir, "e15_viewpoints_by_model"))
+    vp_m = [_mm(m, "num_viewpoints") for m in models]
+    vp_s = [_ms(m, "num_viewpoints") for m in models]
+    x = np.arange(len(models))
+    bars = ax.bar(x, vp_m, 0.6, yerr=vp_s, capsize=3,
+                  color=CATEGORICAL_COLORS[0], alpha=0.85)
+    ax.bar_label(bars, fmt="%.0f", fontsize=7, padding=2)
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, rotation=35, ha="right")
+    ax.set_ylabel("Selected viewpoints")
+    ax.set_title(f"Viewpoints by Model (95% coverage){subtitle}", fontsize=9)
+    save_figure(fig, os.path.join(fig_dir, "e15_viewpoints"))
 
-    # ── Fig 2: Scatter - viewpoints vs mesh faces ───────────────────
+    # ── Fig 2: Coverage by model ────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
+    cov_m = [_mm(m, "coverage") * 100 for m in models]
+    cov_s = [_ms(m, "coverage") * 100 for m in models]
+    bars = ax.bar(x, cov_m, 0.6, yerr=cov_s, capsize=3,
+                  color=CATEGORICAL_COLORS[1], alpha=0.85)
+    ax.bar_label(bars, fmt="%.1f%%", fontsize=7, padding=2)
+    ax.axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, rotation=35, ha="right")
+    ax.set_ylabel("Coverage (%)")
+    ax.set_title(f"Coverage by Model{subtitle}", fontsize=9)
+    save_figure(fig, os.path.join(fig_dir, "e15_coverage"))
+
+    # ── Fig 3: Full 8-stage timing breakdown (stacked bar) ───────────────
+    # Include only stages that have non-zero values (VRP/MAPF may be skipped)
+    active_stages = []
+    active_keys = []
+    for name, key in zip(_STAGE_NAMES, _STAGE_KEYS):
+        if any(r.get(key, 0) > 0 for r in results):
+            active_stages.append(name)
+            active_keys.append(key)
+
+    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4.5))
+    stage_data = {
+        sname: [_mm(m, skey) for m in models]
+        for sname, skey in zip(active_stages, active_keys)
+    }
+    stacked_bar(ax, models, stage_data,
+                ylabel="Time (s)",
+                title=f"Pipeline Stage Timing by Model (K={FLEET_SIZE} robots){subtitle}")
+    ax.tick_params(axis="x", rotation=35)
+    save_figure(fig, os.path.join(fig_dir, "e15_timing_breakdown"))
+
+    # ── Fig 4: VRP makespan by model (if available) ─────────────────────
+    vrp_results = [r for r in results if not np.isnan(r.get("vrp_makespan", float("nan")))]
+    if vrp_results:
+        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
+        vrp_m = [_mm(m, "vrp_makespan") for m in models]
+        vrp_s = [_ms(m, "vrp_makespan") for m in models]
+        valid_mask = [not np.isnan(v) for v in vrp_m]
+        valid_models = [m for m, v in zip(models, valid_mask) if v]
+        valid_m = [v for v, ok in zip(vrp_m, valid_mask) if ok]
+        valid_s = [v for v, ok in zip(vrp_s, valid_mask) if ok]
+        if valid_models:
+            xv = np.arange(len(valid_models))
+            ax.bar(xv, valid_m, 0.6, yerr=valid_s, capsize=3,
+                   color=CATEGORICAL_COLORS[3], alpha=0.85)
+            ax.set_xticks(xv)
+            ax.set_xticklabels(valid_models, rotation=35, ha="right")
+            ax.set_ylabel("VRP makespan (m)")
+            ax.set_title(f"VRP Makespan by Model (K={FLEET_SIZE})")
+            save_figure(fig, os.path.join(fig_dir, "e15_vrp_makespan"))
+
+    # ── Fig 5: Viewpoints vs mesh complexity (scatter) ───────────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
     for r in results:
-        ax.scatter(r["mesh_faces"], r["num_viewpoints"], alpha=0.5,
-                   color=CATEGORICAL_COLORS[0], s=20)
-    # Model means
+        ax.scatter(r["mesh_faces"], r["num_viewpoints"],
+                   alpha=0.4, color=CATEGORICAL_COLORS[0], s=15)
     for m in models:
         mr = [r for r in results if r["model"] == m]
-        mean_faces = np.mean([r["mesh_faces"] for r in mr])
-        mean_vps = np.mean([r["num_viewpoints"] for r in mr])
-        ax.annotate(m, (mean_faces, mean_vps), fontsize=6,
-                    textcoords="offset points", xytext=(3, 3))
+        ax.annotate(m,
+                    (np.mean([r["mesh_faces"] for r in mr]),
+                     np.mean([r["num_viewpoints"] for r in mr])),
+                    fontsize=6, textcoords="offset points", xytext=(3, 3))
     ax.set_xlabel("Mesh faces")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title("Viewpoints vs Mesh Complexity")
-    save_figure(fig, os.path.join(fig_dir, "e15_scatter_vps_vs_faces"))
-
-    # ── Fig 3: Grouped bar - coverage by model ──────────────────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    cov_data = {"Coverage (%)": [np.mean([r["coverage"] * 100 for r in results if r["model"] == m])
-                                  for m in models]}
-    cov_errs = {"Coverage (%)": [np.std([r["coverage"] * 100 for r in results if r["model"] == m])
-                                  for m in models]}
-    grouped_bar(ax, cov_data, models, yerr=cov_errs,
-                ylabel="Coverage (%)",
-                title="Coverage by Model", value_labels=True, fmt="%.1f")
-    ax.tick_params(axis="x", rotation=35)
-    save_figure(fig, os.path.join(fig_dir, "e15_coverage_by_model"))
-
-    # ── Fig 4: Stacked bar - time breakdown ─────────────────────────
-    stage_names = ["Mesh", "Surface", "OG", "Sampling", "Visibility", "Set Cover"]
-    stage_keys = ["t_mesh", "t_surface", "t_og", "t_sample", "t_vis", "t_opt"]
-
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    stage_data = {}
-    for sname, skey in zip(stage_names, stage_keys):
-        stage_data[sname] = [
-            np.mean([r[skey] for r in results if r["model"] == m])
-            for m in models
-        ]
-    stacked_bar(ax, models, stage_data,
-                ylabel="Time (s)", title="Time Breakdown by Model")
-    ax.tick_params(axis="x", rotation=35)
-    save_figure(fig, os.path.join(fig_dir, "e15_time_breakdown"))
-
-    # ── Fig 5: Bar - redundancy by model ────────────────────────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    red_means = [np.mean([r["redundancy"] for r in results if r["model"] == m])
-                 for m in models]
-    red_stds = [np.std([r["redundancy"] for r in results if r["model"] == m])
-                for m in models]
-    x = np.arange(len(models))
-    bars = ax.bar(x, red_means, 0.6, yerr=red_stds, capsize=2,
-                  color=CATEGORICAL_COLORS[2])
-    ax.bar_label(bars, fmt="%.2f", fontsize=7, padding=2)
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=35, ha="right")
-    ax.set_ylabel("Redundancy (viewpoints/point)")
-    ax.set_title("Coverage Redundancy by Model")
-    save_figure(fig, os.path.join(fig_dir, "e15_redundancy"))
+    save_figure(fig, os.path.join(fig_dir, "e15_scatter_faces_vs_vps"))
 
     logger.info("E15 figures saved to %s", fig_dir)
 
@@ -227,14 +367,12 @@ def generate_plots(results: list[dict], output_dir: str):
 
 def main():
     p = argparse.ArgumentParser(description="E15: Cross-Model Generalization")
-    p.add_argument("--models", nargs="+", default=ALL_MODELS,
-                   help="Models to evaluate")
+    p.add_argument("--models", nargs="+", default=ALL_MODELS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir",
                    default=os.path.join(RESULTS_DIR, "e15_cross_model"))
     p.add_argument("--skip_existing", action="store_true")
-    p.add_argument("--plots_only", action="store_true",
-                   help="Only regenerate plots from existing results")
+    p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -243,12 +381,15 @@ def main():
         format="%(levelname)-8s %(name)s: %(message)s",
     )
 
+    logger.info("Implementation choices: %s", _IMPLEMENTATION_CHOICES)
+    if not _VRP_AVAILABLE:
+        logger.warning("VRP/MAPF stack not available — stages 7/8 will be skipped")
+
     raw_dir = os.path.join(args.output_dir, "raw")
     os.makedirs(raw_dir, exist_ok=True)
-    all_results = []
+    all_results: list[dict] = []
 
     if not args.plots_only:
-        # Build model configs
         model_configs = []
         for name in args.models:
             if name == "duke_of_lancaster":
@@ -257,7 +398,7 @@ def main():
                 try:
                     model_configs.append(ModelConfig.tosca(name))
                 except FileNotFoundError:
-                    logger.warning("Model %s not found, skipping", name)
+                    logger.warning("Model %s not found — skipping", name)
 
         total = len(model_configs) * len(args.seeds)
         run_idx = 0
@@ -265,8 +406,6 @@ def main():
         for model_cfg in model_configs:
             logger.info("=" * 60)
             logger.info("Model: %s", model_cfg.name)
-            logger.info("=" * 60)
-
             try:
                 ctx = PipelineContext(model_cfg)
                 ctx.load_mesh()
@@ -278,58 +417,55 @@ def main():
 
             for seed in args.seeds:
                 run_idx += 1
-                rpath = os.path.join(
-                    raw_dir,
-                    f"model={model_cfg.name}_seed={seed}",
-                )
+                rpath = os.path.join(raw_dir, f"model={model_cfg.name}_seed={seed}")
 
                 if args.skip_existing and os.path.exists(rpath + ".json"):
-                    logger.info("[%d/%d] SKIP: %s seed=%d",
+                    logger.info("[%d/%d] SKIP %s seed=%d",
                                 run_idx, total, model_cfg.name, seed)
                     all_results.append(load_run_result(rpath))
                     continue
 
                 logger.info("[%d/%d] Running: %s seed=%d",
                             run_idx, total, model_cfg.name, seed)
-
                 try:
-                    result = run_single(model_cfg, seed)
+                    result = run_single(ctx, model_cfg, seed)
                     all_results.append(result)
                     save_run_result(result, rpath)
-                    logger.info("  vps=%d cov=%.2f%% time=%.1fs faces=%d",
+                    logger.info("  vps=%d cov=%.2f%% t=%.1fs vrp=%s",
                                 result["num_viewpoints"],
                                 result["coverage"] * 100,
                                 result["total_time"],
-                                result["mesh_faces"])
+                                result["vrp_status"])
                 except Exception as e:
                     logger.error("  FAILED: %s", e, exc_info=True)
+                finally:
+                    free_gpu_memory()
     else:
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):
-                all_results.append(
-                    load_run_result(os.path.join(raw_dir, fname.replace(".json", ""))))
+                all_results.append(load_run_result(
+                    os.path.join(raw_dir, fname.replace(".json", ""))))
 
     if all_results:
         generate_plots(all_results, args.output_dir)
 
-        # Print summary table
-        logger.info("\n" + "=" * 80)
-        logger.info("E15 SUMMARY")
-        logger.info("=" * 80)
-        logger.info("%-20s %8s %8s %10s %10s %10s",
-                    "Model", "Faces", "VPs", "Cov%", "Time(s)", "Redund.")
-        logger.info("-" * 68)
+        logger.info("\n%s\nE15 SUMMARY — %s\n%s",
+                    "=" * 80, _IMPLEMENTATION_CHOICES, "=" * 80)
+        logger.info("%-20s %8s %8s %8s %8s %8s %8s %8s",
+                    "Model", "Faces", "VPs", "Cov%",
+                    "t_vis(s)", "t_sc(s)", "t_vrp(s)", "t_mapf(s)")
+        logger.info("-" * 80)
         models = sorted(set(r["model"] for r in all_results))
         for m in models:
             mr = [r for r in all_results if r["model"] == m]
             if mr:
-                logger.info("%-20s %8.0f %8.1f %10.2f %10.1f %10.2f",
-                            m,
-                            np.mean([r["mesh_faces"] for r in mr]),
-                            np.mean([r["num_viewpoints"] for r in mr]),
-                            np.mean([r["coverage"] * 100 for r in mr]),
-                            np.mean([r["total_time"] for r in mr]),
-                            np.mean([r["redundancy"] for r in mr]))
+                def _m(k):
+                    vals = [r.get(k, 0) for r in mr]
+                    return float(np.mean(vals))
+                logger.info("%-20s %8.0f %8.1f %8.2f %8.2f %8.2f %8.2f %8.2f",
+                            m, _m("mesh_faces"), _m("num_viewpoints"),
+                            _m("coverage") * 100,
+                            _m("t_vis"), _m("t_opt"), _m("t_vrp"), _m("t_mapf"))
 
 
 if __name__ == "__main__":

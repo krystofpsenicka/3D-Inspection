@@ -112,6 +112,9 @@ class PipelineContext:
         self._target_points = cp.asarray(pts_np, dtype=cp.float32)
         self._normals = cp.asarray(norms_np, dtype=cp.float32)
         self._surface_seed = seed
+        # Invalidate caches that were built for the old point set
+        self._vis_query_cache.clear()
+        self._sampler_cache.clear()
         logger.info("  Sampled %d points. Normals OK.", n)
         return self._target_points, self._normals
 
@@ -142,7 +145,12 @@ class PipelineContext:
             return self._vis_query_cache[method]
 
         _, o3d_mesh = self.load_mesh()
-        target_points, normals = self.sample_surface()
+        # Use already-cached points so the visibility query matches whatever
+        # num_points was passed to sample_surface() by the caller.
+        if self._target_points is not None:
+            target_points, normals = self._target_points, self._normals
+        else:
+            target_points, normals = self.sample_surface()
         from visibility.core.types import FrustumParams
 
         frustum_params = FrustumParams(
@@ -176,7 +184,12 @@ class PipelineContext:
             return self._sampler_cache[strategy]
 
         _, o3d_mesh = self.load_mesh()
-        target_points, normals = self.sample_surface()
+        # Use already-cached target points so the sampler matches whatever
+        # num_points was passed to sample_surface() by the caller.
+        if self._target_points is not None:
+            target_points, normals = self._target_points, self._normals
+        else:
+            target_points, normals = self.sample_surface()
         og = self.build_sampling_og()
 
         if strategy in ("weighted", "targeted"):

@@ -18,7 +18,10 @@ logger = logging.getLogger(__name__)
 def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray,
                          target_points_gpu: cp.ndarray, normals_gpu: cp.ndarray, free_space_resolution: float,
                          side: Side, min_dist: float, max_dist: float,
-                         curvature_weighting: bool = False) -> Tuple[cp.ndarray, cp.ndarray, float]:
+                         curvature_weighting: bool = False,
+                         curvature_knn_k: int | None = None,
+                         position_weight: float | None = None,
+                         ) -> Tuple[cp.ndarray, cp.ndarray, float]:
     """Build feasible sampling positions using EDT-SDF grid lookup on GPU.
 
     Downsamples the occupancy grid to *free_space_resolution*, filters by
@@ -97,10 +100,12 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
 
     if curvature_weighting:
         from .curvature import compute_local_curvature
+        knn_k_kwargs = {} if curvature_knn_k is None else {"k": curvature_knn_k}
         local_curv = compute_local_curvature(
-            feasible_centers, target_points_gpu, normals_gpu)
+            feasible_centers, target_points_gpu, normals_gpu, **knn_k_kwargs)
         curv_norm = local_curv / (local_curv.max() + NORM_EPS)
-        weights *= (1.0 + CURVATURE_POSITION_WEIGHT * curv_norm)
+        pw = CURVATURE_POSITION_WEIGHT if position_weight is None else position_weight
+        weights *= (1.0 + pw * curv_norm)
 
     weights = weights / weights.sum()
 

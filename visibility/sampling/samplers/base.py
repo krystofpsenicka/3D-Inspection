@@ -84,13 +84,15 @@ class ViewpointSamplerBase(ABC):
                                    min_distance: float | None = None,
                                    max_distance_offset: float = 0.95,
                                    curvature_weighting: bool = False,
+                                   curvature_knn_k: int | None = None,
+                                   position_weight: float | None = None,
                                    ) -> Tuple[cp.ndarray, cp.ndarray, float]:
         """Return cached (centers_gpu, weights_gpu, coarse_res) for the given side."""
         if min_distance is None:
             min_distance = self.min_clearance
         max_distance = max_distance_offset * self.frustum_far
 
-        key = (side, curvature_weighting)
+        key = (side, curvature_weighting, curvature_knn_k, position_weight)
         if key not in self._feasible_cache:
             t0 = time.perf_counter()
             self._feasible_cache[key] = build_sampling_space(
@@ -99,6 +101,8 @@ class ViewpointSamplerBase(ABC):
                 self.free_space_resolution,
                 side, min_distance, max_distance,
                 curvature_weighting=curvature_weighting,
+                curvature_knn_k=curvature_knn_k,
+                position_weight=position_weight,
             )
             dt = time.perf_counter() - t0
             logger.info("[ViewpointSamplerBase] build_sampling_space: %.3fs", dt)

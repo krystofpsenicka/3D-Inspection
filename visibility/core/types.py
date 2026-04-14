@@ -1,7 +1,8 @@
 import cupy as cp
 import numpy as np
 from numpy.linalg import norm
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 from .constants import NORM_EPS
 
@@ -35,11 +36,12 @@ class EpsilonHyperparams:
 
 @dataclass
 class OptimizationResult:
-    """Result from set-cover optimization. All arrays are on GPU (CuPy)."""
-    positions: cp.ndarray       # (K, 3) selected viewpoint positions
-    rotations: cp.ndarray       # (K, 3, 3) selected rotation matrices
-    visibility_map: cp.ndarray  # (K, M) uint8 — selected viewpoints' visibility
+    """Result from set-cover optimization. GPU arrays (CuPy) unless noted."""
+    positions: cp.ndarray                    # (K, 3) selected viewpoint positions
+    rotations: cp.ndarray                    # (K, 3, 3) selected rotation matrices
+    visibility_map: cp.ndarray               # (K, M) uint8 — selected viewpoints' visibility
     total_coverage: float
     num_viewpoints: int
     redundancy: float
     optimization_time: float
+    selected_indices: Optional[np.ndarray] = None  # (K,) int — indices into candidate pool

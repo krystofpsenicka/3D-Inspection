@@ -26,22 +26,25 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from experiments.common.runner import free_gpu_memory
 from experiments.common.config import ModelConfig, SEEDS_3, E07_ALPHAS, RESULTS_DIR
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, dual_yaxis, THESIS_COL, CATEGORICAL_COLORS,
 )
 
+import open3d as o3d
 from shared.mesh_loader import load_and_transform_mesh
-from shared.grid_builder_utils import build_occupancy_grid
-from VRP.core.waypoint_loader import load_waypoints
+from shared.surface_sampler import SurfacePointSampler
+from shared.types import Side
+from visibility.sampling import WeightedViewpointSampler
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
 from VRP.core.types import VRPBackend
 from VRP.core.geometry import compute_start_grid
 from VRP.core.constants import (
-    INFLATION_VOXELS, MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
-    ROBOT_RADIUS, VOXEL_RESOLUTION,
+    MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
+    ROBOT_RADIUS,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,14 +53,14 @@ N_WAYPOINTS = 50
 N_ROBOTS = 3
 
 
-def run_single(alpha: float, seed: int, og, mesh_bounds_min,
+def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
                mesh_bounds_max) -> dict:
     np.random.seed(seed)
     cp.random.seed(seed)
 
-    insp_pos, insp_rot = load_waypoints(
-        source="random", n_random=N_WAYPOINTS, og=og, random_seed=seed,
-    )
+    pos_gpu, rot_gpu = sampler.sample(N_WAYPOINTS, side=Side.OUTSIDE)
+    insp_pos = cp.asnumpy(pos_gpu).astype(np.float32)
+    insp_rot = cp.asnumpy(rot_gpu).astype(np.float32)
     K = N_ROBOTS
     robot_xyzs = compute_start_grid(K, mesh_bounds_min, mesh_bounds_max)
     home_pos = np.array([[float(x[0]), float(x[1]), float(x[2])] for x in robot_xyzs],
@@ -67,28 +70,38 @@ def run_single(alpha: float, seed: int, og, mesh_bounds_min,
     all_rot = np.concatenate([home_rot, insp_rot])
     home_indices = list(range(K))
 
-    dist_matrix = compute_distance_matrix(og, all_pos)
-
-    t0 = time.perf_counter()
-    vrp_result = solve_vrp(
-        dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
-        alpha=alpha, backend=VRPBackend.HIGHS, time_limit=120,
-    )
-    solve_time = time.perf_counter() - t0
+    dist_matrix = compute_distance_matrix(og, cp.asarray(all_pos))
 
     from VRP.vrp._helpers import per_vehicle_costs
-    per_v = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)
-    makespan = max(per_v) if per_v else 0.0
+    t0 = time.perf_counter()
+    try:
+        vrp_result = solve_vrp(
+            dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
+            alpha=alpha, backend=VRPBackend.HIGHS, time_limit=120,
+        )
+        solve_time = time.perf_counter() - t0
+        per_v = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)
+        makespan = max(per_v) if per_v else 0.0
+        total_cost = vrp_result.total_cost
+        status = vrp_result.status
+    except RuntimeError as exc:
+        solve_time = time.perf_counter() - t0
+        logger.warning("solve_vrp failed (alpha=%.2f seed=%d): %s — skipping",
+                       alpha, seed, exc)
+        per_v = []
+        makespan = float("nan")
+        total_cost = float("nan")
+        status = f"failed: {exc}"
 
     return {
         "alpha": alpha,
         "seed": seed,
         "makespan": makespan,
-        "total_cost": vrp_result.total_cost,
+        "total_cost": total_cost,
         "per_vehicle_costs": per_v,
         "route_balance_ratio": makespan / min(c for c in per_v if c > 0) if any(c > 0 for c in per_v) else 0,
         "solve_time": solve_time,
-        "status": vrp_result.status,
+        "status": status,
     }
 
 
@@ -100,9 +113,18 @@ def generate_plots(results: list[dict], output_dir: str):
     alphas = sorted(set(r["alpha"] for r in results))
     ok = [r for r in results if r["status"] == "success"]
 
-    makespan_means = [np.mean([r["makespan"] for r in ok if r["alpha"] == a]) for a in alphas]
-    cost_means = [np.mean([r["total_cost"] for r in ok if r["alpha"] == a]) for a in alphas]
-    balance_means = [np.mean([r["route_balance_ratio"] for r in ok if r["alpha"] == a]) for a in alphas]
+    makespan_means = [
+        np.mean([r["makespan"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
+        for a in alphas
+    ]
+    cost_means = [
+        np.mean([r["total_cost"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
+        for a in alphas
+    ]
+    balance_means = [
+        np.mean([r["route_balance_ratio"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
+        for a in alphas
+    ]
 
     # ── Fig 1: Dual y-axis ───────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
@@ -159,15 +181,35 @@ def main():
     all_results = []
 
     if not args.plots_only:
+        _RESOLUTION = 0.20
         mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
         bmin = np.asarray(mesh.bounds[0], dtype=float)
         bmax = np.asarray(mesh.bounds[1], dtype=float)
-        max_xyzs = compute_start_grid(N_ROBOTS, bmin, bmax)
-        og = build_occupancy_grid(
-            mesh=mesh, padding=1.0, inflation_voxels=INFLATION_VOXELS,
-            resolution=VOXEL_RESOLUTION, fill_interior=True,
-            extra_free_points=np.array(max_xyzs, dtype=np.float32),
-            extra_margin_voxels=max(3, int(np.ceil(ROBOT_RADIUS / VOXEL_RESOLUTION))),
+
+        o3d_mesh = o3d.geometry.TriangleMesh()
+        o3d_mesh.vertices = o3d.utility.Vector3dVector(np.asarray(mesh.vertices))
+        o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(mesh.faces))
+        o3d_mesh.compute_vertex_normals()
+
+        _model_cfg = ModelConfig.duke_of_lancaster()
+        from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
+        og = build_sampling_occupancy_grid(
+            mesh=o3d_mesh,
+            frustum_far=_model_cfg.frustum.far,
+            min_clearance=2 * ROBOT_RADIUS,
+            resolution=_RESOLUTION,
+        )
+        logger.info("  Grid: %s res=%.2f", og.grid.shape, og.resolution)
+
+        _pts_np, _norms_np = SurfacePointSampler().sample(
+            o3d_mesh, _model_cfg.num_surface_points, seed=42)
+        sampler = WeightedViewpointSampler(
+            o3d_mesh,
+            cp.asarray(_pts_np, dtype=cp.float32),
+            cp.asarray(_norms_np, dtype=cp.float32),
+            _model_cfg.frustum.far,
+            collision_radius=ROBOT_RADIUS,
+            occupancy_grid=og,
         )
 
         raw_dir = os.path.join(args.output_dir, "raw")
@@ -176,10 +218,22 @@ def main():
         for alpha in args.alphas:
             for seed in args.seeds:
                 logger.info("Running alpha=%.2f seed=%d", alpha, seed)
-                result = run_single(alpha, seed, og, bmin, bmax)
+                try:
+                    result = run_single(alpha, seed, og, sampler, bmin, bmax)
+                except Exception as exc:
+                    logger.error("run_single crashed (alpha=%.2f seed=%d): %s",
+                                 alpha, seed, exc, exc_info=True)
+                    result = {
+                        "alpha": alpha, "seed": seed,
+                        "makespan": float("nan"), "total_cost": float("nan"),
+                        "per_vehicle_costs": [], "route_balance_ratio": float("nan"),
+                        "solve_time": 0.0, "status": f"crashed: {exc}",
+                    }
                 all_results.append(result)
                 save_run_result(result, os.path.join(raw_dir, f"alpha={alpha}_seed={seed}"))
-                logger.info("  makespan=%.1f total_cost=%.1f", result["makespan"], result["total_cost"])
+                logger.info("  makespan=%.1f total_cost=%.1f status=%s",
+                            result["makespan"], result["total_cost"], result["status"])
+                free_gpu_memory()
     else:
         raw_dir = os.path.join(args.output_dir, "raw")
         for fname in sorted(os.listdir(raw_dir)):

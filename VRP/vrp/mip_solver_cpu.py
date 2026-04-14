@@ -63,7 +63,6 @@ class MIPSolverCPU(VRPSolverBase):
             timeLimit=self.time_limit,
             gapRel=self.mip_gap,
             msg=1,
-            warmStart=(warm_start is not None),
         )
 
         if warm_start:

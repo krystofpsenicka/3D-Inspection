@@ -22,6 +22,7 @@ from dataclasses import dataclass, asdict
 
 import cupy as cp
 import numpy as np
+import open3d as o3d
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -30,6 +31,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from experiments.common.runner import free_gpu_memory
 from experiments.common.config import (
     ModelConfig, SEEDS_5, E06_FLEET_SIZES, E06_WAYPOINT_COUNTS, RESULTS_DIR,
 )
@@ -40,8 +42,9 @@ from experiments.common.plotting import (
 )
 
 from shared.mesh_loader import load_and_transform_mesh
-from shared.grid_builder_utils import build_occupancy_grid
-from VRP.core.waypoint_loader import load_waypoints
+from shared.surface_sampler import SurfacePointSampler
+from shared.types import Side
+from visibility.sampling import WeightedViewpointSampler
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
 from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
@@ -49,8 +52,8 @@ from VRP.mapf.route_executor import MultiAgentPathPlanner
 from VRP.core.geometry import compute_start_grid
 from VRP.core.collision import find_trajectory_collisions
 from VRP.core.constants import (
-    INFLATION_VOXELS, MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
-    ROBOT_RADIUS, VOXEL_RESOLUTION,
+    MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
+    ROBOT_RADIUS,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,14 +81,15 @@ class RunMetrics:
 
 
 def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
-               mesh_bounds_max, solver_backend=VRPBackend.HIGHS) -> RunMetrics:
+               mesh_bounds_max, sampler, solver_backend=VRPBackend.HIGHS) -> RunMetrics:
     m = RunMetrics(fleet_size=fleet_size, n_waypoints=n_waypoints, seed=seed)
     t_total_start = time.perf_counter()
 
     try:
-        insp_positions, insp_rotmats = load_waypoints(
-            source="random", n_random=n_waypoints, og=og, random_seed=seed,
-        )
+        cp.random.seed(seed)
+        pos_gpu, rot_gpu = sampler.sample(n_waypoints, side=Side.OUTSIDE)
+        insp_positions = cp.asnumpy(pos_gpu).astype(np.float32)
+        insp_rotmats = cp.asnumpy(rot_gpu).astype(np.float32)
         K = fleet_size
         robot_start_xyzs = compute_start_grid(K, mesh_bounds_min, mesh_bounds_max)
         home_positions = np.array(
@@ -98,13 +102,13 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
         home_indices = list(range(K))
 
         t0 = time.perf_counter()
-        dist_matrix = compute_distance_matrix(og, all_positions)
+        dist_matrix = compute_distance_matrix(og, cp.asarray(all_positions))
         m.t_dist_matrix = time.perf_counter() - t0
 
         t0 = time.perf_counter()
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K,
-            depots=home_indices, backend=solver_backend, time_limit=120,
+            depots=home_indices, alpha=0.5, backend=solver_backend, time_limit=120,
         )
         m.t_vrp_solve = time.perf_counter() - t0
         m.status = vrp_result.status
@@ -137,7 +141,7 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
         exec_result: ExecutionResult = executor.execute(
             routes=routes, waypoint_positions=wp_pos_gpu,
             waypoint_rotmats=wp_rot_gpu, home_indices=set(home_indices),
-            dist_matrix=dist_matrix,
+            dist_matrix=dist_matrix, alpha=0.5,
         )
         m.t_trajectory = time.perf_counter() - t0
 
@@ -275,22 +279,43 @@ def main():
     all_metrics = []
 
     if not args.plots_only:
-        # Build shared OG
-        logger.info("Building occupancy grid ...")
+        # Use 0.20m resolution (2× coarser than default) to avoid CUDA OOM
+        # during distance-matrix construction on the Duke model.
+        _RESOLUTION = 0.20
+
+        logger.info("Loading mesh and building occupancy grid (res=%.2f) ...", _RESOLUTION)
         mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
         mesh_bounds_min = np.asarray(mesh.bounds[0], dtype=float)
         mesh_bounds_max = np.asarray(mesh.bounds[1], dtype=float)
 
-        max_fleet = max(args.fleet_sizes)
-        max_depot_xyzs = compute_start_grid(max_fleet, mesh_bounds_min, mesh_bounds_max)
-        extra_free = np.array(max_depot_xyzs, dtype=np.float32)
-        extra_margin = max(3, int(np.ceil(ROBOT_RADIUS / VOXEL_RESOLUTION)))
-        og = build_occupancy_grid(
-            mesh=mesh, padding=1.0, inflation_voxels=INFLATION_VOXELS,
-            resolution=VOXEL_RESOLUTION, fill_interior=True,
-            extra_free_points=extra_free, extra_margin_voxels=extra_margin,
+        o3d_mesh = o3d.geometry.TriangleMesh()
+        o3d_mesh.vertices = o3d.utility.Vector3dVector(np.asarray(mesh.vertices))
+        o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(mesh.faces))
+        o3d_mesh.compute_vertex_normals()
+
+        _model_cfg = ModelConfig.duke_of_lancaster()
+        from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
+        og = build_sampling_occupancy_grid(
+            mesh=o3d_mesh,
+            frustum_far=_model_cfg.frustum.far,
+            min_clearance=2 * ROBOT_RADIUS,
+            resolution=_RESOLUTION,
         )
         logger.info("  Grid: %s res=%.2f", og.grid.shape, og.resolution)
+
+        # Build WeightedViewpointSampler for free-space waypoint sampling.
+        # Constructed once — SDF grid is cached inside the sampler.
+        logger.info("Building WeightedViewpointSampler ...")
+        _pts_np, _norms_np = SurfacePointSampler().sample(
+            o3d_mesh, _model_cfg.num_surface_points, seed=42)
+        sampler = WeightedViewpointSampler(
+            o3d_mesh,
+            cp.asarray(_pts_np, dtype=cp.float32),
+            cp.asarray(_norms_np, dtype=cp.float32),
+            _model_cfg.frustum.far,
+            collision_radius=ROBOT_RADIUS,
+            occupancy_grid=og,
+        )
 
         # Compute Held-Karp bounds for representative waypoint counts
         held_karp_bounds = {}
@@ -309,7 +334,7 @@ def main():
                 logger.info("=== Run %d/%d: fleet=%d wps=%d seed=%d ===",
                             run_id, total, k, nw, seed)
                 m = run_single(k, nw, seed, og, mesh_bounds_min, mesh_bounds_max,
-                               solver_backend)
+                               sampler, solver_backend)
                 all_metrics.append(m)
                 row = asdict(m)
                 row["run_id"] = run_id
@@ -317,6 +342,7 @@ def main():
                 f.flush()
                 logger.info("  status=%s makespan=%.1f t_total=%.1fs",
                             m.status, m.makespan, m.t_total)
+                free_gpu_memory()
     else:
         csv_path = os.path.join(args.output_dir, "results.csv")
         if os.path.exists(csv_path):

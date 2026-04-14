@@ -29,6 +29,10 @@ class ExpansionIterativeSetCover(IterativeSetCoverOptimizer):
         self.positions = inner_optimizer.positions
         self.rotmats = inner_optimizer.rotmats
 
+    @property
+    def last_selected_index(self) -> int:
+        return self.inner.last_selected_index
+
     def select_next(self) -> Optional[Tuple[cp.ndarray, cp.ndarray, cp.ndarray]]:
         result = self.inner.select_next()
         if result is None:

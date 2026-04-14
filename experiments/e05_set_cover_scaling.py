@@ -26,7 +26,7 @@ if _PROJECT_ROOT not in sys.path:
 from experiments.common.config import (
     ModelConfig, SEEDS_3, E05_CANDIDATE_COUNTS, E05_POINT_COUNTS, RESULTS_DIR,
 )
-from experiments.common.runner import set_seed, timed
+from experiments.common.runner import set_seed, timed, free_gpu_memory
 from experiments.common.pipeline_setup import PipelineContext
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
@@ -55,9 +55,12 @@ def run_single(ctx: PipelineContext, num_candidates: int,
     with timed() as t_vis:
         V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
-    from visibility.set_cover import LazyGreedySetCoverCuda
+    from visibility.set_cover import LazyGreedySetCover  # CPU — fastest per e04 results
+    V_np = cp.asnumpy(V)
+    pos_np = cp.asnumpy(pos_gpu)
+    rot_np = cp.asnumpy(rot_gpu)
     with timed() as t_opt:
-        optimizer = LazyGreedySetCoverCuda(len(target_points), pos_gpu, rot_gpu, V)
+        optimizer = LazyGreedySetCover(len(target_points), pos_np, rot_np, V_np)
         opt_result = optimizer.optimize(target_coverage=0.95, max_viewpoints=1000)
 
     return {
@@ -178,6 +181,8 @@ def main():
                                     result["optimization_time"])
                     except Exception as e:
                         logger.error("  FAILED: %s", e, exc_info=True)
+                    finally:
+                        free_gpu_memory()
     else:
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):

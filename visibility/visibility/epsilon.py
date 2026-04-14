@@ -76,7 +76,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         frustum_indices = self.points_in_frustum_with_kdtree(viewpoint, rotation)
 
         if len(frustum_indices) == 0:
-            return np.array([]), time.perf_counter() - start
+            return np.array([], dtype=np.intp), time.perf_counter() - start
 
         frustum_points = self.target_points[frustum_indices]
         frustum_normals = self.normals[frustum_indices]

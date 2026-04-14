@@ -32,7 +32,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import ModelConfig, SEEDS_3, RESULTS_DIR
-from experiments.common.runner import set_seed, timed
+from experiments.common.runner import set_seed, timed, free_gpu_memory
 from experiments.common.pipeline_setup import PipelineContext, DegenerateNormalsError
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
@@ -43,19 +43,13 @@ from experiments.common.plotting import (
 from shared.types import Side
 from visibility.set_cover import LazyGreedySetCoverCuda
 
-from shared.mesh_loader import load_and_transform_mesh
-from shared.grid_builder_utils import build_occupancy_grid
-from VRP.core.waypoint_loader import load_waypoints
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
 from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
 from VRP.mapf.route_executor import MultiAgentPathPlanner
 from VRP.core.geometry import compute_start_grid
 from VRP.vrp._helpers import per_vehicle_costs
-from VRP.core.constants import (
-    INFLATION_VOXELS, MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
-    ROBOT_RADIUS, VOXEL_RESOLUTION,
-)
+from VRP.core.constants import ROBOT_RADIUS
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +71,7 @@ def run_single(target_coverage: float, seed: int) -> dict:
     # Stage 1: Mesh loading
     with timed() as t_mesh:
         ctx.load_mesh()
-    tm, _ = ctx.load_mesh()
+    tm, o3d_mesh = ctx.load_mesh()
     bmin = np.asarray(tm.bounds[0], dtype=float)
     bmax = np.asarray(tm.bounds[1], dtype=float)
 
@@ -141,15 +135,15 @@ def run_single(target_coverage: float, seed: int) -> dict:
         all_rot = np.concatenate([home_rot, vp_rot_np])
         home_indices = list(range(K))
 
-        # Build VRP occupancy grid
-        mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
-        og_vrp = build_occupancy_grid(
-            mesh=mesh, padding=1.0, inflation_voxels=INFLATION_VOXELS,
-            resolution=VOXEL_RESOLUTION, fill_interior=True,
-            extra_free_points=np.array(robot_xyzs, dtype=np.float32),
-            extra_margin_voxels=max(3, int(np.ceil(ROBOT_RADIUS / VOXEL_RESOLUTION))),
+        from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
+        _model_cfg = ModelConfig.duke_of_lancaster()
+        og_vrp = build_sampling_occupancy_grid(
+            mesh=o3d_mesh,
+            frustum_far=_model_cfg.frustum.far,
+            min_clearance=2 * ROBOT_RADIUS,
+            resolution=0.20,
         )
-        dist_matrix = compute_distance_matrix(og_vrp, all_pos)
+        dist_matrix = compute_distance_matrix(og_vrp, cp.asarray(all_pos))
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
             backend=VRPBackend.HIGHS, time_limit=120,
@@ -336,6 +330,8 @@ def main():
                                 result["t_total"])
                 except Exception as e:
                     logger.error("  FAILED: %s", e, exc_info=True)
+                finally:
+                    free_gpu_memory()
     else:
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):

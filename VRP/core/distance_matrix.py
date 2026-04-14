@@ -37,6 +37,7 @@ def _build_cugraph_distance_matrix(
     Returns:
         (N, N) float32 CuPy distance matrix in metres.
     """
+    import gc as _gc
     import cudf
     import cugraph
 
@@ -122,15 +123,38 @@ def _build_cugraph_distance_matrix(
     )
     wp_node_ids_gpu = flat_lookup[wp_flat_gpu]  # (N,) int32, GPU
 
+    # ── Validate waypoints are in free space ───────────────────────
+    occupied_mask = wp_node_ids_gpu < 0
+    if bool(cp.any(occupied_mask)):
+        occ_indices = cp.asnumpy(cp.where(occupied_mask)[0]).tolist()
+        occ_voxels = cp.asnumpy(wp_ijk_gpu[occupied_mask]).tolist()
+        raise ValueError(
+            f"[DistMatrix] {len(occ_indices)} waypoint(s) map to occupied or "
+            f"out-of-bounds voxels (node_id=-1): indices {occ_indices}, "
+            f"voxel coords {occ_voxels}. Ensure waypoints are sampled with a "
+            f"clearance >= OG inflation radius."
+        )
+
     # ── SSSP for each waypoint ──────────────────────────────────────
     matrix = cp.zeros((N, N), dtype=cp.float32)
-    for i in range(N):
-        df = cugraph.shortest_path(G, int(wp_node_ids_gpu[i]))
-        dists = df.sort_values("vertex")["distance"].values  # (F,) cupy
-        matrix[i, :] = dists[wp_node_ids_gpu]
-        matrix[i, i] = 0.0
-        if (i + 1) % max(1, N // 5) == 0 or i == N - 1:
-            logger.info("[DistMatrix] Dijkstra %d/%d done", i + 1, N)
+    try:
+        for i in range(N):
+            df = cugraph.shortest_path(G, int(wp_node_ids_gpu[i]))
+            dists = df.sort_values("vertex")["distance"].values  # (F,) cupy
+            matrix[i, :] = dists[wp_node_ids_gpu]
+            matrix[i, i] = 0.0
+            del df, dists
+            if (i + 1) % max(1, N // 5) == 0 or i == N - 1:
+                logger.info("[DistMatrix] Dijkstra %d/%d done", i + 1, N)
+    finally:
+        # Release cuDF/cuGraph objects so their UCX worker threads finish
+        # before any in-process CPU solver (e.g. HiGHS) runs.  Without this,
+        # Python's GC may collect these objects mid-solve and crash on UCX
+        # spinlock teardown (signal 11, "ucs_recursive_spinlock_destroy() failed: busy").
+        # Using try/finally ensures cleanup even when the Dijkstra loop raises.
+        del G, gdf
+        _gc.collect()
+        cp.cuda.Device().synchronize()
 
     return matrix
 

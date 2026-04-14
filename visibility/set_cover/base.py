@@ -2,6 +2,7 @@
 
 import logging
 import cupy as cp
+import numpy as np
 from abc import ABC, abstractmethod
 import time
 from typing import List, Optional, Tuple
@@ -38,6 +39,16 @@ class IterativeSetCoverOptimizer(ABC):
         """Commit the last selection: update the uncovered mask with
         *visible_indices* and deactivate the selected candidate."""
 
+    @property
+    def last_selected_index(self) -> int:
+        """Candidate index of the most recently selected viewpoint.
+
+        Returns -1 if the subclass does not track candidate indices
+        (e.g. expansion-based optimizers that generate new candidates).
+        Subclasses that maintain ``_last_idx`` expose it automatically.
+        """
+        return getattr(self, '_last_idx', -1)
+
     def optimize(self, target_coverage: float = DEFAULT_TARGET_COVERAGE,
                  max_viewpoints: int = DEFAULT_MAX_VIEWPOINTS) -> OptimizationResult:
         """Run the full iterative set-cover loop."""
@@ -46,6 +57,7 @@ class IterativeSetCoverOptimizer(ABC):
         sel_positions: List[cp.ndarray] = []
         sel_rotations: List[cp.ndarray] = []
         sel_vis_rows: List[cp.ndarray] = []  # (M,) uint8 rows for visibility_map
+        sel_indices: List[int] = []
 
         covered_mask = cp.zeros(self.num_points, dtype=cp.bool_)
         total_covered = 0
@@ -56,10 +68,12 @@ class IterativeSetCoverOptimizer(ABC):
             if result is None:
                 break
             pos, rot, vis = result
+            sel_idx = self.last_selected_index  # read BEFORE commit may reset _last_idx
             self.commit_selection(vis)
 
             sel_positions.append(pos)
             sel_rotations.append(rot)
+            sel_indices.append(sel_idx)
 
             # Build a (M,) uint8 row for this viewpoint
             row = cp.zeros(self.num_points, dtype=cp.uint8)
@@ -85,6 +99,12 @@ class IterativeSetCoverOptimizer(ABC):
             rotations = cp.empty((0, 3, 3), dtype=cp.float32)
             visibility_map = cp.empty((0, self.num_points), dtype=cp.uint8)
 
+        selected_indices = (
+            np.array(sel_indices, dtype=np.int64)
+            if sel_indices and all(i >= 0 for i in sel_indices)
+            else None
+        )
+
         return OptimizationResult(
             positions=positions,
             rotations=rotations,
@@ -93,4 +113,5 @@ class IterativeSetCoverOptimizer(ABC):
             num_viewpoints=len(sel_positions),
             redundancy=compute_redundancy(visibility_map),
             optimization_time=optimization_time,
+            selected_indices=selected_indices,
         )

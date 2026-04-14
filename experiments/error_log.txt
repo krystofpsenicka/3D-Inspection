@@ -1,0 +1,421 @@
+2026-04-13 22:51:21,623 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:21,828 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:22,039 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:22,160 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:22,402 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:22,597 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:22,851 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:23,057 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:23,263 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:23,384 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:23,627 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:23,822 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:24,071 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:24,269 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:24,475 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:24,591 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:24,836 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:25,031 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:25,285 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:25,490 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:25,702 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:25,817 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:26,077 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:26,275 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:26,529 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:26,726 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:26,943 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:27,058 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:27,308 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:27,503 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:28,720 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:29,637 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:29,933 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:30,123 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:30,307 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:30,353 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:31,015 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:31,928 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:32,197 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:32,401 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:32,585 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:32,629 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:33,279 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:34,193 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:34,460 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:34,650 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:34,843 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:34,890 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:35,548 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:36,478 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:36,753 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:36,943 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:37,144 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:37,189 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:37,863 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:38,786 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:39,058 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:39,257 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:39,452 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:39,495 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:40,772 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:40,951 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:41,354 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:41,731 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:42,007 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:42,179 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:42,459 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:42,639 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:43,016 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:43,390 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:43,678 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:43,851 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:44,154 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:44,330 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:44,724 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:45,094 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:45,377 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:45,544 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:45,830 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:46,025 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:46,411 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:46,791 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:47,074 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:47,247 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:47,533 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:47,702 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:48,100 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:48,474 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:48,771 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_raycast: arrays used as indices must be of integer (or boolean) type
+2026-04-13 22:51:48,942 ERROR    experiments.e03_visibility_comparison:   Visibility FAILED for cpu_epsilon: arrays used as indices must be of integer (or boolean) type
+2026-04-14 03:07:47,750 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:48,561 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:49,336 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:50,404 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:51,934 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:53,041 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:53,811 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:54,571 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:55,652 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:57,813 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:58,923 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:07:59,689 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:00,457 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:01,512 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:03,630 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:04,713 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:05,469 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:06,223 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:07,279 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:09,403 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:10,495 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:11,253 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:12,011 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:13,066 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:14,726 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:15,928 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:16,823 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:17,718 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:18,884 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:20,499 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:21,690 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:22,546 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:23,410 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:24,560 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:26,809 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:28,019 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:28,903 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:29,790 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:30,975 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:33,223 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:34,440 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:35,319 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:36,204 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:37,390 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:39,641 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:40,849 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:41,731 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:42,611 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:43,789 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:45,576 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:46,950 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:47,978 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:49,007 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:50,338 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:52,132 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:53,492 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:54,513 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:55,513 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:56,797 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:08:59,124 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:00,443 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:01,439 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:02,431 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:03,713 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:06,016 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:07,335 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:08,318 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:09,309 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:10,587 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:12,885 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:14,201 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:15,196 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:16,190 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:17,469 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:19,332 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:20,796 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:21,926 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:23,061 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:24,487 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:26,351 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:27,808 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:28,930 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:30,052 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:31,468 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:33,909 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:35,361 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:36,481 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:37,610 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:39,023 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:41,480 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:42,932 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:44,059 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:45,194 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:46,604 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:49,056 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:50,532 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:51,662 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:52,799 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:54,218 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:56,218 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:57,815 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:09:59,084 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:00,356 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:01,910 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:03,924 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:05,561 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:06,862 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:08,170 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:09,775 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:12,377 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:13,968 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:15,230 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:16,510 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:18,073 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:20,681 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:22,276 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:23,537 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:24,806 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:26,357 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:28,972 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:30,567 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:31,834 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:33,103 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:34,664 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:36,813 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:38,551 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:39,959 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:41,371 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:43,067 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:45,223 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:46,954 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:48,365 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:49,776 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:51,477 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:54,236 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:55,974 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:57,398 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:10:58,853 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:00,603 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:03,450 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:05,247 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:06,707 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:08,157 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:09,917 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:12,780 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:14,579 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:16,039 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:17,497 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:19,261 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:21,648 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:23,744 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:25,493 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:27,246 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:29,307 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:31,821 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:33,909 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:35,653 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:37,407 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:39,463 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:42,582 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:44,639 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:46,355 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:48,076 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:50,090 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:53,176 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:55,230 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:56,946 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:11:58,657 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:00,670 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:03,758 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:05,808 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:07,577 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:09,336 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:11,404 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:14,094 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:16,494 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:18,490 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:20,500 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:22,799 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:25,553 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:27,867 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:29,836 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:31,908 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:34,187 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:37,535 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:39,949 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:42,017 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:43,999 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:46,277 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:49,617 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:51,948 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:53,935 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:55,930 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:12:58,204 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:13:01,559 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:13:03,881 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:13:05,852 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:13:07,845 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:13:10,133 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+2026-04-14 03:13:13,021 ERROR    experiments.e06_vrp_fleet_scaling: Run failed: Graph does not contain source vertex
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+2026-04-14 03:16:05,361 ERROR    __main__: FAILED: e07_vrp_alpha_blending: [solve_vrp] VRPBackend.HIGHS solver failed: no_solution (Not Solved)
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+2026-04-14 03:27:52,311 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:28:01,230 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:28:10,327 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:28:19,369 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:28:28,136 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:28:37,161 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:28:46,192 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:28:57,817 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:29:09,335 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:29:21,138 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:29:32,406 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:29:43,804 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:29:55,588 ERROR    experiments.e08_vrp_solver_comparison:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:30:12,194 ERROR    experiments.e09_mapf_priority:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:30:21,062 ERROR    experiments.e09_mapf_priority:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:30:30,006 ERROR    experiments.e09_mapf_priority:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:30:38,703 ERROR    experiments.e09_mapf_priority:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:30:47,562 ERROR    experiments.e09_mapf_priority:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:01,334 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:07,519 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:13,984 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:20,247 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:26,435 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:32,839 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:39,158 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:45,324 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:51,787 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:31:58,123 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:32:04,388 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:32:10,836 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:32:17,165 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:32:23,431 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:32:30,008 ERROR    experiments.e10_sta_resolution:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 222169564 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:32:54,473 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:33:18,693 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:33:43,096 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:34:07,726 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:34:32,325 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:34:56,769 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:35:21,518 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:35:46,060 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:36:10,515 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:36:35,237 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:37:00,116 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:37:24,824 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:37:49,935 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:38:15,288 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:38:40,468 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:39:06,698 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:39:32,873 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 03:39:58,486 ERROR    experiments.e11_end_to_end:   FAILED: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 930721392 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:32:37,189 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 677686560 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:35:22,894 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 677686560 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:38:04,569 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 677686560 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+2026-04-14 04:51:48,747 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:51:48,843 INFO     experiments.e15_cross_model:   vps=40 cov=95.35% t=4.7s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:51:52,365 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:51:52,461 INFO     experiments.e15_cross_model:   vps=37 cov=95.41% t=1.7s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:51:56,060 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 04:51:56,156 INFO     experiments.e15_cross_model:   vps=37 cov=95.35% t=1.8s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 415921336 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+ERROR:   getOptionIndex: Option "warmStart" is unknown
+2026-04-14 05:02:49,452 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 126363452 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:02:54,417 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 126363452 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:02:58,916 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:02:58,990 INFO     experiments.e15_cross_model:   vps=27 cov=95.01% t=2.7s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:02,780 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:02,854 INFO     experiments.e15_cross_model:   vps=31 cov=95.42% t=2.3s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:06,643 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:06,717 INFO     experiments.e15_cross_model:   vps=32 cov=95.33% t=2.3s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 325147368 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:15,256 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 124467956 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:19,767 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 124467956 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:24,142 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 124467956 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:28,167 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:28,240 INFO     experiments.e15_cross_model:   vps=25 cov=95.50% t=2.1s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:31,227 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:31,301 INFO     experiments.e15_cross_model:   vps=26 cov=95.39% t=1.7s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:34,336 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+RuntimeError: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:34,409 INFO     experiments.e15_cross_model:   vps=25 cov=95.65% t=1.7s vrp=error: non-success value returned from cugraph_graph_create_with_times_sg(): CUGRAPH_UNKNOWN_ERROR std::bad_alloc: out_of_memory: CUDA error (failed to allocate 585843856 bytes) at: /__w/rmm/rmm/cpp/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:38,466 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 130296904 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:41,799 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 130296904 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 05:03:45,108 ERROR    experiments.e15_cross_model: VRP/MAPF stage failed: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 130296904 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 06:01:13,761 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 737989428 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 06:01:29,412 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 755588448 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 06:01:59,189 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 739995540 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 06:57:36,217 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 189157324 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 07:00:15,204 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 559368912 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 07:03:03,750 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 567789852 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 07:03:07,272 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 504819048 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 07:03:10,802 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 499593420 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory
+2026-04-14 07:03:14,337 ERROR    experiments.e16_frustum_sensitivity:   FAILED: std::bad_alloc: out_of_memory: CUDA error (failed to allocate 508688400 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory

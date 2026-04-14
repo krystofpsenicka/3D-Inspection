@@ -50,6 +50,31 @@ def set_seed(seed: int) -> None:
     cp.random.seed(seed)
 
 
+def free_gpu_memory() -> None:
+    """Return idle GPU memory to CUDA and log available GPU memory.
+
+    Call this after each experiment run. CuPy caches freed arrays in its own
+    pool and does not return them to CUDA automatically. PyTorch similarly caches
+    freed CUDA tensors; empty_cache() returns those to CUDA without touching any
+    live tensors (e.g. visibility query BVH structures remain unaffected).
+    """
+    cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    free_bytes, total_bytes = cp.cuda.Device().mem_info
+    logger.info(
+        "[GPU] Free: %.0f MB / %.0f MB total  (CuPy pool used: %.0f MB)",
+        free_bytes / 1e6,
+        total_bytes / 1e6,
+        cp.get_default_memory_pool().used_bytes() / 1e6,
+    )
+
+
 class ExperimentRunner(ABC):
     """Base class for running parameter sweep experiments.
 

@@ -30,6 +30,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from experiments.common.runner import free_gpu_memory
 from experiments.common.config import ModelConfig, SEEDS_3, E10_RESOLUTIONS, RESULTS_DIR
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
@@ -37,9 +38,11 @@ from experiments.common.plotting import (
     THESIS_COL, CATEGORICAL_COLORS,
 )
 
+import open3d as o3d
 from shared.mesh_loader import load_and_transform_mesh
-from shared.grid_builder_utils import build_occupancy_grid
-from VRP.core.waypoint_loader import load_waypoints
+from shared.surface_sampler import SurfacePointSampler
+from shared.types import Side
+from visibility.sampling import WeightedViewpointSampler
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
 from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
@@ -48,8 +51,8 @@ from VRP.core.geometry import compute_start_grid
 from VRP.core.collision import find_trajectory_collisions
 from VRP.vrp._helpers import per_vehicle_costs
 from VRP.core.constants import (
-    INFLATION_VOXELS, MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
-    ROBOT_RADIUS, VOXEL_RESOLUTION,
+    MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
+    ROBOT_RADIUS,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,7 +65,7 @@ N_ROBOTS = 3
 # Single run logic
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_single(resolution: float, seed: int, og, mesh_bounds_min,
+def run_single(resolution: float, seed: int, og, sampler, mesh_bounds_min,
                mesh_bounds_max) -> dict:
     """Run VRP + MAPF with a given Space-Time A* resolution."""
     np.random.seed(seed)
@@ -74,9 +77,9 @@ def run_single(resolution: float, seed: int, og, mesh_bounds_min,
 
     try:
         K = N_ROBOTS
-        insp_pos, insp_rot = load_waypoints(
-            source="random", n_random=N_WAYPOINTS, og=og, random_seed=seed,
-        )
+        pos_gpu, rot_gpu = sampler.sample(N_WAYPOINTS, side=Side.OUTSIDE)
+        insp_pos = cp.asnumpy(pos_gpu).astype(np.float32)
+        insp_rot = cp.asnumpy(rot_gpu).astype(np.float32)
         robot_xyzs = compute_start_grid(K, mesh_bounds_min, mesh_bounds_max)
         home_pos = np.array(
             [[float(x[0]), float(x[1]), float(x[2])] for x in robot_xyzs],
@@ -87,7 +90,7 @@ def run_single(resolution: float, seed: int, og, mesh_bounds_min,
         all_rot = np.concatenate([home_rot, insp_rot])
         home_indices = list(range(K))
 
-        dist_matrix = compute_distance_matrix(og, all_pos)
+        dist_matrix = compute_distance_matrix(og, cp.asarray(all_pos))
 
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
@@ -220,19 +223,38 @@ def main():
     all_results = []
 
     if not args.plots_only:
-        # Build shared occupancy grid
-        logger.info("Building occupancy grid ...")
+        # Build shared occupancy grid and sampler
+        _RESOLUTION = 0.20
+        logger.info("Building occupancy grid (res=%.2f) ...", _RESOLUTION)
         mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
         bmin = np.asarray(mesh.bounds[0], dtype=float)
         bmax = np.asarray(mesh.bounds[1], dtype=float)
-        depot_xyzs = compute_start_grid(N_ROBOTS, bmin, bmax)
-        og = build_occupancy_grid(
-            mesh=mesh, padding=1.0, inflation_voxels=INFLATION_VOXELS,
-            resolution=VOXEL_RESOLUTION, fill_interior=True,
-            extra_free_points=np.array(depot_xyzs, dtype=np.float32),
-            extra_margin_voxels=max(3, int(np.ceil(ROBOT_RADIUS / VOXEL_RESOLUTION))),
+
+        o3d_mesh = o3d.geometry.TriangleMesh()
+        o3d_mesh.vertices = o3d.utility.Vector3dVector(np.asarray(mesh.vertices))
+        o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(mesh.faces))
+        o3d_mesh.compute_vertex_normals()
+
+        _model_cfg = ModelConfig.duke_of_lancaster()
+        from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
+        og = build_sampling_occupancy_grid(
+            mesh=o3d_mesh,
+            frustum_far=_model_cfg.frustum.far,
+            min_clearance=2 * ROBOT_RADIUS,
+            resolution=_RESOLUTION,
         )
         logger.info("  Grid: %s res=%.2f", og.grid.shape, og.resolution)
+
+        _pts_np, _norms_np = SurfacePointSampler().sample(
+            o3d_mesh, _model_cfg.num_surface_points, seed=42)
+        sampler = WeightedViewpointSampler(
+            o3d_mesh,
+            cp.asarray(_pts_np, dtype=cp.float32),
+            cp.asarray(_norms_np, dtype=cp.float32),
+            _model_cfg.frustum.far,
+            collision_radius=ROBOT_RADIUS,
+            occupancy_grid=og,
+        )
 
         total = len(args.resolutions) * len(args.seeds)
         run_idx = 0
@@ -245,7 +267,7 @@ def main():
                             run_idx, total, resolution, seed)
 
                 try:
-                    result = run_single(resolution, seed, og, bmin, bmax)
+                    result = run_single(resolution, seed, og, sampler, bmin, bmax)
                     all_results.append(result)
                     save_run_result(result, rpath)
                     logger.info("  plan_time=%.2fs makespan=%.1f fails=%d",
@@ -253,6 +275,8 @@ def main():
                                 result["fail_count"])
                 except Exception as e:
                     logger.error("  FAILED: %s", e, exc_info=True)
+                finally:
+                    free_gpu_memory()
     else:
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):
