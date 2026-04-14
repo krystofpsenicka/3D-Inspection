@@ -79,8 +79,21 @@ def _set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage):
     return optimizer.optimize(target_coverage=target_coverage, max_viewpoints=1000), V_np
 
 
+def _save_viz(opt_result, target_points, normals, viz_path, meta):
+    """Save set-cover viz data (positions, rotations, visibility_map, points) for replay."""
+    data = {
+        "positions": opt_result.positions,
+        "rotations": opt_result.rotations,
+        "visibility_map": opt_result.visibility_map,
+        "target_points": np.asarray(target_points, dtype=np.float32),
+        "normals": np.asarray(normals, dtype=np.float32),
+        **meta,
+    }
+    save_run_result(data, viz_path)
+
+
 def run_single_A(ctx: PipelineContext, strategy: str, seed: int,
-                 target_coverage: float = 0.95) -> dict:
+                 target_coverage: float = 0.95, viz_path: str | None = None) -> dict:
     """Section A: k=1, fixed N = model.num_candidates."""
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
@@ -101,6 +114,16 @@ def run_single_A(ctx: PipelineContext, strategy: str, seed: int,
 
     with timed() as t_opt:
         opt_result, _ = _set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage)
+
+    if viz_path is not None:
+        _save_viz(opt_result, target_points, normals, viz_path, {
+            "strategy": strategy,
+            "model": model.name,
+            "seed": seed,
+            "num_candidates": int(len(pos_gpu)),
+            "num_viewpoints": opt_result.num_viewpoints,
+            "coverage": float(opt_result.total_coverage),
+        })
 
     return {
         "section": "A",
@@ -459,7 +482,14 @@ def main():
                     logger.info("[A %d/%d] model=%s strategy=%s seed=%d",
                                 idx, len(model_combos), cfg.name, strategy, seed)
                     try:
-                        result = run_single_A(ctx, strategy, seed, args.target_coverage)
+                        viz_path = None
+                        if cfg.name == "duke_of_lancaster" and seed == SEEDS_3[0]:
+                            viz_dir = os.path.join(args.output_dir, "viz")
+                            os.makedirs(viz_dir, exist_ok=True)
+                            viz_path = os.path.join(
+                                viz_dir, f"strategy={strategy}_seed={seed}")
+                        result = run_single_A(ctx, strategy, seed, args.target_coverage,
+                                              viz_path=viz_path)
                         all_results.append(result)
                         save_run_result(result, rpath)
                         logger.info("  VPs=%d cov=%.2f%% actual=%d time=%.1fs",

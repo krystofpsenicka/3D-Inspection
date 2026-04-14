@@ -167,9 +167,24 @@ def _make_optimizer(name: str, ctx: PipelineContext, vis_query,
 # Single run
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _save_viz(opt_result, target_points, normals, viz_path, meta):
+    """Save set-cover viz data (positions, rotations, visibility_map, points) for replay."""
+    data = {
+        "positions": opt_result.positions,
+        "rotations": opt_result.rotations,
+        "visibility_map": opt_result.visibility_map,
+        "target_points": np.asarray(target_points, dtype=np.float32),
+        "normals": np.asarray(normals, dtype=np.float32),
+        **meta,
+    }
+    save_run_result(data, viz_path)
+
+
 def run_single(ctx: PipelineContext, optimizer_name: str, input_strategy: str,
                target_coverage: float, seed: int,
-               pos_gpu, rot_gpu, V_gpu, V_np, num_points: int) -> dict:
+               pos_gpu, rot_gpu, V_gpu, V_np, num_points: int,
+               viz_path: str | None = None,
+               target_points_viz=None, normals_viz=None) -> dict:
     """Run one optimizer on pre-generated candidates.
 
     Candidates are passed in to avoid recomputing across optimizers.
@@ -182,6 +197,17 @@ def run_single(ctx: PipelineContext, optimizer_name: str, input_strategy: str,
     with timed() as t_opt:
         opt_result = optimizer.optimize(
             target_coverage=target_coverage, max_viewpoints=1000)
+
+    if viz_path is not None and target_points_viz is not None:
+        _save_viz(opt_result, target_points_viz, normals_viz, viz_path, {
+            "optimizer": optimizer_name,
+            "target_coverage": target_coverage,
+            "model": ctx.model.name,
+            "seed": seed,
+            "num_candidates": int(len(pos_gpu)),
+            "num_viewpoints": opt_result.num_viewpoints,
+            "coverage": float(opt_result.total_coverage),
+        })
 
     return {
         "model": ctx.model.name,
@@ -518,9 +544,21 @@ def main():
 
                             logger.info("  [A] %s target=%.2f", opt_name, target)
                             try:
+                                viz_path = None
+                                if (model_name == "duke_of_lancaster"
+                                        and seed == SEEDS_3[0]
+                                        and abs(target - 0.95) < 1e-6):
+                                    viz_dir = os.path.join(args.output_dir, "viz")
+                                    os.makedirs(viz_dir, exist_ok=True)
+                                    viz_path = os.path.join(
+                                        viz_dir,
+                                        f"opt={opt_name}_target={target}_seed={seed}")
                                 result = run_single(
                                     ctx, opt_name, "targeted_50", target, seed,
-                                    pos_gpu, rot_gpu, V_gpu, V_np, num_points)
+                                    pos_gpu, rot_gpu, V_gpu, V_np, num_points,
+                                    viz_path=viz_path,
+                                    target_points_viz=target_points,
+                                    normals_viz=normals)
                                 result["section"] = "A"
                                 all_results.append(result)
                                 save_run_result(result, rpath)

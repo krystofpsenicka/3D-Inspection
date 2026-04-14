@@ -53,13 +53,34 @@ def set_seed(seed: int) -> None:
 def free_gpu_memory() -> None:
     """Return idle GPU memory to CUDA and log available GPU memory.
 
-    Call this after each experiment run. CuPy caches freed arrays in its own
-    pool and does not return them to CUDA automatically. PyTorch similarly caches
-    freed CUDA tensors; empty_cache() returns those to CUDA without touching any
-    live tensors (e.g. visibility query BVH structures remain unaffected).
+    Call this after each experiment run.  Three memory subsystems need clearing:
+
+    1. CuPy pool — caches freed arrays and does not return them to CUDA
+       automatically.  ``free_all_blocks()`` releases the idle cached blocks.
+
+    2. RMM (RAPIDS Memory Manager) pool — cuGraph's ``compute_distance_matrix``
+       allocates several GB through RMM per run.  Even after ``del graph``, RMM
+       keeps those blocks in its own free list, so they are invisible to CuPy's
+       pool API.  ``rmm.reinitialize()`` replaces the pool with a fresh one;
+       Python's GC then collects the old pool object and its destructor returns
+       the free list to CUDA.  We call ``gc.collect()`` twice: once before
+       ``free_all_blocks()`` to drop any lingering run-local GPU objects, and
+       once after ``reinitialize()`` to immediately trigger the old-pool teardown.
+
+    3. PyTorch cache — ``empty_cache()`` returns cached CUDA tensors to CUDA
+       without touching live tensors.
     """
+    import gc
+    gc.collect()
     cp.get_default_memory_pool().free_all_blocks()
     cp.get_default_pinned_memory_pool().free_all_blocks()
+    try:
+        import rmm
+        # 256 MB initial size for the fresh pool — it grows on demand.
+        rmm.reinitialize(pool_allocator=True, initial_pool_size=2 ** 28)
+        gc.collect()  # triggers old-pool destructor → returns its free list to CUDA
+    except (ImportError, Exception) as _e:
+        logger.debug("RMM reinitialize skipped: %s", _e)
     try:
         import torch
         if torch.cuda.is_available():

@@ -79,7 +79,8 @@ def _available_solvers() -> list[str]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def run_single(n_waypoints: int, n_robots: int, solver: str,
-               seed: int, og, sampler, mesh_bounds_min, mesh_bounds_max) -> dict:
+               seed: int, og, sampler, mesh_bounds_min, mesh_bounds_max,
+               viz_path: str | None = None) -> dict:
     """Run one VRP solver on one problem instance."""
     np.random.seed(seed)
     cp.random.seed(seed)
@@ -108,6 +109,22 @@ def run_single(n_waypoints: int, n_robots: int, solver: str,
 
     pv = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)
     makespan = max(pv) if pv else 0.0
+
+    if viz_path is not None:
+        viz_data = {
+            "all_pos": all_pos.astype(np.float32),
+            "home_pos": home_pos.astype(np.float32),
+            "n_waypoints": n_waypoints,
+            "n_robots": n_robots,
+            "solver": solver,
+            "seed": seed,
+            "makespan": makespan,
+            "status": vrp_result.status,
+        }
+        for r_idx, route in enumerate(vrp_result.routes):
+            full_route = [home_indices[r_idx]] + list(route) + [home_indices[r_idx]]
+            viz_data[f"routes_r{r_idx}"] = np.array(full_route, dtype=np.int32)
+        save_run_result(viz_data, viz_path)
 
     return {
         "n_waypoints": n_waypoints,
@@ -272,9 +289,18 @@ def main():
                                 run_idx, total, n_waypoints, n_robots, solver, seed)
 
                     try:
+                        viz_path = None
+                        if seed == SEEDS_3[0] and n_waypoints == 50:
+                            viz_dir = os.path.join(args.output_dir, "viz")
+                            os.makedirs(viz_dir, exist_ok=True)
+                            viz_path = os.path.join(
+                                viz_dir,
+                                f"wp={n_waypoints}_robots={n_robots}"
+                                f"_solver={solver}_seed={seed}")
                         result = run_single(
                             n_waypoints, n_robots, solver, seed,
                             og, sampler, bmin, bmax,
+                            viz_path=viz_path,
                         )
                         all_results.append(result)
                         save_run_result(result, rpath)

@@ -62,7 +62,45 @@ N_CANDIDATES = 1500
 # Single run logic
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_single(target_coverage: float, seed: int) -> dict:
+def _save_viz_e11(opt_result, exec_result, target_points, normals,
+                  all_pos, home_pos, vrp_result, home_indices,
+                  target_coverage, seed, viz_path):
+    """Save full pipeline viz data for e11 replay."""
+    data = {
+        # Set cover
+        "positions": opt_result.positions,
+        "rotations": opt_result.rotations,
+        "visibility_map": opt_result.visibility_map,
+        "target_points": np.asarray(target_points, dtype=np.float32),
+        "normals": np.asarray(normals, dtype=np.float32),
+        # VRP geometry
+        "all_pos": all_pos.astype(np.float32),
+        "home_pos": home_pos.astype(np.float32),
+        # Metadata
+        "target_coverage": target_coverage,
+        "seed": seed,
+        "n_robots": len(home_indices),
+        "vrp_status": vrp_result.status,
+        "num_viewpoints": opt_result.num_viewpoints,
+        "coverage": float(opt_result.total_coverage),
+    }
+    # VRP routes (full loops: depot → waypoints → depot)
+    for r_idx, route in enumerate(vrp_result.routes):
+        full_route = [home_indices[r_idx]] + list(route) + [home_indices[r_idx]]
+        data[f"routes_r{r_idx}"] = np.array(full_route, dtype=np.int32)
+    # MAPF trajectories (concatenated per robot)
+    for r_idx, robot_legs in enumerate(exec_result.all_traj_positions):
+        if robot_legs:
+            data[f"traj_r{r_idx}"] = np.concatenate(robot_legs, axis=0).astype(np.float32)
+    # Waypoints per robot
+    for r_idx, robot_wps in enumerate(exec_result.all_waypoints):
+        if robot_wps:
+            data[f"waypoints_r{r_idx}"] = np.array(robot_wps, dtype=np.float32)
+    save_run_result(data, viz_path)
+
+
+def run_single(target_coverage: float, seed: int,
+               output_dir: str | None = None) -> dict:
     """Run full pipeline at one coverage target."""
     set_seed(seed)
     model_cfg = ModelConfig.duke_of_lancaster()
@@ -168,6 +206,14 @@ def run_single(target_coverage: float, seed: int) -> dict:
             waypoint_rotmats=wp_rot_gpu, home_indices=set(home_indices),
             dist_matrix=dist_matrix,
         )
+
+    if output_dir is not None:
+        viz_dir = os.path.join(output_dir, "viz")
+        os.makedirs(viz_dir, exist_ok=True)
+        viz_path = os.path.join(viz_dir, f"target={target_coverage}_seed={seed}")
+        _save_viz_e11(opt_result, exec_result, target_points, normals,
+                      all_pos, home_pos, vrp_result, home_indices,
+                      target_coverage, seed, viz_path)
 
     return {
         "target_coverage": target_coverage,
@@ -320,7 +366,10 @@ def main():
                             run_idx, total, target, seed)
 
                 try:
-                    result = run_single(target, seed)
+                    result = run_single(
+                        target, seed,
+                        output_dir=args.output_dir if seed == SEEDS_3[0] else None,
+                    )
                     all_results.append(result)
                     save_run_result(result, rpath)
                     logger.info("  vps=%d cov=%.2f%% makespan=%.1f t=%.1fs",

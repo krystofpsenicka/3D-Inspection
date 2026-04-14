@@ -31,6 +31,8 @@ pip-wheel-metadata/
 *.gif
 *.usd
 *.glb
+experiments/*.pdf
+experiments/*.png
 comparison_results/
 solution_snapshots_*/
 eval_results/
