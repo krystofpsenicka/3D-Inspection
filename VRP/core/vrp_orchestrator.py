@@ -131,12 +131,13 @@ class VRPFeedbackOrchestrator:
             inflation_voxels=INFLATION_VOXELS,
             resolution=VOXEL_RESOLUTION,
             fill_interior=(cfg.side == Side.OUTSIDE),
+            complement_fill=(cfg.side == Side.INSIDE),
             extra_free_points=extra_free,
             extra_margin_voxels=extra_margin,
         )
-        logger.info("      Grid shape: %s  resolution: %.2fm  fill_interior=%s",
+        logger.info("      Grid shape: %s  resolution: %.2fm  fill_interior=%s  complement=%s",
                     og.grid.shape, og.resolution,
-                    cfg.side == Side.OUTSIDE)
+                    cfg.side == Side.OUTSIDE, cfg.side == Side.INSIDE)
 
         # Sanity-check: every depot must be a valid, free voxel.
         for i, xyz in enumerate(robot_start_xyzs):

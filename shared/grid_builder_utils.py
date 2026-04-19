@@ -165,6 +165,7 @@ def build_occupancy_grid(
     inflation_voxels: int,
     resolution: float,
     fill_interior: bool = False,
+    complement_fill: bool = False,
     extra_free_points: Optional[np.ndarray] = None,
     extra_margin_voxels: int = 0,
 ) -> OccupancyGrid:
@@ -185,6 +186,10 @@ def build_occupancy_grid(
         Voxel edge length (metres).
     fill_interior : bool
         Fill the mesh interior (solid obstacle) or surface-only.
+    complement_fill : bool
+        Use the complement of the filled grid: exterior + surface shell
+        are occupied, interior is free.  Intended for inside inspection
+        where robots navigate the mesh interior.
     extra_free_points : np.ndarray | None
         Positions that must lie inside the grid as free voxels.
     extra_margin_voxels : int
@@ -201,9 +206,17 @@ def build_occupancy_grid(
         extra_margin_voxels=extra_margin_voxels,
     )
 
-    raw_grid, _filled = voxelize_mesh(
+    raw_grid, filled_grid = voxelize_mesh(
         mesh, grid_shape, origin, resolution, fill_interior=fill_interior,
     )
+
+    if complement_fill:
+        # Exterior + surface shell = occupied; interior = free.
+        raw_grid = ~filled_grid | raw_grid
+        logger.info(
+            "[build_occupancy_grid] Complement-fill: %d occupied  (%d free)",
+            int(raw_grid.sum()), int((~raw_grid).sum()),
+        )
 
     if inflation_voxels > 0:
         inflated = inflate_grid(raw_grid, inflation_voxels)

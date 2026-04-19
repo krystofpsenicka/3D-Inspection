@@ -132,14 +132,16 @@ def build_vrp_mip(
     cost = dist_matrix.astype(np.float64).copy()
 
     # ── Bound tightening ─────────────────────────────────────────────
+    # Valid makespan LB: for each customer j, the vehicle that serves j
+    # incurs a tour cost >= its own depot-j-depot round trip (triangle
+    # inequality holds since costs are shortest paths on the voxel graph).
+    # Hence T >= max_j min_v (c[d_v, j] + c[j, d_v]).
     T_lb = 0.0
-    for v in range(K):
-        dv = depots[v]
-        best_rt = min(
-            (float(cost[dv, j] + cost[j, dv]) for j in customers),
-            default=0.0,
+    for j in customers:
+        cheapest_rt = min(
+            float(cost[depots[v], j] + cost[j, depots[v]]) for v in range(K)
         )
-        T_lb = max(T_lb, best_rt)
+        T_lb = max(T_lb, cheapest_rt)
 
     T_ub = float("inf")
     if warm_start_routes:

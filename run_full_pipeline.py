@@ -116,6 +116,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--k_coverage", type=int, default=1,
                    help="Coverage redundancy: sample until each point is covered "
                         "by at least k viewpoints (Glorieux 2020). Default: 1.")
+    p.add_argument("--side", choices=["outside", "inside"],
+                   default="outside",
+                   help="Inspection side: 'outside' (routes around mesh) "
+                        "or 'inside' (routes inside mesh).")
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args()
 
@@ -180,6 +184,8 @@ def main() -> None:
     np.random.seed(args.seed)
     cp.random.seed(args.seed)
 
+    side = Side(args.side)
+
     MESH_TARGET_LENGTH = args.mesh_target_length
     MESH_PATH = _vrp_cfg.MESH_PATH
     # Use the rotation-corrected pose (trimesh Y-up → Z-up adjustment).
@@ -234,6 +240,9 @@ def main() -> None:
     # CPU → GPU immediately (Open3D returns numpy)
     target_points = cp.asarray(target_points_np, dtype=cp.float32)
     normals = cp.asarray(normals_np, dtype=cp.float32)
+    if side == Side.INSIDE:
+        normals = -normals
+        logger.info("  Normals negated for inside inspection.")
     logger.info("  Sampled %d points.  Normal estimation done.", len(target_points))
 
     # ══════════════════════════════════════════════════════════════════════
@@ -306,7 +315,7 @@ def main() -> None:
                     n_uniform, n_targeted, args.resampling_strategy)
         pos_gpu, rot_gpu = sampler.sample(
             cp.arange(len(target_points)),
-            n_uniform, side=Side.OUTSIDE,
+            n_uniform, side=side,
             curvature_weighting=args.curvature_weighting)
         V, _ = raycast_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
@@ -339,7 +348,7 @@ def main() -> None:
             else:
                 # Random targeted sampling (iterative for k-coverage tracking)
                 targeted_pos_gpu, targeted_rot_gpu = sampler.sample(
-                    uncovered, n_targeted, side=Side.OUTSIDE,
+                    uncovered, n_targeted, side=side,
                     curvature_weighting=args.curvature_weighting,
                     visibility_query=raycast_query,
                     k_coverage=args.k_coverage,
@@ -355,7 +364,7 @@ def main() -> None:
         pos_gpu, rot_gpu = sampler.sample(
             cp.arange(len(target_points)),
             num_candidates=args.num_candidates,
-            side=Side.OUTSIDE,
+            side=side,
             curvature_weighting=args.curvature_weighting,
         )
         logger.info("  Generated %d candidates.", len(pos_gpu))
@@ -401,9 +410,27 @@ def main() -> None:
     for i, p in enumerate(robot_start_xyzs):
         logger.info("  Robot %d depot: %s", i, p)
 
-    # Reuse the sampling OG (SamplingOccupancyGrid inherits from OccupancyGrid).
-    og = sampling_og
-    logger.info("  Grid shape: %s  res=%.2f m", og.grid.shape, og.resolution)
+
+
+    waypoint_positions = cp.vstack([home_positions, selected_positions.astype(cp.float32)])
+
+    # Build a side-aware routing occupancy grid.
+    from shared.grid_builder_utils import build_occupancy_grid as _build_routing_og
+    _all_waypoints_np = cp.asnumpy(waypoint_positions).astype(np.float32)
+    extra_margin = max(3, int(np.ceil(_vrp_cfg.ROBOT_RADIUS / _vrp_cfg.VOXEL_RESOLUTION)))
+    og = _build_routing_og(
+        mesh=o3d_mesh,
+        padding=1.0,
+        inflation_voxels=_vrp_cfg.INFLATION_VOXELS,
+        resolution=_vrp_cfg.VOXEL_RESOLUTION,
+        fill_interior=(side == Side.OUTSIDE),
+        complement_fill=(side == Side.INSIDE),
+        extra_free_points=_all_waypoints_np,
+        extra_margin_voxels=extra_margin,
+    )
+    logger.info("  Routing OG shape: %s  res=%.2f m  fill=%s complement=%s",
+                og.grid.shape, og.resolution,
+                side == Side.OUTSIDE, side == Side.INSIDE)
 
     # Assemble VRP node arrays: positions + rotmats (all GPU)
     K = args.num_robots
@@ -413,7 +440,6 @@ def main() -> None:
     )
     home_rotmats = cp.tile(cp.eye(3, dtype=cp.float32), (K, 1, 1))
 
-    waypoint_positions = cp.vstack([home_positions, selected_positions.astype(cp.float32)])
     waypoint_rotmats = cp.concatenate([home_rotmats, selected_rotmats.astype(cp.float32)])
     home_indices = list(range(K))
     N_insp = opt_result.num_viewpoints
