@@ -77,7 +77,7 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
     try:
         vrp_result = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
-            alpha=alpha, backend=VRPBackend.HIGHS, time_limit=120,
+            alpha=alpha, backend=VRPBackend.CUOPT, time_limit=120,
         )
         solve_time = time.perf_counter() - t0
         per_v = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)

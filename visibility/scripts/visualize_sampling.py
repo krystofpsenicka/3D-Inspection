@@ -209,7 +209,7 @@ def main():
                 collision_radius=args.collision_radius,
                 backend=CMAESBackend(),
             )
-            targeted_pos_gpu, targeted_rot_gpu = opt_sampler.sample_optimized(
+            targeted_pos_gpu, targeted_rot_gpu, _ = opt_sampler.sample_optimized(
                 n_targeted, coverage_count_gpu, vis_query,
                 existing_pos_gpu=normal_pos_gpu,
                 existing_rot_gpu=normal_rot_gpu,

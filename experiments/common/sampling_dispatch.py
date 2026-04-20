@@ -24,15 +24,15 @@ def sample_strategy(
     normals: cp.ndarray,
     vis_query,
     model,
-    k_coverage: int = 1,
-    samples_per_iteration: int = 1,
+    k_coverage: int = 4,
+    samples_per_iteration: int = 25,
     travel_weight: float | None = None,
 ) -> tuple:
     """Sample candidates for the given strategy.
 
     Args:
         ctx:                   PipelineContext (provides sampler and OG).
-        strategy:              e.g. "weighted", "targeted_50", "cmaes_25".
+        strategy:              e.g. "weighted", "targeted_25", "cmaes_25".
         num_candidates:        total candidates requested.
         target_points:         CuPy (M, 3) surface points.
         normals:               CuPy (M, 3) surface normals.
@@ -43,11 +43,14 @@ def sample_strategy(
         travel_weight:         CMA-ES objective travel penalty weight; None uses sampler default.
 
     Returns:
-        (pos_gpu, rot_gpu, n_base, n_iterative, base_sampler_name)
-          pos_gpu / rot_gpu  — CuPy arrays of actual candidates generated.
-          n_base             — candidates from the base (weighted) sampler.
-          n_iterative        — candidates from the targeted/CMA-ES phase.
-          base_sampler_name  — "weighted" for hybrid strategies, else strategy.
+        (pos_gpu, rot_gpu, n_base, n_iterative, base_sampler_name,
+         n_warmstart_fallbacks)
+          pos_gpu / rot_gpu       — CuPy arrays of actual candidates generated.
+          n_base                  — candidates from the base (weighted) sampler.
+          n_iterative             — candidates from the targeted/CMA-ES phase.
+          base_sampler_name       — "weighted" for hybrid strategies, else strategy.
+          n_warmstart_fallbacks   — CMA-ES rounds that fell back to warm-start
+                                    centre (0 for non-CMA-ES strategies).
     """
     og = ctx.build_sampling_og()
     sampler = ctx.build_sampler("targeted")  # weighted & targeted share the same object
@@ -59,7 +62,7 @@ def sample_strategy(
             cp.arange(len(target_points)), num_candidates,
             side=Side.OUTSIDE, curvature_weighting=curvature,
         )
-        return pos_gpu, rot_gpu, num_candidates, 0, strategy
+        return pos_gpu, rot_gpu, num_candidates, 0, strategy, 0
 
     # ── Hybrid strategies: parse percentage ──────────────────────────────
     if strategy.startswith("targeted_"):
@@ -71,6 +74,7 @@ def sample_strategy(
 
     n_iterative = int(num_candidates * pct / 100)
     n_base = num_candidates - n_iterative
+    n_warmstart_fallbacks = 0
 
     # ── Base (weighted) phase ─────────────────────────────────────────────
     if n_base > 0:
@@ -115,7 +119,7 @@ def sample_strategy(
                 random_sampler=sampler,
             )
             tw_kw = {} if travel_weight is None else {"travel_weight": travel_weight}
-            opt_pos, opt_rot = opt_sampler.sample_optimized(
+            opt_pos, opt_rot, n_warmstart_fallbacks = opt_sampler.sample_optimized(
                 n_iterative, coverage_count, vis_query,
                 existing_pos_gpu=pos_gpu if len(pos_gpu) > 0 else None,
                 existing_rot_gpu=rot_gpu if len(rot_gpu) > 0 else None,
@@ -126,4 +130,4 @@ def sample_strategy(
                 pos_gpu = cp.concatenate([pos_gpu, opt_pos]) if len(pos_gpu) > 0 else opt_pos
                 rot_gpu = cp.concatenate([rot_gpu, opt_rot]) if len(rot_gpu) > 0 else opt_rot
 
-    return pos_gpu, rot_gpu, n_base, n_iterative, "weighted"
+    return pos_gpu, rot_gpu, n_base, n_iterative, "weighted", n_warmstart_fallbacks

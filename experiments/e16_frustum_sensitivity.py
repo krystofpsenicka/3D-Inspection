@@ -59,7 +59,7 @@ from visibility.set_cover import LazyGreedySetCover
 
 logger = logging.getLogger(__name__)
 
-_STRATEGY = "targeted_50"
+_STRATEGY = "weighted_curvature"
 _NUM_CANDIDATES = 1500
 _TARGET_COVERAGE = 0.95
 
@@ -103,7 +103,7 @@ def run_single(
     )
 
     with timed() as t_sample:
-        pos_gpu, rot_gpu, n_base, n_iter, base_name = sample_strategy(
+        pos_gpu, rot_gpu, n_base, n_iter, base_name, _ = sample_strategy(
             ctx, _STRATEGY, _NUM_CANDIDATES,
             target_points, normals, vis_query, ctx.model,
         )

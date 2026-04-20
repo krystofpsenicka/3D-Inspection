@@ -81,7 +81,7 @@ class RunMetrics:
 
 
 def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
-               mesh_bounds_max, sampler, solver_backend=VRPBackend.HIGHS) -> RunMetrics:
+               mesh_bounds_max, sampler) -> RunMetrics:
     m = RunMetrics(fleet_size=fleet_size, n_waypoints=n_waypoints, seed=seed)
     t_total_start = time.perf_counter()
 
@@ -108,7 +108,7 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
         t0 = time.perf_counter()
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K,
-            depots=home_indices, alpha=0.5, backend=solver_backend, time_limit=120,
+            depots=home_indices, alpha=0.5, backend=VRPBackend.CUOPT, time_limit=120,
         )
         m.t_vrp_solve = time.perf_counter() - t0
         m.status = vrp_result.status
@@ -202,6 +202,28 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, held_karp_bounds,
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e06_makespan_vs_fleet"))
 
+    # ── Fig 1b: Total cost vs fleet (with HK LB) ─────────────────────
+    fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
+    for wi, nw in enumerate(waypoint_counts):
+        xs, means, stds = [], [], []
+        for k in fleet_sizes:
+            vals = [r.total_cost for r in groups.get((k, nw), [])]
+            if vals:
+                xs.append(k)
+                means.append(np.mean(vals))
+                stds.append(np.std(vals))
+        if xs:
+            ax.errorbar(xs, means, yerr=stds, marker="o", color=wp_colors[wi],
+                        label=f"{nw} wps", capsize=2)
+    if held_karp_bounds:
+        for nw, hk_lb in held_karp_bounds.items():
+            ax.axhline(hk_lb, linestyle="--", alpha=0.4, label=f"HK ({nw}wp)")
+    ax.set_xlabel("Fleet size")
+    ax.set_ylabel("Total route cost (m)")
+    ax.set_title("Total Cost vs. Fleet Size")
+    ax.legend(fontsize=6, ncol=2)
+    save_figure(fig, os.path.join(fig_dir, "e06_total_cost_vs_fleet"))
+
     # ── Fig 2: Speedup vs fleet ──────────────────────────────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     for wi, nw in enumerate(waypoint_counts):
@@ -254,6 +276,18 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, held_karp_bounds,
                       title="Makespan (m)", xlabel="Waypoints", ylabel="Fleet size")
     save_figure(fig, os.path.join(fig_dir, "e06_heatmap"))
 
+    # ── Fig 7b: Heatmap - fleet x waypoints -> total cost ────────────
+    fig, ax = plt.subplots(figsize=(THESIS_COL, 4))
+    tc_vals = np.zeros((len(fleet_sizes), len(waypoint_counts)))
+    for i, k in enumerate(fleet_sizes):
+        for j, nw in enumerate(waypoint_counts):
+            vals = [r.total_cost for r in groups.get((k, nw), [])]
+            tc_vals[i, j] = np.mean(vals) if vals else 0
+    heatmap_annotated(ax, fleet_labels, wp_labels, tc_vals, fmt=".0f",
+                      title="Total route cost (m)", xlabel="Waypoints",
+                      ylabel="Fleet size")
+    save_figure(fig, os.path.join(fig_dir, "e06_total_cost_heatmap"))
+
     logger.info("E6 figures saved to %s", fig_dir)
 
 
@@ -262,9 +296,10 @@ def main():
     p.add_argument("--fleet_sizes", type=int, nargs="+", default=E06_FLEET_SIZES)
     p.add_argument("--waypoint_counts", type=int, nargs="+", default=E06_WAYPOINT_COUNTS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_5)
-    p.add_argument("--solver", default="highs", choices=["cuopt", "highs"])
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e06_vrp_fleet_scaling"))
     p.add_argument("--plots_only", action="store_true")
+    p.add_argument("--resume", action="store_true",
+                   help="Resume from existing results.csv, skipping completed runs")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -274,7 +309,6 @@ def main():
     )
 
     os.makedirs(args.output_dir, exist_ok=True)
-    solver_backend = VRPBackend(args.solver)
 
     all_metrics = []
 
@@ -326,15 +360,42 @@ def main():
         csv_path = os.path.join(args.output_dir, "results.csv")
         fieldnames = ["run_id"] + list(RunMetrics.__dataclass_fields__.keys())
 
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
+        completed = set()
+        next_run_id = 1
+        if args.resume and os.path.exists(csv_path):
+            import csv as csv_mod
+            with open(csv_path) as f:
+                reader = csv_mod.DictReader(f)
+                for row in reader:
+                    m = RunMetrics()
+                    for fk, v in row.items():
+                        if fk == "run_id":
+                            continue
+                        if hasattr(m, fk):
+                            field_type = type(getattr(m, fk))
+                            try:
+                                setattr(m, fk, field_type(v))
+                            except (ValueError, TypeError):
+                                setattr(m, fk, v)
+                    all_metrics.append(m)
+                    completed.add((m.fleet_size, m.n_waypoints, m.seed))
+                    next_run_id = max(next_run_id, int(row["run_id"]) + 1)
+            logger.info("Resuming: skipping %d completed runs", len(completed))
 
-            for run_id, (k, nw, seed) in enumerate(configs, 1):
+        file_mode = "a" if args.resume and completed else "w"
+        with open(csv_path, file_mode, newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if file_mode == "w":
+                writer.writeheader()
+
+            run_id = next_run_id
+            for k, nw, seed in configs:
+                if (k, nw, seed) in completed:
+                    continue
                 logger.info("=== Run %d/%d: fleet=%d wps=%d seed=%d ===",
                             run_id, total, k, nw, seed)
                 m = run_single(k, nw, seed, og, mesh_bounds_min, mesh_bounds_max,
-                               sampler, solver_backend)
+                               sampler)
                 all_metrics.append(m)
                 row = asdict(m)
                 row["run_id"] = run_id
@@ -342,6 +403,7 @@ def main():
                 f.flush()
                 logger.info("  status=%s makespan=%.1f t_total=%.1fs",
                             m.status, m.makespan, m.t_total)
+                run_id += 1
                 free_gpu_memory()
     else:
         csv_path = os.path.join(args.output_dir, "results.csv")

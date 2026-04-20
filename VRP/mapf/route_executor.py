@@ -94,8 +94,10 @@ Sharon, G. et al. (2015). Conflict-Based Search for Optimal
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
+import random
 from typing import List, Optional
 
 import cupy as cp
@@ -119,6 +121,29 @@ from .route_planner import plan_robot_route_st
 from .orientation import apply_heading_orientation
 
 logger = logging.getLogger(__name__)
+
+
+def _perm_to_index(perm: list) -> int:
+    """Factoradic (Lehmer code) index of a permutation of ``range(n)``."""
+    n = len(perm)
+    available = list(range(n))
+    idx = 0
+    for i, v in enumerate(perm):
+        j = available.index(v)
+        available.pop(j)
+        idx += j * math.factorial(n - 1 - i)
+    return idx
+
+
+def _index_to_perm(idx: int, n: int) -> list:
+    """Permutation of ``range(n)`` corresponding to a factoradic index."""
+    available = list(range(n))
+    perm: list = []
+    for i in range(n, 0, -1):
+        f = math.factorial(i - 1)
+        j, idx = divmod(idx, f)
+        perm.append(available.pop(j))
+    return perm
 
 
 def _per_leg_travel_times(wp_schedule, dt):
@@ -313,88 +338,126 @@ class MultiAgentPathPlanner:
             objective = _combined_objective(makespan, total_time)
             return result, objective
 
-        best_result, best_objective = _run_trial(default_order)
-        best_order = default_order
-        best_stats = best_result[5]
-        logger.info("[MultiAgentPathPlanner] Default order (longest-first) "
-                    "objective: %.1f  makespan: %.1f s",
-                    best_objective, best_result[3])
-
-        trials_used = 1
-
-        if n_priority_trials > trials_used:
-            reverse_order = list(reversed(default_order))
-            trial_result, trial_objective = _run_trial(reverse_order)
-            logger.info("[MultiAgentPathPlanner] Shortest-first order "
-                        "objective: %.1f  makespan: %.1f s",
-                        trial_objective, trial_result[3])
+        def _update_best(order, trial_result, trial_objective):
+            """Return updated (best_result, best_objective, best_order,
+            best_stats) if *trial_objective* improves on the current best."""
+            nonlocal best_result, best_objective, best_order, best_stats
             if trial_objective < best_objective:
                 best_result = trial_result
                 best_objective = trial_objective
-                best_order = reverse_order
+                best_order = order
                 best_stats = trial_result[5]
-            trials_used += 1
 
-        if n_priority_trials > trials_used:
-            conflict_scores = [
-                s.wait_steps + s.astar_failures * 100
-                for s in best_stats
-            ]
-            conflict_order = sorted(
-                range(num_robots), key=lambda i: -conflict_scores[i],
-            )
-            if conflict_order != default_order:
-                trial_result, trial_objective = _run_trial(conflict_order)
-                logger.info("[MultiAgentPathPlanner] Most conflicted order %s "
-                            "objective: %.1f  makespan: %.1f s",
-                            conflict_order, trial_objective, trial_result[3])
-                if trial_objective < best_objective:
+        total_perms = math.factorial(num_robots)
+
+        if total_perms <= n_priority_trials:
+            # ── Exhaustive: try every permutation ────────────────────
+            best_result = best_objective = best_order = best_stats = None
+            for perm in itertools.permutations(range(num_robots)):
+                order = list(perm)
+                trial_result, trial_objective = _run_trial(order)
+                if best_result is None or trial_objective < best_objective:
                     best_result = trial_result
                     best_objective = trial_objective
-                    best_order = conflict_order
+                    best_order = order
                     best_stats = trial_result[5]
-            trials_used += 1
-
-        if n_priority_trials > trials_used:
-            conflict_scores = [
-                s.wait_steps + s.astar_failures * 100
-                for s in best_stats
-            ]
-            least_conflict_order = sorted(
-                range(num_robots), key=lambda i: conflict_scores[i],
+            logger.info(
+                "[MultiAgentPathPlanner] Exhaustive search (%d orderings)  "
+                "best order: %s  objective=%.1f  makespan=%.1f s",
+                total_perms, best_order, best_objective, best_result[3],
             )
-            if least_conflict_order != default_order:
-                trial_result, trial_objective = _run_trial(
-                    least_conflict_order,
+        else:
+            # ── Non-exhaustive: deterministic + unique random ────────
+            best_result, best_objective = _run_trial(default_order)
+            best_order = default_order
+            best_stats = best_result[5]
+            logger.info("[MultiAgentPathPlanner] Default order (longest-first) "
+                        "objective: %.1f  makespan: %.1f s",
+                        best_objective, best_result[3])
+
+            tried_orderings: set = {tuple(default_order)}
+            trials_used = 1
+
+            if n_priority_trials > trials_used:
+                reverse_order = list(reversed(default_order))
+                trial_result, trial_objective = _run_trial(reverse_order)
+                logger.info("[MultiAgentPathPlanner] Shortest-first order "
+                            "objective: %.1f  makespan: %.1f s",
+                            trial_objective, trial_result[3])
+                _update_best(reverse_order, trial_result, trial_objective)
+                tried_orderings.add(tuple(reverse_order))
+                trials_used += 1
+
+            if n_priority_trials > trials_used:
+                conflict_scores = [
+                    s.wait_steps + s.astar_failures * 100
+                    for s in best_stats
+                ]
+                conflict_order = sorted(
+                    range(num_robots), key=lambda i: -conflict_scores[i],
                 )
-                logger.info("[MultiAgentPathPlanner] Least conflicted order %s "
-                            "objective: %.1f  makespan: %.1f s",
-                            least_conflict_order, trial_objective,
-                            trial_result[3])
-                if trial_objective < best_objective:
-                    best_result = trial_result
-                    best_objective = trial_objective
-                    best_order = least_conflict_order
-                    best_stats = trial_result[5]
-            trials_used += 1
+                if tuple(conflict_order) not in tried_orderings:
+                    trial_result, trial_objective = _run_trial(conflict_order)
+                    logger.info("[MultiAgentPathPlanner] Most conflicted order %s "
+                                "objective: %.1f  makespan: %.1f s",
+                                conflict_order, trial_objective, trial_result[3])
+                    _update_best(conflict_order, trial_result, trial_objective)
+                    tried_orderings.add(tuple(conflict_order))
+                trials_used += 1
 
-        for trial in range(trials_used, n_priority_trials):
-            random_order = list(np.random.permutation(num_robots))
-            trial_result, trial_objective = _run_trial(random_order)
-            logger.info("[MultiAgentPathPlanner] Random trial %d order %s "
+            if n_priority_trials > trials_used:
+                conflict_scores = [
+                    s.wait_steps + s.astar_failures * 100
+                    for s in best_stats
+                ]
+                least_conflict_order = sorted(
+                    range(num_robots), key=lambda i: conflict_scores[i],
+                )
+                if tuple(least_conflict_order) not in tried_orderings:
+                    trial_result, trial_objective = _run_trial(
+                        least_conflict_order,
+                    )
+                    logger.info("[MultiAgentPathPlanner] Least conflicted order %s "
+                                "objective: %.1f  makespan: %.1f s",
+                                least_conflict_order, trial_objective,
+                                trial_result[3])
+                    _update_best(least_conflict_order, trial_result,
+                                 trial_objective)
+                    tried_orderings.add(tuple(least_conflict_order))
+                trials_used += 1
+
+            # ── Unique random orderings via oversampling ──────
+            remaining = n_priority_trials - trials_used
+            if remaining > 0:
+                tried_indices = {
+                    _perm_to_index(list(t)) for t in tried_orderings
+                }
+                candidates = random.sample(
+                    range(total_perms), remaining + len(tried_indices),
+                )
+                random_indices = [
+                    c for c in candidates if c not in tried_indices
+                ][:remaining]
+                random_orderings = [
+                    _index_to_perm(idx, num_robots)
+                    for idx in random_indices
+                ]
+                for trial_num, random_order in enumerate(
+                    random_orderings, start=trials_used + 1,
+                ):
+                    trial_result, trial_objective = _run_trial(random_order)
+                    logger.info(
+                        "[MultiAgentPathPlanner] Random trial %d order %s "
                         "objective: %.1f  makespan: %.1f s",
-                        trial + 1, random_order,
-                        trial_objective, trial_result[3])
-            if trial_objective < best_objective:
-                best_result = trial_result
-                best_objective = trial_objective
-                best_order = random_order
-                best_stats = trial_result[5]
+                        trial_num, random_order,
+                        trial_objective, trial_result[3],
+                    )
+                    _update_best(random_order, trial_result, trial_objective)
 
-        logger.info("[MultiAgentPathPlanner] Best priority order: %s  "
-                    "objective=%.1f  makespan=%.1f s  (%d trials)",
-                    best_order, best_objective, best_result[3],
-                    n_priority_trials)
+            logger.info("[MultiAgentPathPlanner] Best priority order: %s  "
+                        "objective=%.1f  makespan=%.1f s  (%d trials)",
+                        best_order, best_objective, best_result[3],
+                        n_priority_trials)
 
         (robot_world_paths, robot_coarse_times, robot_waypoint_schedules,
          _, _, _per_robot_stats) = best_result
@@ -477,12 +540,21 @@ class MultiAgentPathPlanner:
             all_trajectories_gpu.append(trajectory.astype(cp.float32))
             all_velocities_gpu.append(velocities.astype(cp.float32))
 
-        # ── 5. Build per-robot waypoint list ──────────────────────────
+        # ── 5. Build per-robot waypoint list (pos + quaternion) ────────
+        from scipy.spatial.transform import Rotation
         waypoint_positions_np = cp.asnumpy(waypoint_positions)
-        all_waypoints = [
-            [waypoint_positions_np[node].tolist() for node in route]
-            for route in routes
-        ]
+        waypoint_rotmats_np = cp.asnumpy(waypoint_rotmats)
+        all_waypoints = []
+        for route in routes:
+            route_wps = []
+            for node in route:
+                pos = waypoint_positions_np[node].tolist()
+                quat_xyzw = Rotation.from_matrix(waypoint_rotmats_np[node]).as_quat()
+                # Isaac Sim expects [qw, qx, qy, qz]
+                quat_wxyz = [float(quat_xyzw[3]), float(quat_xyzw[0]),
+                             float(quat_xyzw[1]), float(quat_xyzw[2])]
+                route_wps.append(pos + quat_wxyz)
+            all_waypoints.append(route_wps)
 
         # ── 6. Optional collision safety checks (on GPU) ─────────────
         if run_collision_checks:
@@ -513,13 +585,13 @@ class MultiAgentPathPlanner:
                 )
 
         # ── 7. Transfer to CPU for ExecutionResult ────────────────────
-        all_trajectory_positions: List[List[np.ndarray]] = []
-        all_trajectory_velocities: List[List[np.ndarray]] = []
+        all_trajectory_positions: List[np.ndarray] = []
+        all_trajectory_velocities: List[np.ndarray] = []
         for robot_idx in range(num_robots):
             traj_np = cp.asnumpy(all_trajectories_gpu[robot_idx])
             vel_np = cp.asnumpy(all_velocities_gpu[robot_idx])
-            all_trajectory_positions.append(list(traj_np))
-            all_trajectory_velocities.append(list(vel_np))
+            all_trajectory_positions.append(traj_np)
+            all_trajectory_velocities.append(vel_np)
 
         actual_per_vehicle_times = [
             len(all_trajectories_gpu[i]) * TRAJ_DT for i in range(num_robots)

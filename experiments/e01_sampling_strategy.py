@@ -2,22 +2,22 @@
 """E1: Sampling Strategy Comparison
 
 Section A (k=1):
-  10 strategies × 3 seeds × (Duke of Lancaster + TOSCA representative).
+  4 strategies × 3 seeds × (Duke of Lancaster + TOSCA representative).
   Fixed candidate budget: model.num_candidates (1500 Duke, 500 TOSCA).
   Records n_base/n_iterative split, actual candidates generated, viewpoints
   selected, coverage, pre-set-cover pool redundancy, and per-stage timing.
   Base sampler for all hybrid strategies: weighted.
 
 Section B (k>1):
-  targeted_50 and cmaes_50 × k∈{1,2,3} × TOSCA representative only.
+  4 strategies × k∈{1,2,3} × TOSCA representative only.
   Budget scales: N = 1500·k — gives the sampler room to reach k-fold coverage.
   Duke is excluded (too slow for the k-sweep).
 
-Strategies (Section A):
+Strategies:
   weighted            — SDF² uniform, all N from the weighted base sampler
   weighted_curvature  — SDF² + curvature bias, all N from base sampler
-  targeted_X          — X% targeted toward uncovered, (100-X)% weighted
-  cmaes_X             — X% CMA-ES optimised, (100-X)% weighted
+  targeted_25         — 25% targeted toward uncovered, 75% weighted
+  cmaes_100           — 100% CMA-ES optimised
 
 Set-cover: LazyGreedySetCover (CPU, O(log N) heap) — fastest per e04 results.
 
@@ -85,8 +85,8 @@ def _save_viz(opt_result, target_points, normals, viz_path, meta):
         "positions": opt_result.positions,
         "rotations": opt_result.rotations,
         "visibility_map": opt_result.visibility_map,
-        "target_points": np.asarray(target_points, dtype=np.float32),
-        "normals": np.asarray(normals, dtype=np.float32),
+        "target_points": np.asarray(target_points.get(), dtype=np.float32),
+        "normals": np.asarray(normals.get(), dtype=np.float32),
         **meta,
     }
     save_run_result(data, viz_path)
@@ -101,7 +101,7 @@ def run_single_A(ctx: PipelineContext, strategy: str, seed: int,
     model = ctx.model
 
     with timed() as t_sample:
-        pos_gpu, rot_gpu, n_base, n_iter, base_name = sample_strategy(
+        pos_gpu, rot_gpu, n_base, n_iter, base_name, n_warmstart_fallbacks = sample_strategy(
             ctx, strategy, model.num_candidates,
             target_points, normals, vis_query, model,
         )
@@ -133,6 +133,7 @@ def run_single_A(ctx: PipelineContext, strategy: str, seed: int,
         "k_coverage": 1,
         "n_base_candidates": n_base,
         "n_iterative_candidates": n_iter,
+        "n_warmstart_fallbacks": int(n_warmstart_fallbacks),
         "base_sampler": base_name,
         "num_candidates_requested": model.num_candidates,
         "num_candidates": int(len(pos_gpu)),
@@ -157,7 +158,7 @@ def run_single_B(ctx: PipelineContext, strategy: str, k_coverage: int,
     num_candidates = _SECTION_B_BASE_N * k_coverage
 
     with timed() as t_sample:
-        pos_gpu, rot_gpu, n_base, n_iter, base_name = sample_strategy(
+        pos_gpu, rot_gpu, n_base, n_iter, base_name, n_warmstart_fallbacks = sample_strategy(
             ctx, strategy, num_candidates,
             target_points, normals, vis_query, model,
             k_coverage=k_coverage,
@@ -180,6 +181,7 @@ def run_single_B(ctx: PipelineContext, strategy: str, k_coverage: int,
         "seed": seed,
         "n_base_candidates": n_base,
         "n_iterative_candidates": n_iter,
+        "n_warmstart_fallbacks": int(n_warmstart_fallbacks),
         "base_sampler": base_name,
         "num_candidates_requested": num_candidates,
         "num_candidates": int(len(pos_gpu)),
@@ -204,6 +206,20 @@ _GROUP_COLORS = {
     "weighted_curvature": CATEGORICAL_COLORS[1],
     "targeted": CATEGORICAL_COLORS[2],
     "cmaes": CATEGORICAL_COLORS[3],
+}
+
+
+_B_LINESTYLES = {
+    "weighted": "solid",
+    "weighted_curvature": "dashed",
+    "targeted_25": "dashdot",
+    "cmaes_100": "dotted",
+}
+_B_MARKERS = {
+    "weighted": "o",
+    "weighted_curvature": "s",
+    "targeted_25": "^",
+    "cmaes_100": "D",
 }
 
 
@@ -334,15 +350,13 @@ def generate_plots_B(results: list[dict], strategies: list[str],
         vals = [r[metric] for r in br if r["strategy"] == strategy and r["k_coverage"] == k]
         return float(np.mean(vals)) if vals else float("nan")
 
-    line_styles = {"targeted_50": "solid", "cmaes_50": "dashed"}
-    line_colors = {"targeted_50": _GROUP_COLORS["targeted"], "cmaes_50": _GROUP_COLORS["cmaes"]}
-
     # ── Fig 5: Viewpoints vs k ────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     for strat in strategies:
         ys = [_mean_over_models(strat, k, "num_viewpoints") for k in k_values]
-        ax.plot(k_values, ys, marker="o", linestyle=line_styles.get(strat, "solid"),
-                color=line_colors.get(strat, "grey"), label=strat, linewidth=1.5)
+        ax.plot(k_values, ys, marker=_B_MARKERS.get(strat, "o"),
+                linestyle=_B_LINESTYLES.get(strat, "solid"),
+                color=_bar_color(strat), label=strat, linewidth=1.5)
     ax.set_xlabel("k-coverage requested")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title("Viewpoints vs k-Coverage (TOSCA, N=1500·k)")
@@ -354,8 +368,9 @@ def generate_plots_B(results: list[dict], strategies: list[str],
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     for strat in strategies:
         ys = [_mean_over_models(strat, k, "coverage") * 100 for k in k_values]
-        ax.plot(k_values, ys, marker="o", linestyle=line_styles.get(strat, "solid"),
-                color=line_colors.get(strat, "grey"), label=strat, linewidth=1.5)
+        ax.plot(k_values, ys, marker=_B_MARKERS.get(strat, "o"),
+                linestyle=_B_LINESTYLES.get(strat, "solid"),
+                color=_bar_color(strat), label=strat, linewidth=1.5)
     ax.axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8, label="95% target")
     ax.set_xlabel("k-coverage requested")
     ax.set_ylabel("Coverage (%)")
@@ -368,8 +383,9 @@ def generate_plots_B(results: list[dict], strategies: list[str],
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     for strat in strategies:
         ys = [_mean_over_models(strat, k, "sampling_time") for k in k_values]
-        ax.plot(k_values, ys, marker="o", linestyle=line_styles.get(strat, "solid"),
-                color=line_colors.get(strat, "grey"), label=strat, linewidth=1.5)
+        ax.plot(k_values, ys, marker=_B_MARKERS.get(strat, "o"),
+                linestyle=_B_LINESTYLES.get(strat, "solid"),
+                color=_bar_color(strat), label=strat, linewidth=1.5)
     ax.set_xlabel("k-coverage requested")
     ax.set_ylabel("Sampling time (s)")
     ax.set_title("Sampling Cost vs k-Coverage (TOSCA)")
@@ -382,8 +398,9 @@ def generate_plots_B(results: list[dict], strategies: list[str],
     for strat in strategies:
         xs = [_SECTION_B_BASE_N * k for k in k_values]
         ys = [_mean_over_models(strat, k, "num_candidates") for k in k_values]
-        ax.plot(xs, ys, marker="o", linestyle=line_styles.get(strat, "solid"),
-                color=line_colors.get(strat, "grey"), label=strat, linewidth=1.5)
+        ax.plot(xs, ys, marker=_B_MARKERS.get(strat, "o"),
+                linestyle=_B_LINESTYLES.get(strat, "solid"),
+                color=_bar_color(strat), label=strat, linewidth=1.5)
     ax.plot(xs, xs, "k--", alpha=0.3, label="N requested")
     ax.set_xlabel("Candidates requested (1500·k)")
     ax.set_ylabel("Candidates generated")

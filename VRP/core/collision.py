@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Sequence, Tuple, Union
 
 import cupy as cp
+import numpy as np
 
 from .constants import ROBOT_RADIUS
 from shared.occupancy_grid import OccupancyGrid
 
+ArrayLike2D = Union[cp.ndarray, np.ndarray]
+
 
 def _pad_trajectories_to_tensor(
-    all_traj_positions: List[cp.ndarray],
+    all_traj_positions: Sequence[ArrayLike2D],
 ) -> Tuple[cp.ndarray, List[int]]:
     """Pad ragged per-robot trajectories into a (R, T_max, 3) tensor.
 
-    Each element of all_traj_positions is a (T_i, D) CuPy array where
-    D >= 3. Only the first 3 columns (XYZ) are used.
+    Each element of all_traj_positions is a (T_i, D) array (NumPy or
+    CuPy) where D >= 3. Only the first 3 columns (XYZ) are used.
 
     Returns (stacked, lengths) where stacked is (R, T_max, 3) and
     lengths[i] is the original length of robot i's trajectory.
@@ -32,15 +35,16 @@ def _pad_trajectories_to_tensor(
         n = len(traj)
         if n == 0:
             continue
-        stacked[i, :n] = traj[:, :3]
+        traj_gpu = cp.asarray(traj)
+        stacked[i, :n] = traj_gpu[:, :3]
         if n < max_T:
-            stacked[i, n:] = traj[-1, :3]
+            stacked[i, n:] = traj_gpu[-1, :3]
 
     return stacked, lengths
 
 
 def find_trajectory_collisions(
-    all_traj_positions: List[cp.ndarray],
+    all_traj_positions: Sequence[ArrayLike2D],
     radius: float = ROBOT_RADIUS,
 ) -> List[Tuple[int, int, int, float]]:
     """Scan replay trajectories for sphere-based inter-robot collisions.
@@ -50,7 +54,7 @@ def find_trajectory_collisions(
     robot pairs and time-steps simultaneously.
 
     Args:
-        all_traj_positions: Per-robot CuPy arrays, each (T_i, D) where D >= 3.
+        all_traj_positions: Per-robot arrays (NumPy or CuPy), each (T_i, D) where D >= 3.
         radius: Bounding-sphere radius per robot. Defaults to ROBOT_RADIUS.
 
     Returns list of (step, robot_a, robot_b, penetration_depth).
@@ -94,7 +98,7 @@ def find_trajectory_collisions(
 
 
 def find_environment_collisions(
-    all_traj_positions: List[cp.ndarray],
+    all_traj_positions: Sequence[ArrayLike2D],
     occupancy_grid: OccupancyGrid,
 ) -> list[int]:
     """Count per-robot collisions with the occupancy grid.
@@ -104,7 +108,7 @@ def find_environment_collisions(
     per robot.
 
     Args:
-        all_traj_positions: Per-robot CuPy arrays, each (T_i, D) where D >= 3.
+        all_traj_positions: Per-robot arrays (NumPy or CuPy), each (T_i, D) where D >= 3.
         occupancy_grid: Fine-resolution occupancy grid.
 
     Returns:
@@ -115,7 +119,7 @@ def find_environment_collisions(
         return [0] * len(all_traj_positions)
 
     all_xyz = cp.concatenate(
-        [t[:, :3] for t in all_traj_positions if len(t) > 0], axis=0,
+        [cp.asarray(t)[:, :3] for t in all_traj_positions if len(t) > 0], axis=0,
     )
     free_mask = occupancy_grid.is_free_world_batch(all_xyz)
 

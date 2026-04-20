@@ -55,8 +55,8 @@ class TestExecutionResultSerialization:
         velocities = []
         for i in range(n_robots):
             n_steps = steps[i] if i < len(steps) else 5
-            positions.append([rng.randn(8).astype(np.float32) for _ in range(n_steps)])
-            velocities.append([rng.randn(8).astype(np.float32) for _ in range(n_steps)])
+            positions.append(rng.randn(n_steps, 8).astype(np.float32))
+            velocities.append(rng.randn(n_steps, 8).astype(np.float32))
         return ExecutionResult(
             all_traj_positions=positions,
             all_traj_velocities=velocities,
@@ -88,8 +88,8 @@ class TestExecutionResultSerialization:
     def test_empty_robot(self, tmp_path):
         """Robot with 0 trajectory steps."""
         result = ExecutionResult(
-            all_traj_positions=[[], [np.zeros(8, dtype=np.float32)]],
-            all_traj_velocities=[[], [np.zeros(8, dtype=np.float32)]],
+            all_traj_positions=[np.zeros((0, 8), dtype=np.float32), np.zeros((1, 8), dtype=np.float32)],
+            all_traj_velocities=[np.zeros((0, 8), dtype=np.float32), np.zeros((1, 8), dtype=np.float32)],
             all_waypoints=[[], [[0, 0, 0, 1, 0, 0, 0]]],
             initial_positions=[np.zeros(3), np.ones(3)],
             fail_counts=[0, 0],

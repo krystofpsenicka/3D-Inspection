@@ -139,15 +139,15 @@ def _make_optimizer(name: str, ctx: PipelineContext, vis_query,
 
     elif name.startswith("ExpansionIterative_"):
         inner_sampler_type = name.split("_", 1)[1]  # "weighted", "weighted_curvature", "cmaes"
-        inner = LazyGreedySetCoverCuda(num_points, pos_gpu, rot_gpu, V_gpu)
-
+        inner = LazyGreedySetCover(num_points, pos_np, rot_np, V_np)
+        
         if inner_sampler_type in ("weighted", "weighted_curvature"):
             from visibility.sampling.samplers.expansion import ProbabilisticExpansionSampler
             curvature = (inner_sampler_type == "weighted_curvature")
             raw_sampler = ctx.build_sampler("targeted")
             adapter = _WeightedExpansionAdapter(raw_sampler, curvature_weighting=curvature)
             exp_sampler = ProbabilisticExpansionSampler(
-                adapter, vis_query, n_samples=20, radius=0.5)
+                adapter, vis_query, n_samples=200, radius=0.5)
 
         elif inner_sampler_type == "cmaes":
             from visibility.sampling.samplers.expansion import OptimizingExpansionSampler
@@ -173,8 +173,8 @@ def _save_viz(opt_result, target_points, normals, viz_path, meta):
         "positions": opt_result.positions,
         "rotations": opt_result.rotations,
         "visibility_map": opt_result.visibility_map,
-        "target_points": np.asarray(target_points, dtype=np.float32),
-        "normals": np.asarray(normals, dtype=np.float32),
+        "target_points": cp.asnumpy(target_points).astype(np.float32),
+        "normals": cp.asnumpy(normals).astype(np.float32),
         **meta,
     }
     save_run_result(data, viz_path)
@@ -515,8 +515,8 @@ def main():
                     vis_query = ctx.build_visibility_query("raycast")
 
                     with timed() as t_cand:
-                        pos_gpu, rot_gpu, n_base, n_iter, _ = sample_strategy(
-                            ctx, "targeted_50", cfg.num_candidates,
+                        pos_gpu, rot_gpu, n_base, n_iter, _, _ = sample_strategy(
+                            ctx, "targeted_25", cfg.num_candidates,
                             target_points, normals, vis_query, cfg,
                         )
                     V_gpu, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
@@ -554,7 +554,7 @@ def main():
                                         viz_dir,
                                         f"opt={opt_name}_target={target}_seed={seed}")
                                 result = run_single(
-                                    ctx, opt_name, "targeted_50", target, seed,
+                                    ctx, opt_name, "targeted_25", target, seed,
                                     pos_gpu, rot_gpu, V_gpu, V_np, num_points,
                                     viz_path=viz_path,
                                     target_points_viz=target_points,
@@ -583,7 +583,7 @@ def main():
                         vis_query = ctx.build_visibility_query("raycast")
 
                         try:
-                            pos_gpu, rot_gpu, _, _, _ = sample_strategy(
+                            pos_gpu, rot_gpu, _, _, _, _ = sample_strategy(
                                 ctx, strategy, cfg.num_candidates,
                                 target_points, normals, vis_query, cfg,
                             )

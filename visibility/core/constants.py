@@ -33,11 +33,11 @@ CURVATURE_POSITION_WEIGHT = 5.0
 TARGETED_PROXIMITY_SIGMA_FACTOR = 2.0
 PROXIMITY_KNN_FRACTION = 0.01
 RESAMPLE_FRACTION = 0.25
-DEFAULT_K_COVERAGE = 1  # coverage-redundancy k (Glorieux 2020)
+DEFAULT_K_COVERAGE = 4  # coverage-redundancy k (Glorieux 2020)
 
 # Optimal resampling (optimizing sampler)
-OPT_SAMPLER_POPSIZE = 15       # population size per generation
-OPT_SAMPLER_MAXITER = 20       # max generations per optimization run
+OPT_SAMPLER_POPSIZE = 40       # population size per generation
+OPT_SAMPLER_MAXITER = 40       # max generations per optimization run
 OPT_SAMPLER_TRAVEL_WEIGHT = 0.1  # weight of travel cost vs coverage in objective
 OPT_SAMPLER_TRAVEL_ROT_FRACTION = 0.1  # fraction of travel cost from rotation vs position
 

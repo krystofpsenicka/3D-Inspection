@@ -43,7 +43,7 @@ def _compute_valid_arcs(
     alpha: float,
     T_ub: float,
 ) -> np.ndarray:
-    """Compute valid (i, j, v) arc tuples via GPU boolean masks.
+    """Compute valid (i, j, v) arc tuples.
 
     Returns an (M, 3) int32 NumPy array where each row is (i, j, v).
     """
@@ -81,7 +81,6 @@ def build_vrp_mip(
     dist_matrix: np.ndarray,
     num_vehicles: int,
     depots: list[int],
-    capacity: int,
     alpha: float = 1.0,
     warm_start_routes: Optional[List[List[int]]] = None,
     mip_gap: float = 0.05,
@@ -97,8 +96,6 @@ def build_vrp_mip(
         Number of vehicles (K).
     depots : list[int]
         Per-vehicle depot indices.
-    capacity : int
-        Max customers per vehicle (Q).
     alpha : float
         Objective blending parameter in [0, 1].
     warm_start_routes : list[list[int]], optional
@@ -126,8 +123,8 @@ def build_vrp_mip(
     K = num_vehicles
 
     logger.info("[MIP] Building model: %d nodes (%d customers, %d depots), "
-                "%d vehicles, capacity=%d",
-                n, n_c, len(depot_set), K, capacity)
+                "%d vehicles",
+                n, n_c, len(depot_set), K)
 
     cost = dist_matrix.astype(np.float64).copy()
 
@@ -191,6 +188,9 @@ def build_vrp_mip(
             "Combined",
         )
 
+
+    # Constraints
+
     for i in customers:
         prob += (
             pulp.lpSum(
@@ -250,15 +250,6 @@ def build_vrp_mip(
                     terms += (n_c - 2) * bwd
                 prob += (terms <= n_c - 1, f"mtz_{i}_{j}_{v}")
 
-    for v in range(K):
-        prob += (
-            pulp.lpSum(
-                x[i, j, v]
-                for i in customers for j in range(n)
-                if (i, j, v) in x
-            ) <= capacity,
-            f"capacity_{v}",
-        )
 
     n_vars = len(x) + len(u) + 1
     n_cons = len(prob.constraints)

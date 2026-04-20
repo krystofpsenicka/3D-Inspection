@@ -93,7 +93,7 @@ def run_single(seed: int, og, sampler, mesh_bounds_min, mesh_bounds_max) -> dict
     t0 = time.perf_counter()
     vrp_result: VRPResult = solve_vrp(
         dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
-        backend=VRPBackend.HIGHS, time_limit=120,
+        backend=VRPBackend.CUOPT, time_limit=120,
     )
     t_vrp = time.perf_counter() - t0
 

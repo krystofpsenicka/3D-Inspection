@@ -2,8 +2,15 @@
 
 Computes the N x N pairwise shortest-path distance matrix between
 waypoints on the inflated occupancy grid.  Graph construction is
-GPU-vectorized via CuPy; shortest paths are computed in-process
-with cuGraph's Dijkstra.
+GPU-vectorized via CuPy; shortest paths are computed with cuGraph's
+Dijkstra inside a one-shot subprocess.
+
+The subprocess is required because cuGraph/cuDF retain internal RMM
+``DeviceBuffer`` objects after ``del G, gdf`` that keep the whole RMM
+pool pinned.  Each in-process call therefore leaks ~7 GB of GPU memory
+that no amount of ``gc.collect()`` or ``rmm.reinitialize()`` can reclaim
+in-process.  Running in a fresh subprocess tears down the CUDA context
+on exit, guaranteeing full release.
 
 References:
     Davidson, A., Baxter, S., Garland, M. & Owens, J.D. (2014).
@@ -13,7 +20,9 @@ References:
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import multiprocessing as mp
 import os
 
 import cupy as cp
@@ -159,6 +168,31 @@ def _build_cugraph_distance_matrix(
     return matrix
 
 
+def _dijkstra_subprocess_worker(
+    grid_np: np.ndarray,
+    origin_np: np.ndarray,
+    resolution: float,
+    waypoints_np: np.ndarray,
+) -> np.ndarray:
+    """Subprocess entrypoint: rebuild grid on GPU, run cuGraph, return numpy.
+
+    Must be a top-level function to be picklable by ProcessPoolExecutor.
+    Imports are inside the function so the parent process doesn't pay for
+    them (and so the subprocess gets a fresh cuGraph/cuDF initialisation).
+    """
+    import cupy as _cp
+    from shared.occupancy_grid import OccupancyGrid
+
+    og = OccupancyGrid(
+        grid=_cp.asarray(grid_np),
+        origin=_cp.asarray(origin_np),
+        resolution=resolution,
+    )
+    wp_gpu = _cp.asarray(waypoints_np)
+    matrix_gpu = _build_cugraph_distance_matrix(og, wp_gpu)
+    return _cp.asnumpy(matrix_gpu)
+
+
 def compute_distance_matrix(
     occupancy_grid,
     waypoints_xyz: cp.ndarray,
@@ -166,6 +200,10 @@ def compute_distance_matrix(
     force_rebuild: bool = False,
 ) -> cp.ndarray:
     """Compute the N x N collision-free distance matrix via cuGraph.
+
+    Runs ``_build_cugraph_distance_matrix`` in a fresh subprocess so the
+    ~7 GB RMM pool consumed by cuGraph/cuDF is guaranteed to be released
+    when the subprocess exits.  See module docstring for rationale.
 
     Args:
         occupancy_grid: OccupancyGrid instance (GPU-resident).
@@ -181,13 +219,25 @@ def compute_distance_matrix(
         return cp.asarray(np.load(cache_path))
 
     N = len(waypoints_xyz)
-    logger.info("[DistMatrix] Computing %dx%d distance matrix via cuGraph...", N, N)
+    logger.info("[DistMatrix] Computing %dx%d distance matrix via cuGraph (subprocess)...", N, N)
 
-    matrix = _build_cugraph_distance_matrix(occupancy_grid, waypoints_xyz)
+    grid_np = cp.asnumpy(occupancy_grid.grid)
+    origin_np = cp.asnumpy(occupancy_grid.origin)
+    resolution = float(occupancy_grid.resolution)
+    waypoints_np = cp.asnumpy(waypoints_xyz)
+
+    ctx = mp.get_context("spawn")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=1, mp_context=ctx) as pool:
+        future = pool.submit(
+            _dijkstra_subprocess_worker,
+            grid_np, origin_np, resolution, waypoints_np,
+        )
+        matrix_np = future.result()
+
+    matrix = cp.asarray(matrix_np)
 
     if cache_path:
         os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
-        matrix_np = cp.asnumpy(matrix)
         np.save(cache_path, matrix_np)
         logger.info("[DistMatrix] Saved to %s", cache_path)
 

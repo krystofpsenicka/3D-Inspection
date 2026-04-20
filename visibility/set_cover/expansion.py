@@ -18,6 +18,11 @@ class ExpansionIterativeSetCover(IterativeSetCoverOptimizer):
     via the inner optimizer, then refines it with the sampler before
     committing the selection.
 
+    The refinement is guarded by a marginal-gain comparison on the current
+    uncovered set (tracked here), so each committed viewpoint covers at
+    least as many uncovered points as the inner optimizer's pick. This
+    upper-bounds the total viewpoint count by the inner optimizer's count.
+
     Inherits ``optimize()`` from the base class.
     """
 
@@ -28,6 +33,7 @@ class ExpansionIterativeSetCover(IterativeSetCoverOptimizer):
         self.num_points = inner_optimizer.num_points
         self.positions = inner_optimizer.positions
         self.rotmats = inner_optimizer.rotmats
+        self._uncovered_mask = cp.ones(self.num_points, dtype=cp.bool_)
 
     @property
     def last_selected_index(self) -> int:
@@ -38,8 +44,11 @@ class ExpansionIterativeSetCover(IterativeSetCoverOptimizer):
         if result is None:
             return None
         pos, rot, vis = result
-        ref_pos, ref_rot, ref_vis = self.sampler.refine(pos, rot, vis)
+        ref_pos, ref_rot, ref_vis = self.sampler.refine(
+            pos, rot, vis, self._uncovered_mask)
         return (ref_pos, ref_rot, ref_vis)
 
     def commit_selection(self, visible_indices: cp.ndarray):
+        if len(visible_indices) > 0:
+            self._uncovered_mask[visible_indices] = False
         self.inner.commit_selection(visible_indices)

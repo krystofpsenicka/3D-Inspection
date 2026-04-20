@@ -73,7 +73,7 @@ def run_single(ctx: PipelineContext, strategy: str, num_candidates: int, seed: i
     model = ctx.model
 
     with timed() as t_sample:
-        pos_gpu, rot_gpu, n_base, n_iter, base_name = sample_strategy(
+        pos_gpu, rot_gpu, n_base, n_iter, base_name, _ = sample_strategy(
             ctx, strategy, num_candidates, target_points, normals, vis_query, model)
 
     with timed() as t_vis:

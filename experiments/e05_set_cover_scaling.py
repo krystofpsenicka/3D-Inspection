@@ -55,7 +55,7 @@ def run_single(ctx: PipelineContext, num_candidates: int,
     with timed() as t_vis:
         V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
-    from visibility.set_cover import LazyGreedySetCover  # CPU — fastest per e04 results
+    from visibility.set_cover import LazyGreedySetCover
     V_np = cp.asnumpy(V)
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)

@@ -335,7 +335,7 @@ def main() -> None:
                     backend=CMAESBackend(),
                     random_sampler=sampler,
                 )
-                opt_pos_gpu, opt_rot_gpu = opt_sampler.sample_optimized(
+                opt_pos_gpu, opt_rot_gpu, _ = opt_sampler.sample_optimized(
                     n_targeted, coverage_count_gpu, raycast_query,
                     existing_pos_gpu=pos_gpu,
                     existing_rot_gpu=rot_gpu,

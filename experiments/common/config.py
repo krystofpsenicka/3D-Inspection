@@ -119,22 +119,17 @@ TOSCA_VALID: Optional[list] = None  # Set by validate_models.py
 # ── Parameter grids ──────────────────────────────────────────────────────────
 
 # Section A: all methods at k=1 (Duke + TOSCA)
-E01_STRATEGIES_A = [
-    "weighted", "weighted_curvature",
-    "targeted_25", "targeted_50", "targeted_75", "targeted_100",
-    "cmaes_25", "cmaes_50", "cmaes_75", "cmaes_100",
-]
-# Section B: k>1 comparison (targeted_50 vs cmaes_50, TOSCA only)
-E01_STRATEGIES_B = ["targeted_50", "cmaes_50"]
-E01_K_VALUES = [1, 2, 3]
-# Keep legacy name for backward compatibility with existing results
+E01_STRATEGIES_A = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
+# Section B: k>1 comparison (TOSCA only)
+E01_STRATEGIES_B = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
+E01_K_VALUES = [1, 2, 3, 4]
 E01_STRATEGIES = E01_STRATEGIES_A
 
 E02_CANDIDATE_COUNTS = [250, 500, 750, 1000, 1500, 2000, 3000, 5000]
 E02_STRATEGIES = [
     "weighted", "weighted_curvature",
-    "targeted_25", "targeted_50", "targeted_75", "targeted_100",
-    "cmaes_25", "cmaes_50", "cmaes_75", "cmaes_100",
+    "targeted_25",
+    "cmaes_100",
 ]
 
 E03_COVERAGE_TARGETS = [0.85, 0.90, 0.925, 0.95, 0.97]
@@ -161,8 +156,8 @@ E04_OPTIMIZERS_B = [
 # All 10 input strategies for Section B
 E04_INPUT_STRATEGIES = [
     "weighted", "weighted_curvature",
-    "targeted_25", "targeted_50", "targeted_75", "targeted_100",
-    "cmaes_25", "cmaes_50", "cmaes_75", "cmaes_100",
+    "targeted_25",
+    "cmaes_100",
 ]
 # Legacy name (kept for backward compatibility with existing results)
 E04_OPTIMIZERS = E04_OPTIMIZERS_A
@@ -173,13 +168,13 @@ E05_POINT_COUNTS = [50_000, 100_000, 200_000]
 E06_FLEET_SIZES = [1, 2, 3, 4, 5, 6, 8, 10]
 E06_WAYPOINT_COUNTS = [10, 25, 50, 75, 100]
 
-E07_ALPHAS = [0.0, 0.25, 0.5, 0.75, 1.0]
+E07_ALPHAS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 E10_RESOLUTIONS = [0.25, 0.50, 0.75, 1.0, 1.5]
 
-E13_K_VALUES = [1, 2, 3, 5]
+E13_K_VALUES = [1, 2, 3, 4]
 E13_COVERAGE_TARGETS = [0.90, 0.95]
-E13_STRATEGIES = ["targeted_50", "cmaes_50"]
+E13_STRATEGIES = ["targeted_25", "cmaes_100"]
 
 # E16: Frustum parameter sensitivity
 E16_FOV_VALUES = [30.0, 45.0, 60.0, 90.0]  # degrees
@@ -189,13 +184,19 @@ E16_NEAR_FAR_PAIRS = [(0.1, 5.0), (0.2, 10.0), (0.5, 15.0)]  # (near_m, far_m)
 _E00_BASE_N = 500           # TOSCA candidate budget; scales as _E00_BASE_N * k_coverage
 
 # Section 1 — Targeted sampler
-E00_T_K_VALUES   = [1, 2, 3]
-E00_T_FRACTIONS  = [25, 50, 75, 100]    # % of budget from targeted phase
+E00_T_K_VALUES   = [1, 2, 3, 4]
+E00_T_FRACTIONS  = [12, 25, 50, 75, 100]    # % of budget from targeted phase
 E00_T_SPI_VALUES = [1, 5, 25, None]     # samples_per_iteration; None = all-at-once baseline
 
 # Section 2 — CMA-ES sampler
-E00_C_K_VALUES       = [1, 2, 3]
+E00_C_K_VALUES       = [1, 2, 3, 4]
 E00_C_FRACTIONS      = [25, 50, 75, 100]
 E00_C_TRAVEL_WEIGHTS = [0.0, 0.05, 0.1, 0.3, 0.5]
 E00_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]   # population size per CMA-ES generation (default 15)
 E00_C_MAXITER_VALUES = [5, 10, 20, 40]        # max generations per optimisation round (default 20)
+
+# E17: Sampler routing impact
+E17_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "targeted_50", "cmaes_100"]
+E17_CMAES_TRAVEL_WEIGHTS = [0.0, 0.1, 0.3]
+E17_N_ROBOTS = 5
+E17_N_CANDIDATES = 1500

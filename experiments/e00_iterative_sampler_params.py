@@ -232,7 +232,7 @@ def run_single_cmaes(ctx: PipelineContext, k_coverage: int, fraction: int,
                 backend=CMAESBackend(),
                 random_sampler=sampler,
             )
-            opt_pos, opt_rot = opt_sampler.sample_optimized(
+            opt_pos, opt_rot, n_warmstart_fallbacks = opt_sampler.sample_optimized(
                 n_iter, coverage_count, vis_query,
                 existing_pos_gpu=pos if len(pos) > 0 else None,
                 existing_rot_gpu=rot if len(rot) > 0 else None,
@@ -244,6 +244,7 @@ def run_single_cmaes(ctx: PipelineContext, k_coverage: int, fraction: int,
         else:
             opt_pos = cp.empty((0, 3), dtype=cp.float32)
             opt_rot = cp.empty((0, 3, 3), dtype=cp.float32)
+            n_warmstart_fallbacks = 0
 
         if len(opt_pos) > 0:
             pos = cp.concatenate([pos, opt_pos]) if len(pos) > 0 else opt_pos
@@ -270,6 +271,7 @@ def run_single_cmaes(ctx: PipelineContext, k_coverage: int, fraction: int,
         "n_base": n_base,
         "n_iter_requested": n_iter,
         "n_iter_actual": int(len(opt_pos)),
+        "n_warmstart_fallbacks": int(n_warmstart_fallbacks),
         "num_candidates": int(len(pos)),
         "num_viewpoints": opt_result.num_viewpoints,
         "coverage": float(opt_result.total_coverage),

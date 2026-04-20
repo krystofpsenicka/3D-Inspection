@@ -141,8 +141,9 @@ class VRPFeedbackOrchestrator:
 
         # Sanity-check: every depot must be a valid, free voxel.
         for i, xyz in enumerate(robot_start_xyzs):
-            valid = og.is_valid_voxel(og.world_to_voxel(xyz))
-            free = og.is_free_world(xyz)
+            xyz_gpu = cp.asarray(xyz, dtype=cp.float64)
+            valid = og.is_valid_voxel(og.world_to_voxel(xyz_gpu))
+            free = og.is_free_world(xyz_gpu)
             if not valid or not free:
                 logger.warning(
                     "      Robot %d depot (%s) valid=%s free=%s – "

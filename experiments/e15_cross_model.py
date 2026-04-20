@@ -125,7 +125,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
     with timed() as t_sample:
-        pos_gpu, rot_gpu, _, _, _ = sample_strategy(
+        pos_gpu, rot_gpu, _, _, _, _ = sample_strategy(
             ctx, "targeted_50", model_cfg.num_candidates,
             target_points, normals, vis_query, model_cfg,
         )
@@ -184,7 +184,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                 dist_matrix=dist_matrix,
                 num_vehicles=FLEET_SIZE,
                 depots=home_indices,
-                backend=VRPBackend.HIGHS,
+                backend=VRPBackend.CUOPT,
                 time_limit=60,
             )
         result["t_vrp"] = t_vrp.elapsed

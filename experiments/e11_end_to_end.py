@@ -41,7 +41,7 @@ from experiments.common.plotting import (
 )
 
 from shared.types import Side
-from visibility.set_cover import LazyGreedySetCoverCuda
+from visibility.set_cover import LazyGreedySetCover
 
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.vrp.vrp_solver import solve_vrp
@@ -90,8 +90,8 @@ def _save_viz_e11(opt_result, exec_result, target_points, normals,
         data[f"routes_r{r_idx}"] = np.array(full_route, dtype=np.int32)
     # MAPF trajectories (concatenated per robot)
     for r_idx, robot_legs in enumerate(exec_result.all_traj_positions):
-        if robot_legs:
-            data[f"traj_r{r_idx}"] = np.concatenate(robot_legs, axis=0).astype(np.float32)
+        if len(robot_legs) > 0:
+            data[f"traj_r{r_idx}"] = np.asarray(robot_legs, dtype=np.float32)
     # Waypoints per robot
     for r_idx, robot_wps in enumerate(exec_result.all_waypoints):
         if robot_wps:
@@ -121,9 +121,9 @@ def run_single(target_coverage: float, seed: int,
     with timed() as t_og:
         ctx.build_sampling_og()
 
-    # Stage 4: Viewpoint sampling (targeted_50)
+    # Stage 4: Viewpoint sampling
     with timed() as t_sample:
-        sampler = ctx.build_sampler("targeted")
+        sampler = ctx.build_sampler("weighted_curvature")
         n_uniform = int(N_CANDIDATES * 0.50)
         n_targeted = N_CANDIDATES - n_uniform
         pos_gpu, rot_gpu = sampler.sample(
@@ -148,7 +148,7 @@ def run_single(target_coverage: float, seed: int,
 
     # Stage 6: Set cover optimization
     with timed() as t_opt:
-        optimizer = LazyGreedySetCoverCuda(
+        optimizer = LazyGreedySetCover(
             len(target_points), pos_gpu, rot_gpu, V,
         )
         opt_result = optimizer.optimize(
@@ -184,7 +184,7 @@ def run_single(target_coverage: float, seed: int,
         dist_matrix = compute_distance_matrix(og_vrp, cp.asarray(all_pos))
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
-            backend=VRPBackend.HIGHS, time_limit=120,
+            backend=VRPBackend.CUOPT, time_limit=120,
         )
 
     pv = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)

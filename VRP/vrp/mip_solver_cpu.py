@@ -39,8 +39,6 @@ class MIPSolverCPU(VRPSolverBase):
         depot_set = set(depots)
         n = dist_matrix.shape[0]
         n_inspection = n - len(depot_set)
-        base_cap = math.ceil(n_inspection / num_vehicles)
-        capacity = base_cap + max(1, math.ceil(0.15 * base_cap))
 
         try:
             import pulp
@@ -53,7 +51,7 @@ class MIPSolverCPU(VRPSolverBase):
         dist_matrix_np = cp.asnumpy(dist_matrix)
 
         prob, warm_start = build_vrp_mip(
-            dist_matrix_np, num_vehicles, depots, capacity,
+            dist_matrix_np, num_vehicles, depots,
             alpha=alpha,
             warm_start_routes=warm_start_routes,
             mip_gap=self.mip_gap,

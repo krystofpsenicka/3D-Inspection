@@ -98,7 +98,7 @@ class OptimizingSampler(ViewpointSamplerBase):
         popsize: int = OPT_SAMPLER_POPSIZE,
         maxiter: int = OPT_SAMPLER_MAXITER,
         verbose: bool = False,
-    ) -> Tuple[cp.ndarray, cp.ndarray]:
+    ) -> Tuple[cp.ndarray, cp.ndarray, int]:
         """Find optimal viewpoints via iterative optimisation.
 
         Each round runs the backend in 6-D pose space to find the viewpoint
@@ -106,8 +106,12 @@ class OptimizingSampler(ViewpointSamplerBase):
         from existing viewpoints.
 
         Returns:
-            ``(positions_gpu, rotmats_gpu)`` — CuPy ``(K, 3)`` and ``(K, 3, 3)``.
+            ``(positions_gpu, rotmats_gpu, n_warmstart_fallbacks)`` — CuPy
+            ``(K, 3)`` and ``(K, 3, 3)``, and a count of rounds in which the
+            backend returned an infeasible position and we fell back to the
+            warm-start centre.
         """
+        n_warmstart_fallbacks = 0
         # Feasible bounds
         centers_gpu, _, coarse_res = self.get_feasible_sampling_data(
             side, None, 0.95, False)
@@ -194,11 +198,13 @@ class OptimizingSampler(ViewpointSamplerBase):
                 coverage_count_gpu, k_coverage, lo_gpu, ranges_gpu,
                 side, popsize, objective_fn)
 
-            best_pos, best_rot, score = self._optimize_one(
+            best_pos, best_rot, score, used_fallback = self._optimize_one(
                 lo_gpu, ranges_gpu, deficit_gpu,
                 visibility_query, objective_fn,
                 popsize, maxiter, verbose,
                 center_init_norm=center_init_norm)
+            if used_fallback:
+                n_warmstart_fallbacks += 1
 
             if score == 0:
                 logger.info("[OptimizingSampler] Backend found no useful viewpoint -- stopping.")
@@ -221,9 +227,11 @@ class OptimizingSampler(ViewpointSamplerBase):
                         round_i + 1, n_rounds, score)
 
         if n_new == 0:
-            return cp.empty((0, 3), dtype=cp.float32), cp.empty((0, 3, 3), dtype=cp.float32)
+            return (cp.empty((0, 3), dtype=cp.float32),
+                    cp.empty((0, 3, 3), dtype=cp.float32),
+                    n_warmstart_fallbacks)
 
-        return new_pos[:n_new], new_rot[:n_new]
+        return new_pos[:n_new], new_rot[:n_new], n_warmstart_fallbacks
 
     # ── Warm-start generation ──────────────────────────────────────────────
 
@@ -373,16 +381,28 @@ class OptimizingSampler(ViewpointSamplerBase):
                       center_init_norm=None):
         """Run one round of backend optimization.
 
-        Returns ``(best_pos_gpu, best_rotmat_gpu, score)``.
+        Returns ``(best_pos_gpu, best_rotmat_gpu, score, used_fallback)``.
         """
         # Run backend
         best_norm = self.backend.optimize(
             objective_fn, n_dims=6, popsize=popsize,
             maxiter=maxiter, verbose=verbose,
             center_init=center_init_norm)
+        best_norm = cp.clip(best_norm, 0.0, 1.0)
+
+        # If the backend converged into occupied space, fall back to the
+        # warm-start centre (known-feasible by _generate_warm_start). This
+        # prevents a single bad CMA-ES run from aborting sample_optimized.
+        best_pos_check = (best_norm * ranges_gpu + lo_gpu)[:3]
+        used_fallback = False
+        if (not bool(self._is_free(best_pos_check[cp.newaxis])[0])
+                and center_init_norm is not None):
+            logger.warning(
+                "  Backend returned infeasible pos; falling back to warm-start")
+            best_norm = cp.clip(center_init_norm, 0.0, 1.0)
+            used_fallback = True
 
         # Denormalise best solution on GPU
-        best_norm = cp.clip(best_norm, 0.0, 1.0)
         best_real = best_norm * ranges_gpu + lo_gpu
 
         best_pos_gpu = best_real[:3]
@@ -405,4 +425,4 @@ class OptimizingSampler(ViewpointSamplerBase):
         visible_mask = V_best[0].astype(cp.bool_)
         best_score = int((deficit_gpu[visible_mask]).sum())
 
-        return best_pos_gpu, best_rotmat_gpu, best_score
+        return best_pos_gpu, best_rotmat_gpu, best_score, used_fallback

@@ -56,6 +56,7 @@ ALL_EXPERIMENTS = [
     "e14_curvature_sensitivity",
     "e15_cross_model",
     "e16_frustum_sensitivity",
+    "e17_sampler_routing_impact",
 ]
 
 # GPU memory weight per experiment (1 unit ≈ 2 GB peak VRAM).

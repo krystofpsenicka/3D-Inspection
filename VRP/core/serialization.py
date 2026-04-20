@@ -19,8 +19,8 @@ def save_solution(result: "ExecutionResult", path: str) -> None:  # noqa: F821
         all_steps = []
         offsets = [0]
         for robot_steps in robot_trajs:
-            if robot_steps:
-                all_steps.append(np.stack(robot_steps))
+            if len(robot_steps) > 0:
+                all_steps.append(robot_steps)
             offsets.append(offsets[-1] + len(robot_steps))
         arrays[field_name] = np.concatenate(all_steps) if all_steps else np.empty((0, 6))
         arrays[f"{field_name}_offsets"] = np.array(offsets, dtype=np.int64)
@@ -59,7 +59,7 @@ def load_solution(path: str) -> "ExecutionResult":  # noqa: F821
     def unpack_ragged(name):
         flat = data[name]
         offsets = data[f"{name}_offsets"]
-        return [list(flat[offsets[i]:offsets[i + 1]]) for i in range(len(offsets) - 1)]
+        return [flat[offsets[i]:offsets[i + 1]] for i in range(len(offsets) - 1)]
 
     return ExecutionResult(
         all_traj_positions=unpack_ragged("all_traj_positions"),

@@ -78,7 +78,7 @@ def run_single(ctx: PipelineContext, strategy: str, k_coverage: int,
     num_candidates = _BASE_N * k_coverage
 
     with timed() as t_sample:
-        pos_gpu, rot_gpu, n_base, n_iter, base_name = sample_strategy(
+        pos_gpu, rot_gpu, n_base, n_iter, base_name, _ = sample_strategy(
             ctx, strategy, num_candidates,
             target_points, normals, vis_query, model,
             k_coverage=k_coverage,

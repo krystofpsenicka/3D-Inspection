@@ -47,8 +47,8 @@ class PlanningStats:
 @dataclass
 class ExecutionResult:
     """Full trajectory output for every robot after route execution."""
-    all_traj_positions: list[list[np.ndarray]]
-    all_traj_velocities: list[list[np.ndarray]]
+    all_traj_positions: list[np.ndarray]
+    all_traj_velocities: list[np.ndarray]
     all_waypoints: list[list[list[float]]]
     initial_positions: list[np.ndarray]
     fail_counts: list[int]
