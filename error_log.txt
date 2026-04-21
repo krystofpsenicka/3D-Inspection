@@ -1,1 +1,1 @@
-[solve_vrp] VRPBackend.HIGHS solver failed: no_solution (Not Solved)
+PuLP: cannot execute highs

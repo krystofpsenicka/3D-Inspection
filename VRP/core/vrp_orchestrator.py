@@ -40,7 +40,7 @@ from .geometry import compute_start_grid, viewpoints_to_robot_waypoints
 from shared.occupancy_grid import OccupancyGrid
 from shared.mesh_loader import load_and_transform_mesh
 from shared.grid_builder_utils import build_occupancy_grid
-from ..mapf.route_executor import MultiAgentPathPlanner
+from ..mapf.mapf_planner import MultiAgentPathPlanner
 from ..vrp.vrp_solver import solve_vrp
 
 logger = logging.getLogger(__name__)

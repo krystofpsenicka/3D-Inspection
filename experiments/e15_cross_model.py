@@ -76,7 +76,7 @@ try:
     from VRP.core.distance_matrix import compute_distance_matrix
     from VRP.vrp.vrp_solver import solve_vrp
     from VRP.core.types import VRPBackend, ExecutionResult
-    from VRP.mapf.route_executor import MultiAgentPathPlanner
+    from VRP.mapf.mapf_planner import MultiAgentPathPlanner
     from VRP.core.geometry import compute_start_grid
     _VRP_AVAILABLE = True
 except ImportError as _vrp_err:

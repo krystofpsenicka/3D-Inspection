@@ -42,7 +42,7 @@ from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.core.geometry import compute_start_grid
 from VRP.core.collision import find_trajectory_collisions
 from VRP.vrp.vrp_solver import solve_vrp
-from VRP.mapf.route_executor import MultiAgentPathPlanner
+from VRP.mapf.mapf_planner import MultiAgentPathPlanner
 
 logger = logging.getLogger(__name__)
 

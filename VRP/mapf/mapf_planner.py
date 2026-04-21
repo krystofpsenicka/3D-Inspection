@@ -1,5 +1,5 @@
 """
-VRP Planner – Route Executor (Priority-Based Sequential Planning)
+VRP Planner – MAPF Planner (Priority-Based Sequential Planning)
 
 Builds per-vehicle trajectories that are **collision-free by construction**.
 Robots are planned one at a time in priority order (longest route first).

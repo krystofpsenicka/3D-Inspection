@@ -490,7 +490,7 @@ def main() -> None:
 
     from VRP.vrp.vrp_solver import solve_vrp
     from VRP.core.types import VRPBackend, VRPResult, ExecutionResult
-    from VRP.mapf.route_executor import MultiAgentPathPlanner
+    from VRP.mapf.mapf_planner import MultiAgentPathPlanner
     from VRP.core.robot_config import load_local_robot_config
 
     vrp_backend = VRPBackend(args.solver)

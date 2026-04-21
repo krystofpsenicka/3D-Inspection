@@ -40,12 +40,21 @@ def _compute_valid_arcs(
     depots: list[int],
     depot_set: set[int],
     cost: np.ndarray,
-    alpha: float,
-    T_ub: float,
-) -> np.ndarray:
-    """Compute valid (i, j, v) arc tuples.
+    T_tour_ub: float,
+) -> tuple[np.ndarray, "cp.ndarray"]:
+    """Compute valid (i, j, v) arc tuples and the GPU cost matrix.
 
-    Returns an (M, 3) int32 NumPy array where each row is (i, j, v).
+    Applies structural filters (no self-loops, no depot-to-different-depot)
+    and the Desrochers-Laporte (1991) Prop. 6 reachability filter: arc
+    (i, j, v) is kept only if the minimum tour cost through it,
+    ``c[d_v, i] + c[i, j] + c[j, d_v]``, is within the per-tour budget
+    ``T_tour_ub``.
+
+    Returns
+    -------
+    (valid_arcs, cost_gpu)
+        ``valid_arcs`` is an (M, 3) int32 NumPy array; ``cost_gpu`` is the
+        CuPy cost matrix (reused downstream for K_inf construction).
     """
     is_depot = cp.zeros(n, dtype=cp.bool_)
     depot_arr = cp.array(list(depot_set), dtype=cp.intp)
@@ -58,21 +67,31 @@ def _compute_valid_arcs(
     not_depot_depot = ~(is_depot[:, None] & is_depot[None, :])
 
     cost_gpu = cp.asarray(cost)
-    if alpha >= 1.0 and T_ub < float("inf"):
-        within_budget = cost_gpu <= T_ub
-    else:
-        within_budget = cp.ones((n, n), dtype=cp.bool_)
-
-    base_mask = no_self_loop & not_depot_depot & within_budget
+    base_mask = no_self_loop & not_depot_depot
 
     i_allowed = (~is_depot[None, :]) | (i_idx[None, :] == depots_gpu[:, None])
     j_allowed = (~is_depot[None, :]) | (i_idx[None, :] == depots_gpu[:, None])
 
     full_mask = i_allowed[:, :, None] & j_allowed[:, None, :] & base_mask[None, :, :]
 
+    if T_tour_ub < float("inf"):
+        # Reachability filter (DL1991 Prop. 6 adapted to multi-depot VRP):
+        # arc (i, j, v) is infeasible when c[d_v, i] + c[i, j] + c[j, d_v] > T_tour_ub.
+        # Treat depot-indexed terms as 0 when i or j is vehicle v's own depot (the
+        # round-trip shortcut collapses to just c[i, j] plus one zero leg).
+        s_iv = cost_gpu[depots_gpu][:, :].copy()         # (K, n): cost from d_v to i
+        t_jv = cost_gpu[:, depots_gpu].T.copy()          # (K, n): cost from j to d_v
+        for v in range(K):
+            s_iv[v, depots[v]] = 0.0
+            t_jv[v, depots[v]] = 0.0
+        reach_mask = (
+            s_iv[:, :, None] + cost_gpu[None, :, :] + t_jv[:, None, :]
+        ) <= T_tour_ub
+        full_mask = full_mask & reach_mask
+
     v_indices, i_indices, j_indices = cp.where(full_mask)
     valid_arcs = cp.stack([i_indices, j_indices, v_indices], axis=1)
-    return cp.asnumpy(valid_arcs).astype(np.int32)
+    return cp.asnumpy(valid_arcs).astype(np.int32), cost_gpu
 
 
 # ─── MIP model builder ─────────────────────────────────────────────────────
@@ -140,19 +159,104 @@ def build_vrp_mip(
         )
         T_lb = max(T_lb, cheapest_rt)
 
+    T_ws = float("inf")
+    C_ws = float("inf")
     T_ub = float("inf")
     if warm_start_routes:
         per_v = _per_vehicle_costs(warm_start_routes, cp.asarray(cost), depots)
-        T_ub = max(per_v) if per_v else float("inf")
-        logger.info("[MIP] Warm-start makespan upper bound: %.2f", T_ub)
+        if per_v:
+            T_ws = max(per_v)
+            C_ws = sum(per_v)
+            T_ub = T_ws
+        logger.info("[MIP] Warm-start makespan: %.2f, total cost: %.2f",
+                    T_ws, C_ws)
 
-    logger.info("[MIP] T bounds: [%.2f, %s]",
-                T_lb, f"{T_ub:.2f}" if T_ub < float("inf") else "inf")
+    # Objective normalisation.
+    T_norm = T_lb if T_lb > 0 else 1.0
+    C_norm = K * T_lb if T_lb > 0 else 1.0
+
+    # α-aware per-tour cost upper bound for the Desrochers & Laporte (1991) Prop. 6
+    # reachability filter and the triple-based coefficient lift. Derived from
+    # f* ≤ f_ws (warm-start is feasible) plus t_v* ≤ T* and t_v* ≤ C*:
+    #   α = 1  → T_tour_ub = T_ws  (makespan-only).
+    #   α = 0  → T_tour_ub = C_ws  (total-cost: any single tour ≤ total).
+    #   mixed  → α·T*/T_norm ≤ f_ws gives T* ≤ T_ws + ((1−α)/α)·C_ws·(T_norm/C_norm),
+    #            capped by C_ws (the total-cost bound still applies).
+    # Keeping T_norm/C_norm explicit so changing the
+    # normalisation does not silently invalidate the bound.
+    if T_ws == float("inf"):
+        T_tour_ub = float("inf")
+    elif alpha >= 1.0:
+        T_tour_ub = T_ws
+    elif alpha <= 0.0:
+        T_tour_ub = C_ws
+    else:
+        T_from_T = T_ws + ((1.0 - alpha) / alpha) * C_ws * (T_norm / C_norm)
+        T_tour_ub = min(T_from_T, C_ws)
+
+    logger.info("[MIP] T bounds: [%.2f, %s]; per-tour UB: %s",
+                T_lb,
+                f"{T_ub:.2f}" if T_ub < float("inf") else "inf",
+                f"{T_tour_ub:.2f}" if T_tour_ub < float("inf") else "inf")
 
     # ── GPU-vectorized arc validity ──────────────────────────────────
-    valid_arcs = _compute_valid_arcs(n, K, depots, depot_set, cost, alpha, T_ub)
+    valid_arcs, cost_gpu = _compute_valid_arcs(
+        n, K, depots, depot_set, cost, T_tour_ub
+    )
     logger.info("[MIP] Valid arcs: %d (of %d possible)",
                 len(valid_arcs), n * (n - 1) * K)
+
+    # ── K_inf: jointly infeasible (predecessor, arc) pairs ──────────────
+    # For each surviving arc (i, j, v), K_inf[(i,j,v)] lists customers k with
+    # (k, i, v) also surviving and c[d_v, k] + c[k, i] + c[i, j] + c[j, d_v] > T_tour_ub.
+    # Under triangle inequality (holds here since costs are shortest paths on the
+    # voxel graph), any tour using both (k, i, v) and (i, j, v) has cost at least
+    # c[d_v, k] + c[k, i] + c[i, j] + c[j, d_v]; if that exceeds T_tour_ub the pair
+    # cannot coexist, giving the forbidden-pair cut x[k,i,v] + x[i,j,v] ≤ 1 added
+    # below. (The DL1991 Eq. 22 coefficient lift encodes the same information but
+    # requires CVRP's cumulative-load u_i semantics; adapting it to position-based
+    # MTZ without a per-vehicle rank variable cuts off feasible solutions — see the
+    # comment next to the MTZ loop — so we add the cuts as separate constraints.)
+    K_inf_map: Dict[Tuple[int, int, int], List[int]] = {}
+    if T_tour_ub < float("inf") and n_c >= 3:
+        valid_arc_set = {(int(r[0]), int(r[1]), int(r[2])) for r in valid_arcs}
+        # Group surviving arcs by (j, v) to look up predecessors quickly.
+        arcs_by_v: Dict[int, List[Tuple[int, int]]] = {v: [] for v in range(K)}
+        preds_by_iv: Dict[Tuple[int, int], set[int]] = {}
+        for (i, j, v) in valid_arc_set:
+            arcs_by_v[v].append((i, j))
+            preds_by_iv.setdefault((j, v), set()).add(i)
+        for v in range(K):
+            if not arcs_by_v[v]:
+                continue
+            dv = depots[v]
+            s_v = cost_gpu[dv, :]                          # (n,)
+            t_v = cost_gpu[:, dv]                          # (n,)
+            # tour_cost[k, i, j] = s_v[k] + cost[k,i] + cost[i,j] + t_v[j].
+            # Depot-collapse not applied to k because k ranges over customers only.
+            tour_cost = (
+                s_v[:, None, None]
+                + cost_gpu[:, :, None]
+                + cost_gpu[None, :, :]
+                + t_v[None, None, :]
+            )
+            infeasible = cp.asnumpy(tour_cost > T_tour_ub)   # (n, n, n) bool
+            del tour_cost
+            for (i, j) in arcs_by_v[v]:
+                if i in depot_set or j in depot_set:
+                    continue
+                preds = preds_by_iv.get((i, v), ())
+                ks: List[int] = []
+                for k in preds:
+                    if k in depot_set or k == i or k == j:
+                        continue
+                    if bool(infeasible[k, i, j]):
+                        ks.append(int(k))
+                if ks:
+                    K_inf_map[(i, j, v)] = ks
+    n_pair_cuts = sum(len(v) for v in K_inf_map.values())
+    logger.info("[MIP] K_inf triples: %d arcs, %d forbidden-pair cuts",
+                len(K_inf_map), n_pair_cuts)
 
     # ── Model ────────────────────────────────────────────────────────
     prob = pulp.LpProblem("MinMaxVRP", pulp.LpMinimize)
@@ -168,6 +272,31 @@ def build_vrp_mip(
                                 cat=pulp.LpContinuous)
 
     T = pulp.LpVariable("T", lowBound=T_lb, cat=pulp.LpContinuous)
+
+    # Lifted u_i upper bound (DL1991 Eq. 11 adapted to multi-depot VRP).
+    # If customer i is visited directly from some depot (i.e. i is first on that
+    # vehicle's tour), it must sit at position 1 of that tour. The sum over v
+    # is at most 1 in any integer feasible solution (visit constraint), so the
+    # lift is valid and strictly tightens the LP relaxation.
+    #
+    # NOTE: The symmetric lifted LOWER bound from DL1991 (u_i >= n_c when i ends
+    # some tour) is *not* applied here. DL1991's LB assumes a single TSP tour of
+    # length n_c, but in our multi-depot VRP tour lengths L_v are variable — a
+    # customer ending a short tour has u_i = L_v << n_c, so forcing u_i >= n_c
+    # cuts off feasible integer solutions (e.g. a singleton tour has u_i = 1).
+    # Generalising the LB would require per-vehicle rank variables u[i, v] plus
+    # an explicit L_v expression, which is out of scope.
+    if n_c >= 2:
+        for i in customers:
+            leaves_depot_to_i = pulp.lpSum(
+                x[depots[v], i, v]
+                for v in range(K)
+                if (depots[v], i, v) in x
+            )
+            prob += (
+                u[i] <= n_c - (n_c - 1) * leaves_depot_to_i,
+                f"u_ub_{i}",
+            )
     if T_ub < float("inf"):
         T.upBound = T_ub * 1.01
 
@@ -180,8 +309,6 @@ def build_vrp_mip(
     elif alpha <= 0.0:
         prob += total_cost_expr, "TotalCost"
     else:
-        T_norm = T_lb if T_lb > 0 else 1.0
-        C_norm = K * T_lb if T_lb > 0 else 1.0
         prob += (
             alpha * (T / T_norm)
             + (1 - alpha) * (total_cost_expr / C_norm),
@@ -236,6 +363,13 @@ def build_vrp_mip(
             f"makespan_{v}",
         )
 
+    # Lifted MTZ (DL1991 Eq. 8). DL1991's Eq. 22 coefficient lift
+    # (+ (n_c − 2) · x[k,i,v] on the MTZ LHS for k ∈ K_inf) is *not* applied
+    # here: it is derived for the CVRP cumulative-load u_i formulation and
+    # is unsound for position-based MTZ — when x[k,i,v] = 1 and x[i,j,v] = 0,
+    # the lifted MTZ forces u_i − u_j ≤ 1 even though j doesn't need to be the
+    # successor of i on v, cutting off feasible routes. The same joint
+    # infeasibility is captured soundly by the forbidden-pair cuts below.
     for i in customers:
         for j in customers:
             if i == j:
@@ -249,6 +383,19 @@ def build_vrp_mip(
                 if bwd is not None:
                     terms += (n_c - 2) * bwd
                 prob += (terms <= n_c - 1, f"mtz_{i}_{j}_{v}")
+
+    # Forbidden-pair cuts from K_inf (DL1991 Prop. 6 extended to 3-arc paths).
+    # If c[d_v, k] + c[k, i] + c[i, j] + c[j, d_v] > T_tour_ub then no feasible
+    # tour on v uses both (k, i) and (i, j), giving x[k,i,v] + x[i,j,v] ≤ 1.
+    for (i, j, v), ks in K_inf_map.items():
+        x_ij = x.get((i, j, v))
+        if x_ij is None:
+            continue
+        for k in ks:
+            x_ki = x.get((k, i, v))
+            if x_ki is None:
+                continue
+            prob += (x_ki + x_ij <= 1, f"pair_{k}_{i}_{j}_{v}")
 
 
     n_vars = len(x) + len(u) + 1
@@ -292,10 +439,17 @@ def _build_warm_start(
             if key in x:
                 vals[x[key].name] = 1.0
 
+    # Restart the rank counter at the beginning of each vehicle's tour. The new
+    # lifted upper bound u_i <= n_c - (n_c - 1) * Σ_v x[d_v, i, v] pins the
+    # first customer of every tour to u = 1; a global running counter would set
+    # vehicle v>0's first customer to u = 1 + L_0 + ... + L_{v-1} > 1, violating
+    # the bound. MTZ is satisfied per vehicle because the counter still
+    # increments monotonically inside each tour, and cross-vehicle MTZ
+    # constraints are inactive (no arcs between customers of different vehicles).
     customer_set = set(customers)
-    order_counter = 1
     for v, route in enumerate(routes):
-        for pos, node in enumerate(route):
+        order_counter = 1
+        for node in route:
             if node in customer_set and node in u:
                 vals[u[node].name] = float(order_counter)
                 order_counter += 1

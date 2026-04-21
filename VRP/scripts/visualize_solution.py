@@ -3,7 +3,7 @@
 VRP Planner – Isaac Sim Visualization Entry Point
 ==================================================
 
-Loads a pre-planned :class:`~route_executor.ExecutionResult` from a pickle
+Loads a pre-planned :class:`~mapf_planner.ExecutionResult` from a pickle
 file and replays it inside Isaac Sim.  This script is intended to be run in
 the **Isaac Sim conda environment** where cuOpt and cuGraph are
 *not* required.

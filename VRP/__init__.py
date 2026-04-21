@@ -23,7 +23,7 @@ from VRP.core.vrp_orchestrator import VRPFeedbackOrchestrator
 from VRP.vrp.vrp_solver import solve_vrp
 
 # Routing
-from VRP.mapf.route_executor import MultiAgentPathPlanner
+from VRP.mapf.mapf_planner import MultiAgentPathPlanner
 
 # Helpers
 from VRP.core.serialization import save_solution, load_solution
