@@ -184,14 +184,15 @@ E16_NEAR_FAR_PAIRS = [(0.1, 5.0), (0.2, 10.0), (0.5, 15.0)]  # (near_m, far_m)
 _E00_BASE_N = 500           # TOSCA candidate budget; scales as _E00_BASE_N * k_coverage
 
 # Section 1 — Targeted sampler
-E00_T_K_VALUES   = [1, 2, 3, 4]
+E00_T_K_VALUES   = [1, 2, 3, 4, 6, 8]
 E00_T_FRACTIONS  = [12, 25, 50, 75, 100]    # % of budget from targeted phase
 E00_T_SPI_VALUES = [1, 5, 25, None]     # samples_per_iteration; None = all-at-once baseline
 
 # Section 2 — CMA-ES sampler
-E00_C_K_VALUES       = [1, 2, 3, 4]
+E00_C_K_VALUES       = [1, 2, 3, 4, 6, 8]
 E00_C_FRACTIONS      = [25, 50, 75, 100]
-E00_C_TRAVEL_WEIGHTS = [0.0, 0.05, 0.1, 0.3, 0.5]
+E00_C_TRAVEL_WEIGHTS_TOSCA = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
+E00_C_TRAVEL_WEIGHTS_DUKE  = [0.01, 0.02, 0.03, 0.06, 0.1]
 E00_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]   # population size per CMA-ES generation (default 15)
 E00_C_MAXITER_VALUES = [5, 10, 20, 40]        # max generations per optimisation round (default 20)
 

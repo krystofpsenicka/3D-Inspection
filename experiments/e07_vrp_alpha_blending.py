@@ -50,7 +50,7 @@ from VRP.core.constants import (
 logger = logging.getLogger(__name__)
 
 N_WAYPOINTS = 50
-N_ROBOTS = 3
+N_ROBOTS = 5
 
 
 def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,

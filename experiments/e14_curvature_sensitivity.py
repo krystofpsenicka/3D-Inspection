@@ -44,13 +44,13 @@ from experiments.common.plotting import (
 )
 
 from shared.types import Side
-from visibility.set_cover import LazyGreedySetCoverCuda
+from visibility.set_cover import LazyGreedySetCover
 
 logger = logging.getLogger(__name__)
 
 KNN_K_VALUES = [5, 10, 20, 40, 80]
 POSITION_WEIGHTS = [1.0, 2.5, 5.0, 10.0]
-N_CANDIDATES = 1500
+N_CANDIDATES = 2000
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -84,7 +84,7 @@ def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
 
     # Set cover
     with timed() as t_opt:
-        optimizer = LazyGreedySetCoverCuda(
+        optimizer = LazyGreedySetCover(
             len(target_points), pos_gpu, rot_gpu, V,
         )
         opt_result = optimizer.optimize(

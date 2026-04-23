@@ -238,6 +238,13 @@ def plan_robot_route_st(
 
     reservation.commit_trajectory(all_ijk, all_t)
 
+    # Reserve final position for all remaining time steps
+    last_t = int(all_t[-1])
+    if last_t + 1 < reservation.T:
+        tail_steps = cp.arange(last_t + 1, reservation.T, dtype=cp.intp)
+        tail_ijk = cp.tile(all_ijk[-1:], (len(tail_steps), 1))
+        reservation.commit_trajectory(tail_ijk, tail_steps)
+
     world_xyz = cp.concatenate(world_positions, axis=0)
 
     if len(world_xyz) >= 2:

@@ -1,29 +1,43 @@
 #!/usr/bin/env python3
 """E00: Iterative Sampler Parameter Sweep
 
+Runs on two model groups: 3 TOSCA models (wolf0, cat0, david0) and the larger
+Duke of Lancaster model. Candidate budget scales per model via
+`cfg.num_candidates × k_coverage` (TOSCA → 500·k, Duke → 1500·k) and the
+set-cover cap is 1000 for TOSCA, 2000 for Duke.
+
 Section 1 — Targeted sampler:
-  Sub-A: k_coverage × fraction sweep (spi=1, proper iterative mode)
-         3 k × 4 fractions × 3 TOSCA models × 3 seeds = 108 runs; N = 500·k
-  Sub-B: samples_per_iteration sweep (k=2, fraction=100 fixed)
-         4 spi values × 3 models × 3 seeds = 36 runs; N = 1000
+  Sub-B only: samples_per_iteration sweep at k=4, fraction=100%.
+  The goal is to confirm the targeted sampler does not improve over
+  weighted_curvature; a full k × fraction sweep is not needed.
+  spi=None is the pre-fix baseline: all n_iter candidates sampled in one shot
+  from the frozen initial uncovered set (no coverage updates).
 
-  spi=None (in sub-B) is the pre-fix baseline: all n_iter candidates sampled
-  in one shot from the frozen initial uncovered set, no coverage updates.
-
-Section 2 — CMA-ES sampler:
-  Sub-A: k_coverage × fraction sweep (travel_weight=0.1 fixed)
-         3 k × 4 fractions × 3 TOSCA models × 3 seeds = 108 runs; N = 500·k
-  Sub-B: travel_weight sweep (k=2, fraction=100 fixed)
-         5 weights × 3 models × 3 seeds = 45 runs; N = 1000
-  Sub-C: popsize × maxiter heatmap (k=2, frac=100%, travel_weight=0.1 fixed)
-         5 pop × 4 maxiter × 3 models × 3 seeds = 180 runs; N = 1000
+Section 2 — CMA-ES sampler (travel_weight is per-model-group):
+  Sub-B: joint k × travel_weight sweep at fraction=100% — 2-D heatmap,
+         because k and travel_weight interact meaningfully.
+         TOSCA tw list: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3];
+         Duke tw list:  [0.01, 0.02, 0.03, 0.06, 0.1].
+  Sub-C: popsize × maxiter heatmap at k=4, fraction=100%, tw fixed per group
+         (TOSCA tw=0.1, Duke tw=0.0).
 
 Set-cover: LazyGreedySetCover (CPU) — fastest per e04 results.
 
 Usage:
+    # Default: run TOSCA + Duke
     conda run -n isaaclab python -m experiments.e00_iterative_sampler_params
+
+    # TOSCA only / Duke only
+    conda run -n isaaclab python -m experiments.e00_iterative_sampler_params --model_group tosca
+    conda run -n isaaclab python -m experiments.e00_iterative_sampler_params --model_group duke
+
+    # Restrict to one sampler section
     conda run -n isaaclab python -m experiments.e00_iterative_sampler_params --section 1
-    conda run -n isaaclab python -m experiments.e00_iterative_sampler_params --section 2
+
+    # Explicit model subset (overrides --model_group)
+    conda run -n isaaclab python -m experiments.e00_iterative_sampler_params --models wolf0 duke_of_lancaster
+
+    # Regenerate plots from saved results
     conda run -n isaaclab python -m experiments.e00_iterative_sampler_params --plots_only
 """
 
@@ -47,9 +61,9 @@ if _PROJECT_ROOT not in sys.path:
 from experiments.common.config import (
     ModelConfig, SEEDS_3,
     TOSCA_REPRESENTATIVE, RESULTS_DIR,
-    _E00_BASE_N,
-    E00_T_K_VALUES, E00_T_FRACTIONS, E00_T_SPI_VALUES,
-    E00_C_K_VALUES, E00_C_FRACTIONS, E00_C_TRAVEL_WEIGHTS,
+    E00_T_SPI_VALUES,
+    E00_C_K_VALUES,
+    E00_C_TRAVEL_WEIGHTS_TOSCA, E00_C_TRAVEL_WEIGHTS_DUKE,
     E00_C_POPSIZE_VALUES, E00_C_MAXITER_VALUES,
 )
 from visibility.core.constants import OPT_SAMPLER_POPSIZE, OPT_SAMPLER_MAXITER
@@ -58,34 +72,64 @@ from experiments.common.pipeline_setup import PipelineContext, DegenerateNormals
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, heatmap_annotated,
-    THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    DOUBLE_COL, CATEGORICAL_COLORS,
 )
 from shared.types import Side
 from visibility.set_cover import LazyGreedySetCover
 
 logger = logging.getLogger(__name__)
 
-# Fixed sub-B / sub-C parameters
-_S1B_K = 2
+# Fixed sub-section parameters
+_S1B_K = 4
 _S1B_FRACTION = 100
-_S2B_K = 2
 _S2B_FRACTION = 100
-_S2C_K = 2
+_S2C_K = 4
 _S2C_FRACTION = 100
-_S2C_TRAVEL_WEIGHT = 0.1
+_S2C_TRAVEL_WEIGHT_TOSCA = 0.1
+_S2C_TRAVEL_WEIGHT_DUKE  = 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Shared helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _run_set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage):
+def _max_viewpoints_for(model) -> int:
+    """Set-cover cap: 2000 for the larger Duke model, 1000 for TOSCA."""
+    return 2000 if model.name == "duke_of_lancaster" else 1000
+
+
+def _is_duke(model) -> bool:
+    return model.name == "duke_of_lancaster"
+
+
+def _s2c_travel_weight_for(model) -> float:
+    return _S2C_TRAVEL_WEIGHT_DUKE if _is_duke(model) else _S2C_TRAVEL_WEIGHT_TOSCA
+
+
+def _s2b_travel_weights_for(model) -> list:
+    return E00_C_TRAVEL_WEIGHTS_DUKE if _is_duke(model) else E00_C_TRAVEL_WEIGHTS_TOSCA
+
+
+def _make_cfg(name: str):
+    """Resolve a model name to a ModelConfig. Returns None if not found."""
+    if name == "duke_of_lancaster":
+        return ModelConfig.duke_of_lancaster()
+    try:
+        return ModelConfig.tosca(name)
+    except FileNotFoundError:
+        logger.warning("Model not found: %s", name)
+        return None
+
+
+def _run_set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage,
+                   max_viewpoints=1000):
     """Run LazyGreedySetCover (CPU). Returns (opt_result, V_np)."""
     V_np = cp.asnumpy(V)
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)
     optimizer = LazyGreedySetCover(len(target_points), pos_np, rot_np, V_np)
-    return optimizer.optimize(target_coverage=target_coverage, max_viewpoints=1000), V_np
+    return optimizer.optimize(target_coverage=target_coverage,
+                              max_viewpoints=max_viewpoints), V_np
 
 
 def _base_phase(sampler, vis_query, target_points, n_base):
@@ -126,8 +170,9 @@ def run_single_targeted(ctx: PipelineContext, k_coverage: int, fraction: int,
     vis_query = ctx.build_visibility_query("raycast")
     sampler = ctx.build_sampler("targeted")
     model = ctx.model
+    max_vps = _max_viewpoints_for(model)
 
-    N = _E00_BASE_N * k_coverage
+    N = model.num_candidates * k_coverage
     n_iter = int(N * fraction / 100)
     n_base = N - n_iter
 
@@ -170,7 +215,8 @@ def run_single_targeted(ctx: PipelineContext, k_coverage: int, fraction: int,
     pool_redundancy = float(V_np.sum() / len(target_points))
 
     with timed() as t_opt:
-        opt_result, _ = _run_set_cover(target_points, pos, rot, V, target_coverage)
+        opt_result, _ = _run_set_cover(target_points, pos, rot, V, target_coverage,
+                                       max_viewpoints=max_vps)
 
     return {
         "section": section_tag,
@@ -179,6 +225,8 @@ def run_single_targeted(ctx: PipelineContext, k_coverage: int, fraction: int,
         "fraction": fraction,
         "spi": spi,
         "seed": seed,
+        "base_n": model.num_candidates,
+        "max_viewpoints": max_vps,
         "n_base": n_base,
         "n_iter_requested": n_iter,
         "n_iter_actual": int(len(t_pos)),
@@ -212,8 +260,9 @@ def run_single_cmaes(ctx: PipelineContext, k_coverage: int, fraction: int,
     sampler = ctx.build_sampler("targeted")   # random_sampler for warm-start
     og = ctx.build_sampling_og()
     model = ctx.model
+    max_vps = _max_viewpoints_for(model)
 
-    N = _E00_BASE_N * k_coverage
+    N = model.num_candidates * k_coverage
     n_iter = int(N * fraction / 100)
     n_base = N - n_iter
 
@@ -257,7 +306,8 @@ def run_single_cmaes(ctx: PipelineContext, k_coverage: int, fraction: int,
     pool_redundancy = float(V_np.sum() / len(target_points))
 
     with timed() as t_opt:
-        opt_result, _ = _run_set_cover(target_points, pos, rot, V, target_coverage)
+        opt_result, _ = _run_set_cover(target_points, pos, rot, V, target_coverage,
+                                       max_viewpoints=max_vps)
 
     return {
         "section": section_tag,
@@ -268,6 +318,8 @@ def run_single_cmaes(ctx: PipelineContext, k_coverage: int, fraction: int,
         "popsize": popsize,
         "maxiter": maxiter,
         "seed": seed,
+        "base_n": model.num_candidates,
+        "max_viewpoints": max_vps,
         "n_base": n_base,
         "n_iter_requested": n_iter,
         "n_iter_actual": int(len(opt_pos)),
@@ -305,18 +357,6 @@ def _std(results, metric, **filters):
     return float(np.std(vals)) if len(vals) > 1 else 0.0
 
 
-def _heatmap_kfrac(ax, results, k_values, fractions, metric, fmt, title, mult=1.0):
-    """Annotated heatmap with rows=k_coverage, cols=fraction."""
-    vals = np.zeros((len(k_values), len(fractions)))
-    for i, k in enumerate(k_values):
-        for j, frac in enumerate(fractions):
-            vals[i, j] = _mean(results, metric, k_coverage=k, fraction=frac) * mult
-    row_labels = [f"k={k}" for k in k_values]
-    col_labels = [f"{f}%" for f in fractions]
-    heatmap_annotated(ax, row_labels, col_labels, vals, fmt=fmt, title=title,
-                      xlabel="Fraction from iterative phase", ylabel="k-coverage")
-
-
 def _heatmap_2d(ax, results, row_key, row_vals, col_key, col_vals,
                 metric, fmt, title, mult=1.0, xlabel="", ylabel=""):
     """General annotated heatmap for any two parameter axes."""
@@ -333,35 +373,10 @@ def _heatmap_2d(ax, results, row_key, row_vals, col_key, col_vals,
 # ═══════════════════════════════════════════════════════════════════════════
 
 def generate_plots_section1(results: list[dict],
-                            k_values: list[int], fractions: list[int],
-                            spi_values: list, fig_dir: str) -> None:
-    """Generate all Section 1 figures."""
-    r1A = [r for r in results if r.get("section") == "1A"]
+                            spi_values: list, fig_dir: str,
+                            group_tag: str, group_label: str) -> None:
+    """Generate all Section 1 figures for one model group."""
     r1B = [r for r in results if r.get("section") == "1B"]
-
-    # ── Sub-A: k × fraction heatmaps ────────────────────────────────────
-    if r1A:
-        fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL * 1.4, 3.5))
-
-        _heatmap_kfrac(axes[0], r1A, k_values, fractions,
-                       "coverage", ".2f", "Coverage (target=95%)", mult=100)
-        _heatmap_kfrac(axes[1], r1A, k_values, fractions,
-                       "num_viewpoints", ".0f", "Selected viewpoints")
-        _heatmap_kfrac(axes[2], r1A, k_values, fractions,
-                       "early_stop_ratio", ".2f", "Early-stop ratio\n(actual/requested)")
-
-        fig.suptitle("Section 1A — Targeted: k × fraction (spi=1, TOSCA avg)")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, "e00_s1A_heatmaps"))
-
-        # Timing heatmap (separate)
-        fig, ax = plt.subplots(figsize=(THESIS_COL, 3.0))
-        _heatmap_kfrac(ax, r1A, k_values, fractions,
-                       "sampling_time", ".1f", "Sampling time (s)")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, "e00_s1A_timing"))
-
-        logger.info("Section 1A figures saved.")
 
     # ── Sub-B: spi bar charts ────────────────────────────────────────────
     if r1B:
@@ -382,10 +397,12 @@ def generate_plots_section1(results: list[dict],
             ax.set_title(ylabel)
             ax.tick_params(axis="x", rotation=20)
         axes[0].axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
-        fig.suptitle("Section 1B — Targeted: spi sweep (k=2, frac=100%, TOSCA avg)")
+        s1b_k = r1B[0]["k_coverage"]
+        fig.suptitle(
+            f"Section 1B — Targeted: spi sweep (k={s1b_k}, frac=100%, {group_label})")
         fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, "e00_s1B_spi_sweep"))
-        logger.info("Section 1B figures saved.")
+        save_figure(fig, os.path.join(fig_dir, f"e00_{group_tag}_s1B_spi_sweep"))
+        logger.info("Section 1B figures saved (%s).", group_tag)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -393,60 +410,37 @@ def generate_plots_section1(results: list[dict],
 # ═══════════════════════════════════════════════════════════════════════════
 
 def generate_plots_section2(results: list[dict],
-                            k_values: list[int], fractions: list[int],
-                            travel_weights: list[float],
+                            k_values: list[int],
                             popsize_values: list[int], maxiter_values: list[int],
-                            fig_dir: str) -> None:
-    """Generate all Section 2 figures."""
-    r2A = [r for r in results if r.get("section") == "2A"]
+                            fig_dir: str,
+                            group_tag: str, group_label: str) -> None:
+    """Generate all Section 2 figures for one model group.
+
+    Sub-2B is a joint k × travel_weight heatmap; the travel-weight axis is
+    derived from the data so the plot works regardless of which per-group
+    list was swept.
+    """
     r2B = [r for r in results if r.get("section") == "2B"]
     r2C = [r for r in results if r.get("section") == "2C"]
 
-    # ── Sub-A: k × fraction heatmaps ────────────────────────────────────
-    if r2A:
-        fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL * 1.4, 3.5))
-
-        _heatmap_kfrac(axes[0], r2A, k_values, fractions,
-                       "coverage", ".2f", "Coverage (target=95%)", mult=100)
-        _heatmap_kfrac(axes[1], r2A, k_values, fractions,
-                       "num_viewpoints", ".0f", "Selected viewpoints")
-        _heatmap_kfrac(axes[2], r2A, k_values, fractions,
-                       "early_stop_ratio", ".2f", "Early-stop ratio\n(actual/requested)")
-
-        fig.suptitle("Section 2A — CMA-ES: k × fraction (tw=0.1, TOSCA avg)")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, "e00_s2A_heatmaps"))
-
-        fig, ax = plt.subplots(figsize=(THESIS_COL, 3.0))
-        _heatmap_kfrac(ax, r2A, k_values, fractions,
-                       "sampling_time", ".1f", "Sampling time (s)")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, "e00_s2A_timing"))
-
-        logger.info("Section 2A figures saved.")
-
-    # ── Sub-B: travel_weight bar charts ──────────────────────────────────
+    # ── Sub-B: joint k × travel_weight heatmap (fraction=100%) ──────────
     if r2B:
-        tw_labels = [str(tw) for tw in travel_weights]
-        metrics = [
-            ("coverage",      100.0, "Coverage (%)",        ".1f"),
-            ("num_viewpoints", 1.0,  "Selected viewpoints", ".0f"),
-            ("sampling_time",  1.0,  "Sampling time (s)",   ".1f"),
-        ]
-        fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL * 1.2, 3.5))
-        for ax, (metric, mult, ylabel, _) in zip(axes, metrics):
-            means = [_mean(r2B, metric, travel_weight=tw) * mult for tw in travel_weights]
-            stds  = [_std(r2B,  metric, travel_weight=tw) * mult for tw in travel_weights]
-            ax.bar(tw_labels, means, yerr=stds, color=CATEGORICAL_COLORS[3],
-                   capsize=3, alpha=0.85)
-            ax.set_ylabel(ylabel)
-            ax.set_title(ylabel)
-            ax.set_xlabel("travel_weight")
-        axes[0].axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
-        fig.suptitle("Section 2B — CMA-ES: travel_weight sweep (k=2, frac=100%, TOSCA avg)")
+        tws = sorted(set(r["travel_weight"] for r in r2B))
+        fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL * 1.4, 3.5))
+        _heatmap_2d(axes[0], r2B, "k_coverage", k_values, "travel_weight", tws,
+                    "coverage", ".1f", "Coverage (%)", mult=100,
+                    xlabel="travel_weight", ylabel="k-coverage")
+        _heatmap_2d(axes[1], r2B, "k_coverage", k_values, "travel_weight", tws,
+                    "num_viewpoints", ".0f", "Selected viewpoints",
+                    xlabel="travel_weight", ylabel="k-coverage")
+        _heatmap_2d(axes[2], r2B, "k_coverage", k_values, "travel_weight", tws,
+                    "sampling_time", ".1f", "Sampling time (s)",
+                    xlabel="travel_weight", ylabel="k-coverage")
+        fig.suptitle(
+            f"Section 2B — CMA-ES: k × travel_weight (frac=100%, {group_label})")
         fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, "e00_s2B_tw_sweep"))
-        logger.info("Section 2B figures saved.")
+        save_figure(fig, os.path.join(fig_dir, f"e00_{group_tag}_s2B_k_tw_heatmap"))
+        logger.info("Section 2B figures saved (%s).", group_tag)
 
     # ── Sub-C: popsize × maxiter heatmaps ────────────────────────────────
     if r2C:
@@ -460,12 +454,14 @@ def generate_plots_section2(results: list[dict],
         _heatmap_2d(axes[2], r2C, "popsize", popsize_values, "maxiter", maxiter_values,
                     "sampling_time", ".1f", "Sampling time (s)",
                     xlabel="maxiter", ylabel="popsize")
+        s2c_k = r2C[0]["k_coverage"]
+        s2c_tw = r2C[0]["travel_weight"]
         fig.suptitle(
-            "Section 2C — CMA-ES: popsize × maxiter "
-            "(k=2, frac=100%, tw=0.1, TOSCA avg)")
+            f"Section 2C — CMA-ES: popsize × maxiter "
+            f"(k={s2c_k}, frac=100%, tw={s2c_tw}, {group_label})")
         fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, "e00_s2C_popsize_maxiter"))
-        logger.info("Section 2C figures saved.")
+        save_figure(fig, os.path.join(fig_dir, f"e00_{group_tag}_s2C_popsize_maxiter"))
+        logger.info("Section 2C figures saved (%s).", group_tag)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -491,8 +487,11 @@ def main():
         description="E00: Iterative Sampler Parameter Sweep")
     p.add_argument("--section", choices=["1", "2", "both"], default="both",
                    help="Which sampler section to run (1=Targeted, 2=CMA-ES, default: both)")
-    p.add_argument("--models", nargs="+", default=TOSCA_REPRESENTATIVE,
-                   help="TOSCA models to test")
+    p.add_argument("--model_group", choices=["tosca", "duke", "both"], default="both",
+                   help="Which model family to run. Ignored if --models is given.")
+    p.add_argument("--models", nargs="+", default=None,
+                   help="Explicit model list (TOSCA names and/or 'duke_of_lancaster'). "
+                        "Overrides --model_group when set.")
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--target_coverage", type=float, default=0.95)
     p.add_argument("--output_dir",
@@ -501,6 +500,14 @@ def main():
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
+
+    if args.models is None:
+        if args.model_group == "tosca":
+            args.models = list(TOSCA_REPRESENTATIVE)
+        elif args.model_group == "duke":
+            args.models = ["duke_of_lancaster"]
+        else:  # "both"
+            args.models = list(TOSCA_REPRESENTATIVE) + ["duke_of_lancaster"]
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -513,13 +520,6 @@ def main():
 
     run_s1 = args.section in ("1", "both")
     run_s2 = args.section in ("2", "both")
-
-    def _make_cfg(name: str):
-        try:
-            return ModelConfig.tosca(name)
-        except FileNotFoundError:
-            logger.warning("Model not found: %s", name)
-            return None
 
     if not args.plots_only:
         cfgs = [c for name in args.models if (c := _make_cfg(name)) is not None]
@@ -537,44 +537,6 @@ def main():
                 except DegenerateNormalsError as e:
                     logger.warning("Skipping %s: %s", cfg.name, e)
                     continue
-
-                # Sub-A: k × fraction (spi=1 fixed)
-                combos_1A = [
-                    (k, frac, seed)
-                    for k in E00_T_K_VALUES
-                    for frac in E00_T_FRACTIONS
-                    for seed in args.seeds
-                ]
-                logger.info("  Sub-A: %d combos (k × fraction, spi=1)", len(combos_1A))
-                for idx, (k, frac, seed) in enumerate(combos_1A, 1):
-                    rpath = os.path.join(
-                        raw_dir,
-                        f"1A_model={cfg.name}_k={k}_frac={frac}_seed={seed}")
-                    if args.skip_existing and os.path.exists(rpath + ".json"):
-                        logger.info("[1A %d/%d] SKIP %s k=%d frac=%d seed=%d",
-                                    idx, len(combos_1A), cfg.name, k, frac, seed)
-                        all_results.append(load_run_result(rpath))
-                        continue
-                    logger.info("[1A %d/%d] model=%s k=%d frac=%d%% spi=1 seed=%d",
-                                idx, len(combos_1A), cfg.name, k, frac, seed)
-                    try:
-                        result = run_single_targeted(
-                            ctx, k, frac, spi=1, seed=seed,
-                            section_tag="1A",
-                            target_coverage=args.target_coverage)
-                        result = _add_derived([result])[0]
-                        all_results.append(result)
-                        save_run_result(result, rpath)
-                        logger.info("  VPs=%d cov=%.1f%% iter=%d/%d t=%.1fs",
-                                    result["num_viewpoints"],
-                                    result["coverage"] * 100,
-                                    result["n_iter_actual"],
-                                    result["n_iter_requested"],
-                                    result["total_time"])
-                    except Exception as e:
-                        logger.error("  FAILED: %s", e, exc_info=True)
-                    finally:
-                        free_gpu_memory()
 
                 # Sub-B: spi sweep (k=_S1B_K, fraction=_S1B_FRACTION)
                 combos_1B = [
@@ -630,67 +592,32 @@ def main():
                     logger.warning("Skipping %s: %s", cfg.name, e)
                     continue
 
-                # Sub-A: k × fraction (travel_weight=0.1 fixed)
-                combos_2A = [
-                    (k, frac, seed)
-                    for k in E00_C_K_VALUES
-                    for frac in E00_C_FRACTIONS
-                    for seed in args.seeds
-                ]
-                logger.info("  Sub-A: %d combos (k × fraction, tw=0.1)", len(combos_2A))
-                for idx, (k, frac, seed) in enumerate(combos_2A, 1):
-                    rpath = os.path.join(
-                        raw_dir,
-                        f"2A_model={cfg.name}_k={k}_frac={frac}_seed={seed}")
-                    if args.skip_existing and os.path.exists(rpath + ".json"):
-                        logger.info("[2A %d/%d] SKIP %s k=%d frac=%d seed=%d",
-                                    idx, len(combos_2A), cfg.name, k, frac, seed)
-                        all_results.append(load_run_result(rpath))
-                        continue
-                    logger.info("[2A %d/%d] model=%s k=%d frac=%d%% tw=0.1 seed=%d",
-                                idx, len(combos_2A), cfg.name, k, frac, seed)
-                    try:
-                        result = run_single_cmaes(
-                            ctx, k, frac, travel_weight=0.1, seed=seed,
-                            section_tag="2A",
-                            target_coverage=args.target_coverage)
-                        result = _add_derived([result])[0]
-                        all_results.append(result)
-                        save_run_result(result, rpath)
-                        logger.info("  VPs=%d cov=%.1f%% iter=%d/%d t=%.1fs",
-                                    result["num_viewpoints"],
-                                    result["coverage"] * 100,
-                                    result["n_iter_actual"],
-                                    result["n_iter_requested"],
-                                    result["total_time"])
-                    except Exception as e:
-                        logger.error("  FAILED: %s", e, exc_info=True)
-                    finally:
-                        free_gpu_memory()
-
-                # Sub-B: travel_weight sweep (k=_S2B_K, fraction=_S2B_FRACTION)
+                # Sub-B: joint k × travel_weight sweep at fraction=_S2B_FRACTION
+                s2b_tws = _s2b_travel_weights_for(cfg)
                 combos_2B = [
-                    (tw, seed)
-                    for tw in E00_C_TRAVEL_WEIGHTS
+                    (k, tw, seed)
+                    for k in E00_C_K_VALUES
+                    for tw in s2b_tws
                     for seed in args.seeds
                 ]
-                logger.info("  Sub-B: %d combos (travel_weight sweep, k=%d frac=%d%%)",
-                            len(combos_2B), _S2B_K, _S2B_FRACTION)
-                for idx, (tw, seed) in enumerate(combos_2B, 1):
+                logger.info(
+                    "  Sub-B: %d combos (k × travel_weight, k=%s, tw=%s, frac=%d%%)",
+                    len(combos_2B), E00_C_K_VALUES, s2b_tws, _S2B_FRACTION)
+                for idx, (k, tw, seed) in enumerate(combos_2B, 1):
                     rpath = os.path.join(
                         raw_dir,
-                        f"2B_model={cfg.name}_tw={tw}_seed={seed}")
+                        f"2B_model={cfg.name}_k={k}_tw={tw}_seed={seed}")
                     if args.skip_existing and os.path.exists(rpath + ".json"):
-                        logger.info("[2B %d/%d] SKIP %s tw=%s seed=%d",
-                                    idx, len(combos_2B), cfg.name, tw, seed)
+                        logger.info("[2B %d/%d] SKIP %s k=%d tw=%s seed=%d",
+                                    idx, len(combos_2B), cfg.name, k, tw, seed)
                         all_results.append(load_run_result(rpath))
                         continue
                     logger.info("[2B %d/%d] model=%s k=%d frac=%d%% tw=%s seed=%d",
                                 idx, len(combos_2B), cfg.name,
-                                _S2B_K, _S2B_FRACTION, tw, seed)
+                                k, _S2B_FRACTION, tw, seed)
                     try:
                         result = run_single_cmaes(
-                            ctx, _S2B_K, _S2B_FRACTION, travel_weight=tw, seed=seed,
+                            ctx, k, _S2B_FRACTION, travel_weight=tw, seed=seed,
                             section_tag="2B",
                             target_coverage=args.target_coverage)
                         result = _add_derived([result])[0]
@@ -707,7 +634,9 @@ def main():
                     finally:
                         free_gpu_memory()
 
-                # Sub-C: popsize × maxiter (k=_S2C_K, fraction=_S2C_FRACTION, tw fixed)
+                # Sub-C: popsize × maxiter (k=_S2C_K, fraction=_S2C_FRACTION;
+                # tw fixed per model group)
+                s2c_tw = _s2c_travel_weight_for(cfg)
                 combos_2C = [
                     (pop, mi, seed)
                     for pop in E00_C_POPSIZE_VALUES
@@ -716,7 +645,7 @@ def main():
                 ]
                 logger.info(
                     "  Sub-C: %d combos (popsize × maxiter, k=%d frac=%d%% tw=%.2f)",
-                    len(combos_2C), _S2C_K, _S2C_FRACTION, _S2C_TRAVEL_WEIGHT)
+                    len(combos_2C), _S2C_K, _S2C_FRACTION, s2c_tw)
                 for idx, (pop, mi, seed) in enumerate(combos_2C, 1):
                     rpath = os.path.join(
                         raw_dir,
@@ -729,11 +658,11 @@ def main():
                     logger.info(
                         "[2C %d/%d] model=%s k=%d frac=%d%% tw=%.2f pop=%d mi=%d seed=%d",
                         idx, len(combos_2C), cfg.name,
-                        _S2C_K, _S2C_FRACTION, _S2C_TRAVEL_WEIGHT, pop, mi, seed)
+                        _S2C_K, _S2C_FRACTION, s2c_tw, pop, mi, seed)
                     try:
                         result = run_single_cmaes(
                             ctx, _S2C_K, _S2C_FRACTION,
-                            travel_weight=_S2C_TRAVEL_WEIGHT, seed=seed,
+                            travel_weight=s2c_tw, seed=seed,
                             section_tag="2C",
                             target_coverage=args.target_coverage,
                             popsize=pop, maxiter=mi)
@@ -764,67 +693,68 @@ def main():
         fig_dir = os.path.join(args.output_dir, "figures")
         os.makedirs(fig_dir, exist_ok=True)
 
-        if run_s1 or args.plots_only:
-            generate_plots_section1(
-                all_results, E00_T_K_VALUES, E00_T_FRACTIONS, E00_T_SPI_VALUES, fig_dir)
-        if run_s2 or args.plots_only:
-            generate_plots_section2(
-                all_results, E00_C_K_VALUES, E00_C_FRACTIONS, E00_C_TRAVEL_WEIGHTS,
-                E00_C_POPSIZE_VALUES, E00_C_MAXITER_VALUES, fig_dir)
+        tosca_names = set(TOSCA_REPRESENTATIVE)
+        groups = [
+            ("tosca", "TOSCA avg",
+             [r for r in all_results if r.get("model") in tosca_names]),
+            ("duke", "Duke",
+             [r for r in all_results if r.get("model") == "duke_of_lancaster"]),
+        ]
 
-        # ── Summary tables ────────────────────────────────────────────────
-        logger.info("\n%s\nE00 SECTION 1A SUMMARY (Targeted: k × fraction, spi=1)\n%s",
-                    "=" * 80, "=" * 80)
-        r1A = [r for r in all_results if r.get("section") == "1A"]
-        if r1A:
-            logger.info("%-8s %-8s %8s %10s %10s %8s",
-                        "k", "frac%", "VPs", "Coverage%", "Time(s)", "ESRatio")
-            logger.info("-" * 60)
-            for k in E00_T_K_VALUES:
-                for frac in E00_T_FRACTIONS:
-                    rows = [r for r in r1A if r["k_coverage"] == k and r["fraction"] == frac]
-                    if rows:
-                        logger.info("%-8d %-8d %8.0f %10.2f %10.1f %8.2f",
-                                    k, frac,
-                                    np.mean([r["num_viewpoints"] for r in rows]),
-                                    np.mean([r["coverage"] * 100 for r in rows]),
-                                    np.mean([r["total_time"] for r in rows]),
-                                    np.mean([r["early_stop_ratio"] for r in rows]))
+        for tag, label, group_results in groups:
+            if not group_results:
+                continue
 
-        logger.info("\n%s\nE00 SECTION 2A SUMMARY (CMA-ES: k × fraction, tw=0.1)\n%s",
-                    "=" * 80, "=" * 80)
-        r2A = [r for r in all_results if r.get("section") == "2A"]
-        if r2A:
-            logger.info("%-8s %-8s %8s %10s %10s %8s",
-                        "k", "frac%", "VPs", "Coverage%", "Time(s)", "ESRatio")
-            logger.info("-" * 60)
-            for k in E00_C_K_VALUES:
-                for frac in E00_C_FRACTIONS:
-                    rows = [r for r in r2A if r["k_coverage"] == k and r["fraction"] == frac]
-                    if rows:
-                        logger.info("%-8d %-8d %8.0f %10.2f %10.1f %8.2f",
-                                    k, frac,
-                                    np.mean([r["num_viewpoints"] for r in rows]),
-                                    np.mean([r["coverage"] * 100 for r in rows]),
-                                    np.mean([r["total_time"] for r in rows]),
-                                    np.mean([r["early_stop_ratio"] for r in rows]))
+            if run_s1 or args.plots_only:
+                generate_plots_section1(
+                    group_results, E00_T_SPI_VALUES, fig_dir,
+                    group_tag=tag, group_label=label)
+            if run_s2 or args.plots_only:
+                generate_plots_section2(
+                    group_results, E00_C_K_VALUES,
+                    E00_C_POPSIZE_VALUES, E00_C_MAXITER_VALUES, fig_dir,
+                    group_tag=tag, group_label=label)
 
-        logger.info("\n%s\nE00 SECTION 2C SUMMARY (CMA-ES: popsize × maxiter)\n%s",
-                    "=" * 80, "=" * 80)
-        r2C = [r for r in all_results if r.get("section") == "2C"]
-        if r2C:
-            logger.info("%-8s %-8s %8s %10s %10s",
-                        "pop", "mi", "VPs", "Coverage%", "Time(s)")
-            logger.info("-" * 50)
-            for pop in E00_C_POPSIZE_VALUES:
-                for mi in E00_C_MAXITER_VALUES:
-                    rows = [r for r in r2C if r["popsize"] == pop and r["maxiter"] == mi]
-                    if rows:
-                        logger.info("%-8d %-8d %8.0f %10.2f %10.1f",
-                                    pop, mi,
-                                    np.mean([r["num_viewpoints"] for r in rows]),
-                                    np.mean([r["coverage"] * 100 for r in rows]),
-                                    np.mean([r["total_time"] for r in rows]))
+            # ── Summary tables (per group) ────────────────────────────────
+            r2B = [r for r in group_results if r.get("section") == "2B"]
+            logger.info(
+                "\n%s\nE00 SECTION 2B SUMMARY — %s (CMA-ES: k × travel_weight, frac=100%%)\n%s",
+                "=" * 80, label, "=" * 80)
+            if r2B:
+                tws = sorted(set(r["travel_weight"] for r in r2B))
+                logger.info("%-4s %-6s %8s %10s %10s",
+                            "k", "tw", "VPs", "Coverage%", "Time(s)")
+                logger.info("-" * 50)
+                for k in E00_C_K_VALUES:
+                    for tw in tws:
+                        rows = [r for r in r2B
+                                if r["k_coverage"] == k and r["travel_weight"] == tw]
+                        if rows:
+                            logger.info("%-4d %-6.3f %8.0f %10.2f %10.1f",
+                                        k, tw,
+                                        np.mean([r["num_viewpoints"] for r in rows]),
+                                        np.mean([r["coverage"] * 100 for r in rows]),
+                                        np.mean([r["total_time"] for r in rows]))
+
+            r2C = [r for r in group_results if r.get("section") == "2C"]
+            s2c_tw = r2C[0]["travel_weight"] if r2C else None
+            logger.info(
+                "\n%s\nE00 SECTION 2C SUMMARY — %s (CMA-ES: popsize × maxiter, tw=%s)\n%s",
+                "=" * 80, label, s2c_tw, "=" * 80)
+            if r2C:
+                logger.info("%-8s %-8s %8s %10s %10s",
+                            "pop", "mi", "VPs", "Coverage%", "Time(s)")
+                logger.info("-" * 50)
+                for pop in E00_C_POPSIZE_VALUES:
+                    for mi in E00_C_MAXITER_VALUES:
+                        rows = [r for r in r2C
+                                if r["popsize"] == pop and r["maxiter"] == mi]
+                        if rows:
+                            logger.info("%-8d %-8d %8.0f %10.2f %10.1f",
+                                        pop, mi,
+                                        np.mean([r["num_viewpoints"] for r in rows]),
+                                        np.mean([r["coverage"] * 100 for r in rows]),
+                                        np.mean([r["total_time"] for r in rows]))
 
 
 if __name__ == "__main__":
