@@ -1,0 +1,13 @@
+{
+  "model": "david0",
+  "optimizer": "LazyGreedySetCoverCuda",
+  "input_strategy": "targeted_25",
+  "target_coverage": 0.95,
+  "seed": 123,
+  "num_candidates": 500,
+  "num_viewpoints": 19,
+  "coverage": 0.9507,
+  "optimization_time": 0.28580586099997163,
+  "redundancy": 1.5008310079574585,
+  "section": "B"
+}

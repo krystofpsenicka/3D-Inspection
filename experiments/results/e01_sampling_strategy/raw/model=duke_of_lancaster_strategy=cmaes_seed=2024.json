@@ -1,0 +1,13 @@
+{
+  "model": "duke_of_lancaster",
+  "strategy": "cmaes",
+  "seed": 2024,
+  "num_candidates": 751,
+  "num_viewpoints": 419,
+  "coverage": 0.935585,
+  "redundancy": 3.539208173751831,
+  "sampling_time": 5.755057313013822,
+  "visibility_time": 0.009058375842869282,
+  "optimization_time": 0.7823212780058384,
+  "total_time": 6.5464369668625295
+}

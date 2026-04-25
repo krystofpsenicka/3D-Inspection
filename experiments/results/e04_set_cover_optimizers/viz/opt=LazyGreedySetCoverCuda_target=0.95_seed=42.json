@@ -1,0 +1,9 @@
+{
+  "optimizer": "LazyGreedySetCoverCuda",
+  "target_coverage": 0.95,
+  "model": "duke_of_lancaster",
+  "seed": 42,
+  "num_candidates": 1500,
+  "num_viewpoints": 216,
+  "coverage": 0.950135
+}

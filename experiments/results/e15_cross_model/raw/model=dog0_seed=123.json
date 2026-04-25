@@ -1,0 +1,22 @@
+{
+  "model": "dog0",
+  "seed": 123,
+  "t_mesh": 3.369990736246109e-06,
+  "t_surface": 2.2900057956576347e-06,
+  "t_og": 1.4099059626460075e-06,
+  "t_sample": 0.05350090900901705,
+  "t_vis": 0.005617897026240826,
+  "t_opt": 0.026929971994832158,
+  "t_vrp": 80.25148492690641,
+  "t_mapf": 136.28035546198953,
+  "mesh_vertices": 25290,
+  "mesh_faces": 50528,
+  "num_viewpoints": 38,
+  "coverage": 0.95054,
+  "redundancy": 2.1420035362243652,
+  "vrp_makespan": 32.56862258911133,
+  "vrp_status": "success",
+  "mapf_steps": 1550,
+  "mapf_collisions": 0,
+  "total_time": 216.61789623682853
+}

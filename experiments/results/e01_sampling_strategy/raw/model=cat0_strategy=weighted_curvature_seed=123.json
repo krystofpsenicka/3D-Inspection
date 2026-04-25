@@ -1,0 +1,13 @@
+{
+  "model": "cat0",
+  "strategy": "weighted_curvature",
+  "seed": 123,
+  "num_candidates": 500,
+  "num_viewpoints": 16,
+  "coverage": 0.95226,
+  "redundancy": 1.422615647315979,
+  "sampling_time": 0.04566228110343218,
+  "visibility_time": 0.004619309213012457,
+  "optimization_time": 0.15347950020805,
+  "total_time": 0.20376109052449465
+}

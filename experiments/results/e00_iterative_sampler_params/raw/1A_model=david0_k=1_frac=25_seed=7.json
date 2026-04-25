@@ -1,0 +1,21 @@
+{
+  "section": "1A",
+  "model": "david0",
+  "k_coverage": 1,
+  "fraction": 25,
+  "spi": 1,
+  "seed": 7,
+  "n_base": 375,
+  "n_iter_requested": 125,
+  "n_iter_actual": 125,
+  "num_candidates": 500,
+  "num_viewpoints": 21,
+  "coverage": 0.95498,
+  "pool_redundancy": 21.26042,
+  "redundancy": 1.5068588256835938,
+  "sampling_time": 5.107793937000679,
+  "visibility_time": 0.03509299800498411,
+  "optimization_time": 0.12771742200129665,
+  "total_time": 5.27060435700696,
+  "early_stop_ratio": 1.0
+}

@@ -1,0 +1,13 @@
+{
+  "model": "david0",
+  "strategy": "cmaes",
+  "seed": 2024,
+  "num_candidates": 251,
+  "num_viewpoints": 23,
+  "coverage": 0.95378,
+  "redundancy": 1.638784646987915,
+  "sampling_time": 0.596038640011102,
+  "visibility_time": 0.002718063071370125,
+  "optimization_time": 0.09701820509508252,
+  "total_time": 0.6957749081775546
+}

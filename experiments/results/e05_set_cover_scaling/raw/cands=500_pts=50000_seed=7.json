@@ -1,0 +1,10 @@
+{
+  "num_candidates": 500,
+  "num_candidates_requested": 500,
+  "num_points": 50000,
+  "seed": 7,
+  "num_viewpoints": 290,
+  "coverage": 0.86358,
+  "visibility_time": 0.0047050489811226726,
+  "optimization_time": 0.13285344804171473
+}

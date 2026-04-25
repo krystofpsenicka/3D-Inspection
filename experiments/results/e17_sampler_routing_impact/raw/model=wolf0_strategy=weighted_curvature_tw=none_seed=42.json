@@ -1,0 +1,21 @@
+{
+  "model": "wolf0",
+  "strategy": "weighted_curvature",
+  "travel_weight": null,
+  "seed": 42,
+  "n_base_candidates": 1500,
+  "n_iterative_candidates": 0,
+  "n_warmstart_fallbacks": 0,
+  "num_candidates": 1500,
+  "num_viewpoints": 21,
+  "coverage": 0.95582,
+  "redundancy": 1.5542466640472412,
+  "makespan": 26.53569793701172,
+  "total_cost": 126.54191589355469,
+  "vrp_status": "success",
+  "t_sample": 0.054433735087513924,
+  "t_vis": 0.014700722065754235,
+  "t_opt": 0.04865536105353385,
+  "t_vrp": 124.8165454370901,
+  "t_total": 124.9343352552969
+}

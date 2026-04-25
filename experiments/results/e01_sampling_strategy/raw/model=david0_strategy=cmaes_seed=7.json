@@ -1,0 +1,13 @@
+{
+  "model": "david0",
+  "strategy": "cmaes",
+  "seed": 7,
+  "num_candidates": 251,
+  "num_viewpoints": 23,
+  "coverage": 0.95228,
+  "redundancy": 1.60244882106781,
+  "sampling_time": 0.6000527143478394,
+  "visibility_time": 0.0034981691278517246,
+  "optimization_time": 0.10523807443678379,
+  "total_time": 0.7087889579124749
+}

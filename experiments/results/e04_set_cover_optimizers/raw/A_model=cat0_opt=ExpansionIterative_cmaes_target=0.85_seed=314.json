@@ -1,0 +1,13 @@
+{
+  "model": "cat0",
+  "optimizer": "ExpansionIterative_cmaes",
+  "input_strategy": "targeted_25",
+  "target_coverage": 0.85,
+  "seed": 314,
+  "num_candidates": 500,
+  "num_viewpoints": 10,
+  "coverage": 0.8548,
+  "optimization_time": 5.366795618989272,
+  "redundancy": 1.28525972366333,
+  "section": "A"
+}

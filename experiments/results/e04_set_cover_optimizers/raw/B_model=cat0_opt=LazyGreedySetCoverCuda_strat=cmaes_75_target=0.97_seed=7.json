@@ -1,0 +1,13 @@
+{
+  "model": "cat0",
+  "optimizer": "LazyGreedySetCoverCuda",
+  "input_strategy": "cmaes_75",
+  "target_coverage": 0.97,
+  "seed": 7,
+  "num_candidates": 129,
+  "num_viewpoints": 22,
+  "coverage": 0.97264,
+  "optimization_time": 0.11047086799226236,
+  "redundancy": 1.794435739517212,
+  "section": "B"
+}

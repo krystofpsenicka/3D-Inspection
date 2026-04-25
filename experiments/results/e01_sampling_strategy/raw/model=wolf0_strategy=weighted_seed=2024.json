@@ -1,0 +1,13 @@
+{
+  "model": "wolf0",
+  "strategy": "weighted",
+  "seed": 2024,
+  "num_candidates": 500,
+  "num_viewpoints": 23,
+  "coverage": 0.95024,
+  "redundancy": 1.5372116565704346,
+  "sampling_time": 0.04474204499274492,
+  "visibility_time": 0.004183394834399223,
+  "optimization_time": 0.17693937057629228,
+  "total_time": 0.22586481040343642
+}

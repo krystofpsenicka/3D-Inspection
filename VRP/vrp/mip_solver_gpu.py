@@ -144,9 +144,20 @@ class MIPSolverGPU(VRPSolverBase):
             makespan = max(per_v) if per_v else 0.0
             total_cost = sum(per_v)
 
+            # cuOpt's MIP best bound is in solution.get_milp_stats()
+            # ["solution_bound"]. (solution.get_dual_objective() is the LP
+            # dual and raises for MILPs — "not supported for milp solution".)
+            best_bound = 0.0
+            try:
+                stats = solution.get_milp_stats()
+                if isinstance(stats, dict) and "solution_bound" in stats:
+                    best_bound = float(stats["solution_bound"])
+            except Exception as exc:
+                logger.warning("[MIPSolverGPU] dual-bound read failed: %s", exc)
+
             logger.info("[MIPSolverGPU] makespan=%.2f  total_cost=%.2f  "
-                        "per_vehicle=%s",
-                        makespan, total_cost,
+                        "best_bound=%.2f  per_vehicle=%s",
+                        makespan, total_cost, best_bound,
                         [f"{c:.1f}" for c in per_v])
 
             return VRPResult(
@@ -154,6 +165,7 @@ class MIPSolverGPU(VRPSolverBase):
                 total_cost=total_cost,
                 makespan=makespan,
                 per_vehicle_costs=per_v,
+                best_bound=best_bound,
                 solver="cuopt_mip",
                 status="success",
             )

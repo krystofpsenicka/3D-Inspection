@@ -30,7 +30,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from experiments.common.runner import free_gpu_memory
+from experiments.common.runner import free_gpu_memory, handle_row_exception
 from experiments.common.config import ModelConfig, SEEDS_3, E10_RESOLUTIONS, RESULTS_DIR
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
@@ -77,7 +77,8 @@ def run_single(resolution: float, seed: int, og, sampler, mesh_bounds_min,
 
     try:
         K = N_ROBOTS
-        pos_gpu, rot_gpu = sampler.sample(N_WAYPOINTS, side=Side.OUTSIDE)
+        pos_gpu, rot_gpu = sampler.sample(N_WAYPOINTS, side=Side.OUTSIDE,
+                                           curvature_weighting=True)
         insp_pos = cp.asnumpy(pos_gpu).astype(np.float32)
         insp_rot = cp.asnumpy(rot_gpu).astype(np.float32)
         robot_xyzs = compute_start_grid(K, mesh_bounds_min, mesh_bounds_max)
@@ -210,6 +211,10 @@ def main():
                    default=os.path.join(RESULTS_DIR, "e10_sta_resolution"))
     p.add_argument("--plots_only", action="store_true",
                    help="Only regenerate plots from existing results")
+    p.add_argument("--resume", action="store_true",
+                   help="Skip rows whose result JSON already exists; exit "
+                        "non-zero on CUDA OOM so an outer restart loop can "
+                        "reclaim GPU memory.")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -263,6 +268,14 @@ def main():
             for seed in args.seeds:
                 run_idx += 1
                 rpath = os.path.join(raw_dir, f"res={resolution}_seed={seed}")
+                row_desc = f"resolution={resolution} seed={seed}"
+
+                if args.resume and os.path.exists(rpath + ".json"):
+                    all_results.append(load_run_result(rpath))
+                    logger.info("[%d/%d] [resume] skip %s",
+                                run_idx, total, row_desc)
+                    continue
+
                 logger.info("[%d/%d] resolution=%.2f seed=%d",
                             run_idx, total, resolution, seed)
 
@@ -274,7 +287,7 @@ def main():
                                 result["planning_time"], result["makespan"],
                                 result["fail_count"])
                 except Exception as e:
-                    logger.error("  FAILED: %s", e, exc_info=True)
+                    handle_row_exception(e, row_desc, resume=args.resume)
                 finally:
                     free_gpu_memory()
     else:

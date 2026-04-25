@@ -45,8 +45,28 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import (
-    ModelConfig, SEEDS_3, E02_CANDIDATE_COUNTS, E02_STRATEGIES, RESULTS_DIR,
+    ModelConfig, SEEDS_3, E02_CANDIDATE_COUNTS, RESULTS_DIR,
 )
+
+# Strategy set for e02: weighted + weighted_curvature baselines,
+# targeted_100 (iterative targeted, k=3), cmaes_100 (CMA-ES, k=3, tw=0.0,
+# popsize=40, maxiter=40). Historical raw data using older strategy names
+# is still loadable via --plots_only.
+_E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
+
+
+def _strategy_kwargs(strategy: str) -> dict:
+    """Per-strategy kwargs forwarded to sample_strategy()."""
+    if strategy == "targeted_100":
+        return {"k_coverage": 3}
+    if strategy == "cmaes_100":
+        return {
+            "k_coverage": 3,
+            "travel_weight": 0.0,
+            "popsize": 40,
+            "maxiter": 40,
+        }
+    return {}
 from experiments.common.runner import set_seed, timed, free_gpu_memory
 from experiments.common.pipeline_setup import PipelineContext
 from experiments.common.persistence import save_run_result, load_run_result
@@ -74,7 +94,8 @@ def run_single(ctx: PipelineContext, strategy: str, num_candidates: int, seed: i
 
     with timed() as t_sample:
         pos_gpu, rot_gpu, n_base, n_iter, base_name, _ = sample_strategy(
-            ctx, strategy, num_candidates, target_points, normals, vis_query, model)
+            ctx, strategy, num_candidates, target_points, normals, vis_query, model,
+            **_strategy_kwargs(strategy))
 
     with timed() as t_vis:
         V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
@@ -222,12 +243,12 @@ def main():
     p = argparse.ArgumentParser(description="E2: Candidate Count Scaling")
     p.add_argument("--model", default="duke_of_lancaster")
     p.add_argument("--candidates", type=int, nargs="+", default=E02_CANDIDATE_COUNTS)
-    p.add_argument("--strategies", nargs="+", default=E02_STRATEGIES)
+    p.add_argument("--strategies", nargs="+", default=_E02_STRATEGIES)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--target_coverage", type=float, default=0.95)
     p.add_argument("--output_dir",
                    default=os.path.join(RESULTS_DIR, "e02_candidate_scaling"))
-    p.add_argument("--skip_existing", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -262,7 +283,7 @@ def main():
             rpath = os.path.join(
                 raw_dir, f"strategy={strategy}_candidates={nc}_seed={seed}")
 
-            if args.skip_existing and os.path.exists(rpath + ".json"):
+            if args.resume and os.path.exists(rpath + ".json"):
                 logger.info("[%d/%d] SKIP %s nc=%d seed=%d",
                             idx, total, strategy, nc, seed)
                 all_results.append(load_run_result(rpath))

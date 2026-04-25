@@ -27,6 +27,8 @@ def sample_strategy(
     k_coverage: int = 4,
     samples_per_iteration: int = 25,
     travel_weight: float | None = None,
+    popsize: int | None = None,
+    maxiter: int | None = None,
 ) -> tuple:
     """Sample candidates for the given strategy.
 
@@ -41,6 +43,8 @@ def sample_strategy(
         k_coverage:            minimum per-point coverage count for targeted/cmaes phase.
         samples_per_iteration: batch size for targeted iterative mode (default 1).
         travel_weight:         CMA-ES objective travel penalty weight; None uses sampler default.
+        popsize:               CMA-ES population size per generation; None uses sampler default.
+        maxiter:               CMA-ES max generations per optimisation round; None uses sampler default.
 
     Returns:
         (pos_gpu, rot_gpu, n_base, n_iterative, base_sampler_name,
@@ -119,12 +123,18 @@ def sample_strategy(
                 random_sampler=sampler,
             )
             tw_kw = {} if travel_weight is None else {"travel_weight": travel_weight}
+            cmaes_kw = {}
+            if popsize is not None:
+                cmaes_kw["popsize"] = popsize
+            if maxiter is not None:
+                cmaes_kw["maxiter"] = maxiter
             opt_pos, opt_rot, n_warmstart_fallbacks = opt_sampler.sample_optimized(
                 n_iterative, coverage_count, vis_query,
                 existing_pos_gpu=pos_gpu if len(pos_gpu) > 0 else None,
                 existing_rot_gpu=rot_gpu if len(rot_gpu) > 0 else None,
                 k_coverage=k_coverage,
                 **tw_kw,
+                **cmaes_kw,
             )
             if len(opt_pos) > 0:
                 pos_gpu = cp.concatenate([pos_gpu, opt_pos]) if len(pos_gpu) > 0 else opt_pos

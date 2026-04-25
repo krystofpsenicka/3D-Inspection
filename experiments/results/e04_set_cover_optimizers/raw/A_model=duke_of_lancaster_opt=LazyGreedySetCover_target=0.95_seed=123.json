@@ -1,0 +1,13 @@
+{
+  "model": "duke_of_lancaster",
+  "optimizer": "LazyGreedySetCover",
+  "input_strategy": "targeted_25",
+  "target_coverage": 0.95,
+  "seed": 123,
+  "num_candidates": 1500,
+  "num_viewpoints": 200,
+  "coverage": 0.950165,
+  "optimization_time": 0.1363394419895485,
+  "redundancy": 2.209868907928467,
+  "section": "A"
+}

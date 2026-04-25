@@ -40,23 +40,20 @@ def _free_gpu_memory() -> None:
         pass
 
 ALL_EXPERIMENTS = [
+    
+    "e19_vrp_time_limit_sweep",
     "e01_sampling_strategy",
     "e02_candidate_scaling",
     "e03_visibility_comparison",
+    "e15_cross_model",
     "e04_set_cover_optimizers",
     "e05_set_cover_scaling",
     "e06_vrp_fleet_scaling",
     "e07_vrp_alpha_blending",
-    "e08_vrp_solver_comparison",
-    "e09_mapf_priority",
     "e10_sta_resolution",
-    "e11_end_to_end",
-    "e12_gpu_vs_cpu_scaling",
-    "e13_viewpoint_redundancy",
-    "e14_curvature_sensitivity",
-    "e15_cross_model",
-    "e16_frustum_sensitivity",
     "e17_sampler_routing_impact",
+    "e14_curvature_sensitivity",
+
 ]
 
 # GPU memory weight per experiment (1 unit ≈ 2 GB peak VRAM).
@@ -79,39 +76,53 @@ EXPERIMENT_WEIGHTS: dict[str, int] = {
     "e14_curvature_sensitivity": 1,  # parameter sweep, light
     "e15_cross_model":           4,  # 10 models with full pipeline, ~6–8 GB
     "e16_frustum_sensitivity":   1,  # frustum parameter sweep, moderate
+    "e19_vrp_time_limit_sweep":  2,  # VRP time limit sweep, ~3–4 GB
 }
 
 
-def run_experiment(name: str):
-    """Import and run a single experiment's main()."""
+def run_experiment(name: str, resume: bool = False) -> bool:
+    """Import and run a single experiment's main(). Returns True on success.
+
+    Under ``resume=True`` the child sees ``--resume`` in its argv, and any
+    exception (including ``SystemExit``) raised by ``main()`` is propagated up
+    so the caller can abort the whole sequence — this is what lets an outer
+    ``while ! ...; do ...; done`` loop recover from CUDA OOM.
+    """
     module_name = f"experiments.{name}"
     logger.info("=" * 70)
-    logger.info("RUNNING: %s", name)
+    logger.info("RUNNING: %s%s", name, " (--resume)" if resume else "")
     logger.info("=" * 70)
     t0 = time.perf_counter()
+    old_argv = sys.argv
     try:
-        # Override sys.argv so the experiment sees no args (uses defaults)
-        old_argv = sys.argv
-        sys.argv = [module_name]
+        child_argv = [module_name]
+        if resume:
+            child_argv.append("--resume")
+        sys.argv = child_argv
         mod = importlib.import_module(module_name)
         if hasattr(mod, "main"):
             mod.main()
         else:
             logger.warning("  %s has no main() function, skipping", name)
-        sys.argv = old_argv
         elapsed = time.perf_counter() - t0
         logger.info("DONE: %s in %.1fs", name, elapsed)
-    except Exception as e:
-        sys.argv = old_argv
-        logger.error("FAILED: %s: %s", name, e, exc_info=True)
+        return True
+    except BaseException as e:
+        logger.error("FAILED: %s: %s", name, e,
+                     exc_info=not isinstance(e, SystemExit))
+        if resume:
+            raise
+        return False
     finally:
+        sys.argv = old_argv
         _free_gpu_memory()
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_experiment_subprocess(name: str, log_dir: Path) -> bool:
+def run_experiment_subprocess(name: str, log_dir: Path,
+                              resume: bool = False) -> bool:
     """Run a single experiment in its own subprocess. Returns True on success.
 
     stdout/stderr are captured to log_dir/{name}.log so parallel runs don't
@@ -119,11 +130,15 @@ def run_experiment_subprocess(name: str, log_dir: Path) -> bool:
     Python when the parent process was launched via `conda run -n isaaclab`.
     """
     log_path = log_dir / f"{name}.log"
-    logger.info("STARTING (subprocess): %s  →  %s", name, log_path)
+    logger.info("STARTING (subprocess): %s%s  →  %s",
+                name, " (--resume)" if resume else "", log_path)
     t0 = time.perf_counter()
+    argv = [sys.executable, "-m", f"experiments.{name}"]
+    if resume:
+        argv.append("--resume")
     with open(log_path, "w") as log_fh:
         result = subprocess.run(
-            [sys.executable, "-m", f"experiments.{name}"],
+            argv,
             cwd=_PROJECT_ROOT,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
@@ -190,36 +205,55 @@ def build_waves(to_run: list[str], max_jobs: int, gpu_budget: int) -> list[list[
     return waves
 
 
-def run_parallel(to_run: list[str], max_jobs: int, gpu_budget: int) -> None:
-    """Run experiments in parallel waves, respecting the GPU memory budget."""
+def run_parallel(to_run: list[str], max_jobs: int, gpu_budget: int,
+                 resume: bool = False) -> bool:
+    """Run experiments in parallel waves, respecting the GPU memory budget.
+
+    Returns True if every experiment succeeded, False otherwise. Under
+    ``resume=True`` a failed wave aborts further waves so an outer restart
+    loop can relaunch with a fresh GPU context.
+    """
     log_dir = Path(__file__).resolve().parent / "results" / "_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     waves = build_waves(to_run, max_jobs, gpu_budget)
     t_total = time.perf_counter()
+    all_ok = True
 
     for i, wave in enumerate(waves):
         logger.info("=" * 70)
         logger.info("WAVE %d/%d  (%d experiment(s)): %s", i + 1, len(waves), len(wave), wave)
         t_wave = time.perf_counter()
+        wave_ok = True
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(wave)) as pool:
             futures = {
-                pool.submit(run_experiment_subprocess, name, log_dir): name
+                pool.submit(run_experiment_subprocess, name, log_dir, resume): name
                 for name in wave
             }
             for fut in concurrent.futures.as_completed(futures):
                 name = futures[fut]
                 try:
-                    fut.result()
+                    ok = fut.result()
                 except Exception as exc:
                     logger.error("Unexpected exception in %s: %s", name, exc, exc_info=True)
+                    ok = False
+                if not ok:
+                    wave_ok = False
 
         logger.info("WAVE %d done in %.1fs", i + 1, time.perf_counter() - t_wave)
+
+        if not wave_ok:
+            all_ok = False
+            if resume:
+                logger.error("Wave %d had failures; aborting remaining waves under "
+                             "--resume so an outer restart loop can recover.", i + 1)
+                break
 
     logger.info("=" * 70)
     logger.info("ALL DONE: %d experiments in %.1fs",
                 len(to_run), time.perf_counter() - t_total)
+    return all_ok
 
 
 def main():
@@ -235,6 +269,12 @@ def main():
                    help="Max concurrent GPU-memory units (1 unit ≈ 2 GB). "
                         "Default 6 ≈ 12 GB — conservative for an RTX 3090. "
                         "Increase to 9 for ~4× speedup with ~5 GB buffer.")
+    p.add_argument("--resume", action="store_true",
+                   help="Pass --resume to each child experiment (skip rows "
+                        "whose result JSON already exists) and exit non-zero "
+                        "on the first failure, so an outer "
+                        "`while ! run_all.py --resume; do sleep 5; done` loop "
+                        "can restart after CUDA OOM with a fresh process.")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -269,14 +309,27 @@ def main():
     logger.info("Running %d experiments: %s", len(to_run), to_run)
 
     if args.jobs > 1:
-        run_parallel(to_run, args.jobs, args.gpu_budget)
+        ok = run_parallel(to_run, args.jobs, args.gpu_budget, resume=args.resume)
+        if not ok:
+            sys.exit(1)
     else:
         t_total = time.perf_counter()
-        for name in to_run:
-            run_experiment(name)
+        all_ok = True
+        try:
+            for name in to_run:
+                if not run_experiment(name, resume=args.resume):
+                    all_ok = False
+                    # Without --resume, continue past failures (legacy behaviour).
+                    # With --resume, run_experiment re-raises, so we never reach here.
+        except BaseException as e:
+            # --resume path: first failing experiment propagated an exception.
+            logger.error("Aborting run_all under --resume: %s", e)
+            sys.exit(1)
         logger.info("=" * 70)
         logger.info("ALL DONE: %d experiments in %.1fs",
                     len(to_run), time.perf_counter() - t_total)
+        if not all_ok:
+            sys.exit(1)
 
 
 if __name__ == "__main__":

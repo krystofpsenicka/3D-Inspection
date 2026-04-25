@@ -1,0 +1,13 @@
+{
+  "model": "cat0",
+  "strategy": "targeted_50",
+  "seed": 2024,
+  "num_candidates": 500,
+  "num_viewpoints": 17,
+  "coverage": 0.95558,
+  "redundancy": 1.5467464923858643,
+  "sampling_time": 0.05115066608414054,
+  "visibility_time": 0.004751119762659073,
+  "optimization_time": 0.15711369877681136,
+  "total_time": 0.21301548462361097
+}

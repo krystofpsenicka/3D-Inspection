@@ -1,0 +1,8 @@
+{
+  "strategy": "targeted_75",
+  "model": "duke_of_lancaster",
+  "seed": 42,
+  "num_candidates": 1500,
+  "num_viewpoints": 196,
+  "coverage": 0.950165
+}

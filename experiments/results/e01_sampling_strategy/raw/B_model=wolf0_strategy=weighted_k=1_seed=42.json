@@ -1,0 +1,21 @@
+{
+  "section": "B",
+  "model": "wolf0",
+  "strategy": "weighted",
+  "k_coverage": 1,
+  "seed": 42,
+  "n_base_candidates": 1500,
+  "n_iterative_candidates": 0,
+  "n_warmstart_fallbacks": 0,
+  "base_sampler": "weighted",
+  "num_candidates_requested": 1500,
+  "num_candidates": 1500,
+  "num_viewpoints": 21,
+  "coverage": 0.95024,
+  "pool_redundancy": 58.69536,
+  "redundancy": 1.6055102348327637,
+  "sampling_time": 0.4872920870548114,
+  "visibility_time": 0.016120474901981652,
+  "optimization_time": 0.14276703691575676,
+  "total_time": 0.6461795988725498
+}

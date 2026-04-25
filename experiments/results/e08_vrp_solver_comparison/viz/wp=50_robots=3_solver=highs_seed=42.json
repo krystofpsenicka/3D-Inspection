@@ -1,0 +1,8 @@
+{
+  "n_waypoints": 50,
+  "n_robots": 3,
+  "solver": "highs",
+  "seed": 42,
+  "makespan": 149.08712768554688,
+  "status": "success"
+}

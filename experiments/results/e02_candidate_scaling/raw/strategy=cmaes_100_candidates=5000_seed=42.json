@@ -1,0 +1,17 @@
+{
+  "model": "duke_of_lancaster",
+  "strategy": "cmaes_100",
+  "num_candidates_requested": 5000,
+  "num_candidates": 537,
+  "n_base_candidates": 0,
+  "n_iterative_candidates": 5000,
+  "base_sampler": "weighted",
+  "seed": 42,
+  "num_viewpoints": 125,
+  "coverage": 0.95036,
+  "redundancy": 1.8105454444885254,
+  "sampling_time": 1050.8929151700577,
+  "visibility_time": 0.0117990099824965,
+  "optimization_time": 0.11331972398329526,
+  "total_time": 1051.0180339040235
+}

@@ -1,0 +1,9 @@
+{
+  "optimizer": "ExpansionIterative_weighted",
+  "target_coverage": 0.95,
+  "model": "duke_of_lancaster",
+  "seed": 42,
+  "num_candidates": 1500,
+  "num_viewpoints": 146,
+  "coverage": 0.95084
+}

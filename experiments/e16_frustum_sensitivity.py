@@ -309,7 +309,7 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir",
                    default=os.path.join(RESULTS_DIR, "e16_frustum_sensitivity"))
-    p.add_argument("--skip_existing", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -368,7 +368,7 @@ def main():
                         raw_dir,
                         f"fov={fov_deg:.0f}_near={near}_far={far:.0f}_seed={seed}",
                     )
-                    if args.skip_existing and os.path.exists(rpath + ".json"):
+                    if args.resume and os.path.exists(rpath + ".json"):
                         logger.info(
                             "[%d/%d] SKIP fov=%.0f near=%.2f far=%.1f seed=%d",
                             run_idx, total, fov_deg, near, far, seed,

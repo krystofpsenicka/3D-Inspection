@@ -1,0 +1,15 @@
+{
+  "model": "wolf0",
+  "method": "epsilon",
+  "target_coverage": 0.95,
+  "seed": 42,
+  "num_viewpoints": 22,
+  "reported_coverage": 0.95182,
+  "actual_coverage": 0.94052,
+  "coverage_gap": 0.011299999999999977,
+  "visibility_time": 0.010871008038520813,
+  "optimization_time": 0.163558563683182,
+  "redundancy": 1.5071547031402588,
+  "mean_vp_iou": 0.9285384367184666,
+  "num_candidates": 500
+}

@@ -92,9 +92,21 @@ class MIPSolverCPU(VRPSolverBase):
         makespan = max(per_v) if per_v else 0.0
         total_cost = sum(per_v)
 
+        # Best-effort dual-bound extraction. PuLP's HiGHS wrapper exposes
+        # the HiGHS Highs object as prob.solverModel on recent versions;
+        # the MIP dual bound is getObjectiveBound(). Older versions don't
+        # expose this — leave best_bound=0.0 in that case.
+        best_bound = 0.0
+        try:
+            model = getattr(prob, "solverModel", None)
+            if model is not None and hasattr(model, "getObjectiveBound"):
+                best_bound = float(model.getObjectiveBound())
+        except Exception as exc:
+            logger.debug("[MIPSolverCPU] dual-bound read failed: %s", exc)
+
         logger.info("[MIPSolverCPU] makespan=%.2f  total_cost=%.2f  "
-                    "per_vehicle=%s",
-                    makespan, total_cost,
+                    "best_bound=%.2f  per_vehicle=%s",
+                    makespan, total_cost, best_bound,
                     [f"{c:.1f}" for c in per_v])
 
         return VRPResult(
@@ -102,6 +114,7 @@ class MIPSolverCPU(VRPSolverBase):
             total_cost=total_cost,
             makespan=makespan,
             per_vehicle_costs=per_v,
+            best_bound=best_bound,
             solver="highs_mip",
             status="success",
         )

@@ -1,0 +1,12 @@
+{
+  "knn_k": 10,
+  "position_weight": 5.0,
+  "seed": 7,
+  "num_viewpoints": 218,
+  "coverage": 0.950035,
+  "redundancy": 2.393496036529541,
+  "sampling_time": 0.6443575360171963,
+  "visibility_time": 0.016888336976990104,
+  "optimization_time": 1.2282603420026135,
+  "total_time": 1.8895062149967998
+}

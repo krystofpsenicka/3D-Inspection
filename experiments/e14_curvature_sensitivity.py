@@ -80,12 +80,17 @@ def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
 
     # Visibility
     with timed() as t_vis:
-        V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
+        V_gpu, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
-    # Set cover
+    # LazyGreedySetCover is the CPU optimizer; move GPU arrays to host first
+    # (same pattern as e04 / e05).
+    V = cp.asnumpy(V_gpu)
+    pos_np = cp.asnumpy(pos_gpu)
+    rot_np = cp.asnumpy(rot_gpu)
+
     with timed() as t_opt:
         optimizer = LazyGreedySetCover(
-            len(target_points), pos_gpu, rot_gpu, V,
+            len(target_points), pos_np, rot_np, V,
         )
         opt_result = optimizer.optimize(
             target_coverage=0.95, max_viewpoints=1000,
@@ -167,6 +172,10 @@ def main():
                    default=os.path.join(RESULTS_DIR, "e14_curvature_sensitivity"))
     p.add_argument("--plots_only", action="store_true",
                    help="Only regenerate plots from existing results")
+    p.add_argument("--resume", action="store_true",
+                   help="Skip rows whose result JSON already exists; exit "
+                        "non-zero on CUDA OOM so an outer restart loop can "
+                        "reclaim GPU memory.")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -191,6 +200,14 @@ def main():
                         raw_dir,
                         f"knn_k={knn_k}_pw={pw}_seed={seed}",
                     )
+                    row_desc = f"knn_k={knn_k} pw={pw} seed={seed}"
+
+                    if args.resume and os.path.exists(rpath + ".json"):
+                        all_results.append(load_run_result(rpath))
+                        logger.info("[%d/%d] [resume] skip %s",
+                                    run_idx, total, row_desc)
+                        continue
+
                     logger.info("[%d/%d] knn_k=%d position_weight=%.1f seed=%d",
                                 run_idx, total, knn_k, pw, seed)
 
@@ -203,7 +220,7 @@ def main():
                                     result["coverage"] * 100,
                                     result["total_time"])
                     except Exception as e:
-                        logger.error("  FAILED: %s", e, exc_info=True)
+                        logger.error("  FAILED [%s]: %s", row_desc, e, exc_info=True)
                     finally:
                         free_gpu_memory()
     else:

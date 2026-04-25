@@ -1,0 +1,14 @@
+{
+  "n_waypoints": 20,
+  "n_robots": 2,
+  "solver": "highs",
+  "seed": 123,
+  "solve_time": 120.09070864602108,
+  "makespan": 102.9941177368164,
+  "total_cost": 204.63326263427734,
+  "status": "success",
+  "per_vehicle_costs": [
+    102.9941177368164,
+    101.63914489746094
+  ]
+}

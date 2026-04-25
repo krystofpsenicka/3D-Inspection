@@ -1,0 +1,13 @@
+{
+  "model": "wolf0",
+  "strategy": "cmaes",
+  "seed": 42,
+  "num_candidates": 254,
+  "num_viewpoints": 27,
+  "coverage": 0.9553,
+  "redundancy": 1.6747618913650513,
+  "sampling_time": 0.9352315398864448,
+  "visibility_time": 0.002974315080791712,
+  "optimization_time": 0.10552704334259033,
+  "total_time": 1.0437328983098269
+}

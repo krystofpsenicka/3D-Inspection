@@ -1,0 +1,15 @@
+{
+  "model": "david0",
+  "method": "raycast",
+  "target_coverage": 0.925,
+  "seed": 2024,
+  "num_viewpoints": 19,
+  "reported_coverage": 0.93164,
+  "actual_coverage": 0.93164,
+  "coverage_gap": 0.0,
+  "visibility_time": 0.005117611028254032,
+  "optimization_time": 0.14442382892593741,
+  "redundancy": 1.560559868812561,
+  "mean_vp_iou": 1.0,
+  "num_candidates": 500
+}

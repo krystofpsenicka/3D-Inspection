@@ -20,6 +20,14 @@ class VRPResult:
     """Solution returned by any VRP solver backend.
 
     Routes exclude depot indices.
+
+    ``best_bound`` is the solver's dual bound on the alpha-blended
+    objective, in meters. For MIP solvers running branch-and-bound it is
+    the best LP relaxation across open nodes at termination and is a
+    provably-valid lower bound on the integer optimum. ``0.0`` indicates
+    the backend did not expose a bound (CPU/HiGHS without PuLP support,
+    solver failure, or older cuOpt builds). Readers should treat
+    ``best_bound == 0.0`` as "unavailable".
     """
     routes: list[list[int]]
     total_cost: float
@@ -27,6 +35,7 @@ class VRPResult:
     per_vehicle_costs: list[float] = field(default_factory=list)
     alpha: float = 1.0
     objective_value: float = 0.0
+    best_bound: float = 0.0
     solver: str = "unknown"
     status: str = "success"
 

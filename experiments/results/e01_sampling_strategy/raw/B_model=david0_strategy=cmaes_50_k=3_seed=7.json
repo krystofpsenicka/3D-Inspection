@@ -1,0 +1,21 @@
+{
+  "section": "B",
+  "model": "david0",
+  "strategy": "cmaes_50",
+  "k_coverage": 3,
+  "seed": 7,
+  "n_base_candidates": 2250,
+  "n_iterative_candidates": 2250,
+  "n_warmstart_fallbacks": 0,
+  "base_sampler": "weighted",
+  "num_candidates_requested": 4500,
+  "num_candidates": 2250,
+  "num_viewpoints": 18,
+  "coverage": 0.95414,
+  "pool_redundancy": 90.05992,
+  "redundancy": 1.5563544034957886,
+  "sampling_time": 0.7869351239933167,
+  "visibility_time": 0.02328213900909759,
+  "optimization_time": 0.06917718099430203,
+  "total_time": 0.8793944439967163
+}

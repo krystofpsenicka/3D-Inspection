@@ -1,0 +1,15 @@
+{
+  "n_waypoints": 50,
+  "n_robots": 3,
+  "solver": "cuopt",
+  "seed": 7,
+  "solve_time": 120.37939584100968,
+  "makespan": 203.088134765625,
+  "total_cost": 576.0028533935547,
+  "status": "success",
+  "per_vehicle_costs": [
+    184.15476989746094,
+    203.088134765625,
+    188.75994873046875
+  ]
+}

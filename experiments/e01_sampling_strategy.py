@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
-"""E1: Sampling Strategy Comparison
+"""E1: Sampling Strategy Comparison (k=1, thesis-final configuration)
 
-Section A (k=1):
-  4 strategies × 3 seeds × (Duke of Lancaster + TOSCA representative).
-  Fixed candidate budget: model.num_candidates (1500 Duke, 500 TOSCA).
-  Records n_base/n_iterative split, actual candidates generated, viewpoints
-  selected, coverage, pre-set-cover pool redundancy, and per-stage timing.
-  Base sampler for all hybrid strategies: weighted.
-
-Section B (k>1):
-  4 strategies × k∈{1,2,3} × TOSCA representative only.
-  Budget scales: N = 1500·k — gives the sampler room to reach k-fold coverage.
-  Duke is excluded (too slow for the k-sweep).
-
-Strategies:
+Compares three sampling strategies under the thesis-final configuration
+across Duke of Lancaster + TOSCA_REPRESENTATIVE, 3 seeds each:
   weighted            — SDF² uniform, all N from the weighted base sampler
   weighted_curvature  — SDF² + curvature bias, all N from base sampler
-  targeted_25         — 25% targeted toward uncovered, 75% weighted
-  cmaes_100           — 100% CMA-ES optimised
+  cmaes_100           — 100% CMA-ES optimised (k_coverage=3, popsize=40,
+                        maxiter=40, travel_weight=0.1 for TOSCA / 0.0 for
+                        Duke — values from e00 Section 2B)
+
+The k-coverage and k × travel_weight sweeps live in e00
+(iterative_sampler_params); this experiment fixes the CMA-ES
+hyperparameters to e00's thesis-final values and asks "under that
+configuration, how do the three samplers compare?"
+
+Fixed candidate budget: model.num_candidates (1500 Duke, 500 TOSCA).
+Target coverage: 95%. Targeted samplers are deliberately excluded — see
+e00 Section 1: they do not outperform weighted_curvature.
 
 Set-cover: LazyGreedySetCover (CPU, O(log N) heap) — fastest per e04 results.
 
 Usage:
     conda run -n isaaclab python -m experiments.e01_sampling_strategy
-    conda run -n isaaclab python -m experiments.e01_sampling_strategy --section A
-    conda run -n isaaclab python -m experiments.e01_sampling_strategy --section B
     conda run -n isaaclab python -m experiments.e01_sampling_strategy --plots_only
 """
 
@@ -47,23 +44,51 @@ if _PROJECT_ROOT not in sys.path:
 
 from experiments.common.config import (
     ModelConfig, SEEDS_3,
-    E01_STRATEGIES_A, E01_STRATEGIES_B, E01_K_VALUES,
     TOSCA_REPRESENTATIVE, RESULTS_DIR,
 )
+
+# Targeted sampler is intentionally excluded from the e01 comparison —
+# it never outperforms weighted_curvature at k=1 (see e00 Section 1).
+_E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes_100"]
+
+# Thesis-final CMA-ES configuration (from e00 Section 2B).
+_E01_K_COVERAGE = 3
+_E01_CMAES_POPSIZE = 40
+_E01_CMAES_MAXITER = 40
+_E01_CMAES_TRAVEL_WEIGHT_DUKE = 0.0
+_E01_CMAES_TRAVEL_WEIGHT_TOSCA = 0.1
+
+
+def _strategy_kwargs(strategy: str, model_name: str) -> dict:
+    """Per-strategy + per-model kwargs forwarded to sample_strategy().
+
+    weighted and weighted_curvature are one-shot — kwargs are silently
+    ignored in the dispatch's one-shot branch. For cmaes_100 we pin the
+    thesis-final hyperparameters; the travel_weight is chosen per model
+    group to match e00 Section 2B's conclusion.
+    """
+    if strategy == "cmaes_100":
+        tw = (_E01_CMAES_TRAVEL_WEIGHT_DUKE
+              if model_name == "duke_of_lancaster"
+              else _E01_CMAES_TRAVEL_WEIGHT_TOSCA)
+        return {
+            "k_coverage": _E01_K_COVERAGE,
+            "popsize": _E01_CMAES_POPSIZE,
+            "maxiter": _E01_CMAES_MAXITER,
+            "travel_weight": tw,
+        }
+    return {}
 from experiments.common.runner import set_seed, timed, free_gpu_memory
 from experiments.common.pipeline_setup import PipelineContext, DegenerateNormalsError
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.sampling_dispatch import sample_strategy
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, grouped_bar, stacked_bar,
-    THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    DOUBLE_COL, CATEGORICAL_COLORS,
 )
 from visibility.set_cover import LazyGreedySetCover
 
 logger = logging.getLogger(__name__)
-
-# Candidate budget for Section B (scales with k)
-_SECTION_B_BASE_N = 1500
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -94,16 +119,22 @@ def _save_viz(opt_result, target_points, normals, viz_path, meta):
 
 def run_single_A(ctx: PipelineContext, strategy: str, seed: int,
                  target_coverage: float = 0.95, viz_path: str | None = None) -> dict:
-    """Section A: k=1, fixed N = model.num_candidates."""
+    """Fixed candidate budget (model.num_candidates), thesis-final CMA-ES
+    hyperparameters from _strategy_kwargs."""
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
     model = ctx.model
 
+    strat_kw = _strategy_kwargs(strategy, model.name)
+    # k_coverage is recorded from the kwargs (or 1 for one-shot samplers).
+    k_recorded = strat_kw.get("k_coverage", 1)
+
     with timed() as t_sample:
         pos_gpu, rot_gpu, n_base, n_iter, base_name, n_warmstart_fallbacks = sample_strategy(
             ctx, strategy, model.num_candidates,
             target_points, normals, vis_query, model,
+            **strat_kw,
         )
 
     with timed() as t_vis:
@@ -130,60 +161,12 @@ def run_single_A(ctx: PipelineContext, strategy: str, seed: int,
         "model": model.name,
         "strategy": strategy,
         "seed": seed,
-        "k_coverage": 1,
+        "k_coverage": k_recorded,
         "n_base_candidates": n_base,
         "n_iterative_candidates": n_iter,
         "n_warmstart_fallbacks": int(n_warmstart_fallbacks),
         "base_sampler": base_name,
         "num_candidates_requested": model.num_candidates,
-        "num_candidates": int(len(pos_gpu)),
-        "num_viewpoints": opt_result.num_viewpoints,
-        "coverage": float(opt_result.total_coverage),
-        "pool_redundancy": pool_redundancy,
-        "redundancy": float(opt_result.redundancy),
-        "sampling_time": t_sample.elapsed,
-        "visibility_time": t_vis.elapsed,
-        "optimization_time": t_opt.elapsed,
-        "total_time": t_sample.elapsed + t_vis.elapsed + t_opt.elapsed,
-    }
-
-
-def run_single_B(ctx: PipelineContext, strategy: str, k_coverage: int,
-                 seed: int, target_coverage: float = 0.95) -> dict:
-    """Section B: variable k, N = _SECTION_B_BASE_N * k."""
-    target_points, normals = ctx.sample_surface()
-    set_seed(seed)
-    vis_query = ctx.build_visibility_query("raycast")
-    model = ctx.model
-    num_candidates = _SECTION_B_BASE_N * k_coverage
-
-    with timed() as t_sample:
-        pos_gpu, rot_gpu, n_base, n_iter, base_name, n_warmstart_fallbacks = sample_strategy(
-            ctx, strategy, num_candidates,
-            target_points, normals, vis_query, model,
-            k_coverage=k_coverage,
-        )
-
-    with timed() as t_vis:
-        V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
-
-    V_np = cp.asnumpy(V)
-    pool_redundancy = float(V_np.sum() / len(target_points))
-
-    with timed() as t_opt:
-        opt_result, _ = _set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage)
-
-    return {
-        "section": "B",
-        "model": model.name,
-        "strategy": strategy,
-        "k_coverage": k_coverage,
-        "seed": seed,
-        "n_base_candidates": n_base,
-        "n_iterative_candidates": n_iter,
-        "n_warmstart_fallbacks": int(n_warmstart_fallbacks),
-        "base_sampler": base_name,
-        "num_candidates_requested": num_candidates,
         "num_candidates": int(len(pos_gpu)),
         "num_viewpoints": opt_result.num_viewpoints,
         "coverage": float(opt_result.total_coverage),
@@ -206,20 +189,6 @@ _GROUP_COLORS = {
     "weighted_curvature": CATEGORICAL_COLORS[1],
     "targeted": CATEGORICAL_COLORS[2],
     "cmaes": CATEGORICAL_COLORS[3],
-}
-
-
-_B_LINESTYLES = {
-    "weighted": "solid",
-    "weighted_curvature": "dashed",
-    "targeted_25": "dashdot",
-    "cmaes_100": "dotted",
-}
-_B_MARKERS = {
-    "weighted": "o",
-    "weighted_curvature": "s",
-    "targeted_25": "^",
-    "cmaes_100": "D",
 }
 
 
@@ -250,165 +219,122 @@ def _agg(results, strategy, metric, model=None):
 # Section A plots
 # ═══════════════════════════════════════════════════════════════════════════
 
-def generate_plots_A(results: list[dict], strategies: list[str],
-                     fig_dir: str, model_name: str):
-    """Generate all Section A figures for one model."""
-    mr = [r for r in results if r["model"] == model_name and r["section"] == "A"]
+def _normalized_vp_values(rows, strategies):
+    """For each strategy, collect per-(model, seed) num_viewpoints normalized
+    by the same (model, seed) weighted-baseline. Returns {strategy: [float]}."""
+    # Index weighted baselines
+    weighted = {
+        (r["model"], r["seed"]): r["num_viewpoints"]
+        for r in rows if r["strategy"] == "weighted"
+    }
+    out: dict = {s: [] for s in strategies}
+    for r in rows:
+        s = r["strategy"]
+        if s not in out:
+            continue
+        base = weighted.get((r["model"], r["seed"]))
+        if base and base > 0:
+            out[s].append(r["num_viewpoints"] / base)
+    return out
+
+
+def _per_strategy_mean(rows, strategies, metric, mult=1.0):
+    means, stds = [], []
+    for s in strategies:
+        vals = [r[metric] * mult for r in rows if r["strategy"] == s]
+        means.append(float(np.mean(vals)) if vals else float("nan"))
+        stds.append(float(np.std(vals)) if len(vals) > 1 else 0.0)
+    return means, stds
+
+
+def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
+    """Aggregated Section A plots across all models.
+
+    Produces four aggregated figures (pooled across models + seeds) and one
+    by-model grouped-bar comparison for absolute viewpoint counts.
+    """
+    mr = [r for r in results if r["section"] == "A"]
     if not mr:
         return
 
     colors = [_bar_color(s) for s in strategies]
     short_labels = [s.replace("weighted_curvature", "w_curv") for s in strategies]
 
-    # ── Fig 1: Viewpoints and coverage side by side ─────────────────────
+    # ── Fig 1: Viewpoints (normalized to weighted baseline) + Coverage ──
     fig, (ax_vp, ax_cov) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.5))
 
-    vp_m = [_agg(mr, s, "num_viewpoints")[0] for s in strategies]
-    vp_s = [_agg(mr, s, "num_viewpoints")[1] for s in strategies]
+    norm_vals = _normalized_vp_values(mr, strategies)
+    vp_m = [float(np.mean(norm_vals[s])) if norm_vals[s] else float("nan")
+            for s in strategies]
+    vp_s = [float(np.std(norm_vals[s])) if len(norm_vals[s]) > 1 else 0.0
+            for s in strategies]
     ax_vp.bar(short_labels, vp_m, yerr=vp_s, color=colors, capsize=3, alpha=0.85)
-    ax_vp.set_ylabel("Selected viewpoints")
-    ax_vp.set_title(f"Viewpoints ({model_name})")
-    ax_vp.tick_params(axis="x", rotation=40)
+    ax_vp.axhline(1.0, color="grey", linestyle="--", alpha=0.5, linewidth=0.8)
+    ax_vp.set_ylabel("Selected viewpoints / weighted baseline")
+    ax_vp.set_title("Viewpoints (normalized, pooled across models)")
+    ax_vp.tick_params(axis="x", rotation=30)
 
-    cov_m = [_agg(mr, s, "coverage")[0] * 100 for s in strategies]
-    cov_s = [_agg(mr, s, "coverage")[1] * 100 for s in strategies]
+    cov_m, cov_s = _per_strategy_mean(mr, strategies, "coverage", mult=100.0)
     ax_cov.bar(short_labels, cov_m, yerr=cov_s, color=colors, capsize=3, alpha=0.85)
     ax_cov.axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
     ax_cov.set_ylabel("Coverage (%)")
-    ax_cov.set_title(f"Coverage ({model_name})")
-    ax_cov.tick_params(axis="x", rotation=40)
+    ax_cov.set_title("Coverage (pooled across models)")
+    ax_cov.tick_params(axis="x", rotation=30)
 
     fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e01_A_main"))
+    save_figure(fig, os.path.join(fig_dir, "e01_A_aggregated_viewpoints_coverage"))
 
-    # ── Fig 2: Candidate split (stacked bar: base | iterative + actual dot) ─
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
-    base_vals = [_agg(mr, s, "n_base_candidates")[0] for s in strategies]
-    iter_vals = [_agg(mr, s, "n_iterative_candidates")[0] for s in strategies]
-    actual_vals = [_agg(mr, s, "num_candidates")[0] for s in strategies]
-
-    x = np.arange(len(strategies))
-    ax.bar(x, base_vals, color="lightgrey", edgecolor="grey", label="Base (weighted)")
-    ax.bar(x, iter_vals, bottom=base_vals, color=colors, alpha=0.8, label="Iterative/CMA-ES")
-    ax.scatter(x, actual_vals, color="black", zorder=5, s=20, label="Actual generated")
-    ax.set_xticks(x)
-    ax.set_xticklabels(short_labels, rotation=40, ha="right")
-    ax.set_ylabel("Candidates")
-    ax.set_title(f"Candidate Split: Base vs Iterative ({model_name})\n"
-                 "Base sampler for hybrid strategies: weighted")
-    ax.legend(fontsize=7, ncol=3)
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e01_A_split"))
-
-    # ── Fig 3: Pool redundancy vs selected redundancy ────────────────────
+    # ── Fig 2: Redundancy (pool + selected, side-by-side, pooled) ───────
     fig, (ax_pool, ax_sel) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.5))
 
-    pool_m = [_agg(mr, s, "pool_redundancy")[0] for s in strategies]
-    pool_s = [_agg(mr, s, "pool_redundancy")[1] for s in strategies]
+    pool_m, pool_s = _per_strategy_mean(mr, strategies, "pool_redundancy")
     ax_pool.bar(short_labels, pool_m, yerr=pool_s, color=colors, capsize=3, alpha=0.85)
     ax_pool.set_ylabel("Avg candidates per surface point")
     ax_pool.set_title("Pool Redundancy (pre-set-cover)")
-    ax_pool.tick_params(axis="x", rotation=40)
+    ax_pool.tick_params(axis="x", rotation=30)
 
-    sel_m = [_agg(mr, s, "redundancy")[0] for s in strategies]
-    sel_s = [_agg(mr, s, "redundancy")[1] for s in strategies]
+    sel_m, sel_s = _per_strategy_mean(mr, strategies, "redundancy")
     ax_sel.bar(short_labels, sel_m, yerr=sel_s, color=colors, capsize=3, alpha=0.85)
     ax_sel.set_ylabel("Avg viewpoints per covered point")
     ax_sel.set_title("Selected Redundancy (post-set-cover)")
-    ax_sel.tick_params(axis="x", rotation=40)
+    ax_sel.tick_params(axis="x", rotation=30)
 
     fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e01_A_redundancy"))
+    save_figure(fig, os.path.join(fig_dir, "e01_A_aggregated_redundancy"))
 
-    # ── Fig 4: Timing breakdown (stacked bar) ────────────────────────────
+    # ── Fig 3: Stage timing (stacked bar, absolute seconds, pooled mean) ─
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
     stacked_bar(ax, short_labels,
                 {
-                    "Sampling": [_agg(mr, s, "sampling_time")[0] for s in strategies],
-                    "Visibility": [_agg(mr, s, "visibility_time")[0] for s in strategies],
-                    "Optimization": [_agg(mr, s, "optimization_time")[0] for s in strategies],
+                    "Sampling": _per_strategy_mean(mr, strategies, "sampling_time")[0],
+                    "Visibility": _per_strategy_mean(mr, strategies, "visibility_time")[0],
+                    "Optimization": _per_strategy_mean(mr, strategies, "optimization_time")[0],
                 },
                 ylabel="Time (s)",
-                title=f"Per-Stage Timing ({model_name})")
-    ax.tick_params(axis="x", rotation=40)
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e01_A_timing"))
+                title="Per-Stage Timing (mean across models)")
+    ax.tick_params(axis="x", rotation=30)
+    save_figure(fig, os.path.join(fig_dir, "e01_A_aggregated_timing"))
 
-    logger.info("Section A figures saved for %s", model_name)
+    # ── Fig 4: By-model grouped bars (absolute viewpoints) ──────────────
+    models = sorted(set(r["model"] for r in mr))
+    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
+    # data: strategy -> list of means, one per model
+    vp_data: dict = {}
+    for s in strategies:
+        per_model = []
+        for m in models:
+            vals = [r["num_viewpoints"] for r in mr
+                    if r["strategy"] == s and r["model"] == m]
+            per_model.append(float(np.mean(vals)) if vals else float("nan"))
+        vp_data[s.replace("weighted_curvature", "w_curv")] = per_model
+    grouped_bar(ax, vp_data, models,
+                ylabel="Selected viewpoints",
+                title="Viewpoints by Model (absolute, per strategy)")
+    ax.set_xlabel("Model")
+    ax.tick_params(axis="x", rotation=30)
+    save_figure(fig, os.path.join(fig_dir, "e01_A_by_model_viewpoints"))
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Section B plots
-# ═══════════════════════════════════════════════════════════════════════════
-
-def generate_plots_B(results: list[dict], strategies: list[str],
-                     k_values: list[int], fig_dir: str):
-    """Generate Section B figures (k-coverage sweep, averaged over TOSCA models)."""
-    br = [r for r in results if r["section"] == "B"]
-    if not br:
-        return
-
-    def _mean_over_models(strategy, k, metric):
-        vals = [r[metric] for r in br if r["strategy"] == strategy and r["k_coverage"] == k]
-        return float(np.mean(vals)) if vals else float("nan")
-
-    # ── Fig 5: Viewpoints vs k ────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-    for strat in strategies:
-        ys = [_mean_over_models(strat, k, "num_viewpoints") for k in k_values]
-        ax.plot(k_values, ys, marker=_B_MARKERS.get(strat, "o"),
-                linestyle=_B_LINESTYLES.get(strat, "solid"),
-                color=_bar_color(strat), label=strat, linewidth=1.5)
-    ax.set_xlabel("k-coverage requested")
-    ax.set_ylabel("Selected viewpoints")
-    ax.set_title("Viewpoints vs k-Coverage (TOSCA, N=1500·k)")
-    ax.set_xticks(k_values)
-    ax.legend()
-    save_figure(fig, os.path.join(fig_dir, "e01_B_viewpoints_vs_k"))
-
-    # ── Fig 6: Coverage vs k ──────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-    for strat in strategies:
-        ys = [_mean_over_models(strat, k, "coverage") * 100 for k in k_values]
-        ax.plot(k_values, ys, marker=_B_MARKERS.get(strat, "o"),
-                linestyle=_B_LINESTYLES.get(strat, "solid"),
-                color=_bar_color(strat), label=strat, linewidth=1.5)
-    ax.axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8, label="95% target")
-    ax.set_xlabel("k-coverage requested")
-    ax.set_ylabel("Coverage (%)")
-    ax.set_title("Coverage vs k-Coverage (TOSCA, N=1500·k)")
-    ax.set_xticks(k_values)
-    ax.legend()
-    save_figure(fig, os.path.join(fig_dir, "e01_B_coverage_vs_k"))
-
-    # ── Fig 7: Sampling time vs k ─────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-    for strat in strategies:
-        ys = [_mean_over_models(strat, k, "sampling_time") for k in k_values]
-        ax.plot(k_values, ys, marker=_B_MARKERS.get(strat, "o"),
-                linestyle=_B_LINESTYLES.get(strat, "solid"),
-                color=_bar_color(strat), label=strat, linewidth=1.5)
-    ax.set_xlabel("k-coverage requested")
-    ax.set_ylabel("Sampling time (s)")
-    ax.set_title("Sampling Cost vs k-Coverage (TOSCA)")
-    ax.set_xticks(k_values)
-    ax.legend()
-    save_figure(fig, os.path.join(fig_dir, "e01_B_samplingtime_vs_k"))
-
-    # ── Fig 8: Actual candidates generated vs requested ───────────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-    for strat in strategies:
-        xs = [_SECTION_B_BASE_N * k for k in k_values]
-        ys = [_mean_over_models(strat, k, "num_candidates") for k in k_values]
-        ax.plot(xs, ys, marker=_B_MARKERS.get(strat, "o"),
-                linestyle=_B_LINESTYLES.get(strat, "solid"),
-                color=_bar_color(strat), label=strat, linewidth=1.5)
-    ax.plot(xs, xs, "k--", alpha=0.3, label="N requested")
-    ax.set_xlabel("Candidates requested (1500·k)")
-    ax.set_ylabel("Candidates generated")
-    ax.set_title("CMA-ES Early Stopping vs k-Coverage (TOSCA)")
-    ax.legend()
-    save_figure(fig, os.path.join(fig_dir, "e01_B_candidates_generated"))
-
-    logger.info("Section B figures saved to %s", fig_dir)
+    logger.info("Section A aggregated figures saved")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -417,22 +343,15 @@ def generate_plots_B(results: list[dict], strategies: list[str],
 
 def main():
     p = argparse.ArgumentParser(description="E1: Sampling Strategy Comparison")
-    p.add_argument("--section", choices=["A", "B", "both"], default="both",
-                   help="Which section to run (default: both)")
-    p.add_argument("--models_A", nargs="+",
+    p.add_argument("--models", nargs="+",
                    default=["duke_of_lancaster"] + TOSCA_REPRESENTATIVE,
-                   help="Models for Section A")
-    p.add_argument("--models_B", nargs="+",
-                   default=TOSCA_REPRESENTATIVE,
-                   help="Models for Section B (TOSCA only)")
-    p.add_argument("--strategies_A", nargs="+", default=E01_STRATEGIES_A)
-    p.add_argument("--strategies_B", nargs="+", default=E01_STRATEGIES_B)
-    p.add_argument("--k_values", type=int, nargs="+", default=E01_K_VALUES)
+                   help="Models to evaluate")
+    p.add_argument("--strategies", nargs="+", default=_E01_STRATEGIES)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--target_coverage", type=float, default=0.95)
     p.add_argument("--output_dir",
                    default=os.path.join(RESULTS_DIR, "e01_sampling_strategy"))
-    p.add_argument("--skip_existing", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -446,7 +365,6 @@ def main():
     os.makedirs(raw_dir, exist_ok=True)
     all_results: list[dict] = []
 
-    # ── Build model configs ───────────────────────────────────────────────
     def _make_cfg(name: str):
         if name == "duke_of_lancaster":
             return ModelConfig.duke_of_lancaster()
@@ -456,115 +374,54 @@ def main():
             logger.warning("Model not found: %s", name)
             return None
 
-    run_section_A = args.section in ("A", "both")
-    run_section_B = args.section in ("B", "both")
-
     if not args.plots_only:
-        # ── Section A ─────────────────────────────────────────────────────
-        if run_section_A:
-            a_cfgs = [c for name in args.models_A if (c := _make_cfg(name)) is not None]
-            combos_A = [
-                (cfg, s, seed)
-                for cfg in a_cfgs
-                for s in args.strategies_A
-                for seed in args.seeds
-            ]
-            total_A = len(combos_A)
-            logger.info("Section A: %d runs (%d models × %d strategies × %d seeds)",
-                        total_A, len(a_cfgs), len(args.strategies_A), len(args.seeds))
+        cfgs = [c for name in args.models if (c := _make_cfg(name)) is not None]
+        total = len(cfgs) * len(args.strategies) * len(args.seeds)
+        logger.info("E1: %d runs (%d models × %d strategies × %d seeds)",
+                    total, len(cfgs), len(args.strategies), len(args.seeds))
 
-            # Group by model so we load mesh once per model
-            for cfg in a_cfgs:
-                logger.info("=" * 60)
-                logger.info("Section A — Model: %s", cfg.name)
-                try:
-                    ctx = PipelineContext(cfg)
-                    ctx.load_mesh()
-                    ctx.sample_surface(seed=42)
-                    ctx.build_sampling_og()
-                except DegenerateNormalsError as e:
-                    logger.warning("Skipping %s: %s", cfg.name, e)
-                    continue
+        for cfg in cfgs:
+            logger.info("=" * 60)
+            logger.info("Model: %s", cfg.name)
+            try:
+                ctx = PipelineContext(cfg)
+                ctx.load_mesh()
+                ctx.sample_surface(seed=42)
+                ctx.build_sampling_og()
+            except DegenerateNormalsError as e:
+                logger.warning("Skipping %s: %s", cfg.name, e)
+                continue
 
-                model_combos = [(s, seed) for s in args.strategies_A for seed in args.seeds]
-                for idx, (strategy, seed) in enumerate(model_combos, 1):
-                    rpath = os.path.join(
-                        raw_dir, f"A_model={cfg.name}_strategy={strategy}_seed={seed}")
-                    if args.skip_existing and os.path.exists(rpath + ".json"):
-                        logger.info("[A %d/%d] SKIP %s %s seed=%d",
-                                    idx, len(model_combos), cfg.name, strategy, seed)
-                        all_results.append(load_run_result(rpath))
-                        continue
-
-                    logger.info("[A %d/%d] model=%s strategy=%s seed=%d",
+            model_combos = [(s, seed) for s in args.strategies for seed in args.seeds]
+            for idx, (strategy, seed) in enumerate(model_combos, 1):
+                rpath = os.path.join(
+                    raw_dir, f"A_model={cfg.name}_strategy={strategy}_seed={seed}")
+                if args.resume and os.path.exists(rpath + ".json"):
+                    logger.info("[%d/%d] SKIP %s %s seed=%d",
                                 idx, len(model_combos), cfg.name, strategy, seed)
-                    try:
-                        viz_path = None
-                        if cfg.name == "duke_of_lancaster" and seed == SEEDS_3[0]:
-                            viz_dir = os.path.join(args.output_dir, "viz")
-                            os.makedirs(viz_dir, exist_ok=True)
-                            viz_path = os.path.join(
-                                viz_dir, f"strategy={strategy}_seed={seed}")
-                        result = run_single_A(ctx, strategy, seed, args.target_coverage,
-                                              viz_path=viz_path)
-                        all_results.append(result)
-                        save_run_result(result, rpath)
-                        logger.info("  VPs=%d cov=%.2f%% actual=%d time=%.1fs",
-                                    result["num_viewpoints"], result["coverage"] * 100,
-                                    result["num_candidates"], result["total_time"])
-                    except Exception as e:
-                        logger.error("  FAILED: %s", e, exc_info=True)
-                    finally:
-                        free_gpu_memory()
-
-        # ── Section B ─────────────────────────────────────────────────────
-        if run_section_B:
-            b_cfgs = [c for name in args.models_B if (c := _make_cfg(name)) is not None]
-            logger.info("Section B: %d models × %d strategies × %d k-values × %d seeds",
-                        len(b_cfgs), len(args.strategies_B),
-                        len(args.k_values), len(args.seeds))
-
-            for cfg in b_cfgs:
-                logger.info("=" * 60)
-                logger.info("Section B — Model: %s", cfg.name)
-                try:
-                    ctx = PipelineContext(cfg)
-                    ctx.load_mesh()
-                    ctx.sample_surface(seed=42)
-                    ctx.build_sampling_og()
-                except DegenerateNormalsError as e:
-                    logger.warning("Skipping %s: %s", cfg.name, e)
+                    all_results.append(load_run_result(rpath))
                     continue
 
-                b_combos = [
-                    (s, k, seed)
-                    for s in args.strategies_B
-                    for k in args.k_values
-                    for seed in args.seeds
-                ]
-                for idx, (strategy, k, seed) in enumerate(b_combos, 1):
-                    rpath = os.path.join(
-                        raw_dir,
-                        f"B_model={cfg.name}_strategy={strategy}_k={k}_seed={seed}")
-                    if args.skip_existing and os.path.exists(rpath + ".json"):
-                        logger.info("[B %d/%d] SKIP %s %s k=%d seed=%d",
-                                    idx, len(b_combos), cfg.name, strategy, k, seed)
-                        all_results.append(load_run_result(rpath))
-                        continue
-
-                    logger.info("[B %d/%d] model=%s strategy=%s k=%d seed=%d",
-                                idx, len(b_combos), cfg.name, strategy, k, seed)
-                    try:
-                        result = run_single_B(ctx, strategy, k, seed, args.target_coverage)
-                        all_results.append(result)
-                        save_run_result(result, rpath)
-                        logger.info("  VPs=%d cov=%.2f%% actual=%d time=%.1fs",
-                                    result["num_viewpoints"], result["coverage"] * 100,
-                                    result["num_candidates"], result["total_time"])
-                    except Exception as e:
-                        logger.error("  FAILED: %s", e, exc_info=True)
-                    finally:
-                        free_gpu_memory()
+                logger.info("[%d/%d] model=%s strategy=%s seed=%d",
+                            idx, len(model_combos), cfg.name, strategy, seed)
+                try:
+                    viz_path = None
+                    if cfg.name == "duke_of_lancaster" and seed == SEEDS_3[0]:
+                        viz_dir = os.path.join(args.output_dir, "viz")
+                        os.makedirs(viz_dir, exist_ok=True)
+                        viz_path = os.path.join(
+                            viz_dir, f"strategy={strategy}_seed={seed}")
+                    result = run_single_A(ctx, strategy, seed, args.target_coverage,
+                                          viz_path=viz_path)
+                    all_results.append(result)
+                    save_run_result(result, rpath)
+                    logger.info("  VPs=%d cov=%.2f%% actual=%d time=%.1fs",
+                                result["num_viewpoints"], result["coverage"] * 100,
+                                result["num_candidates"], result["total_time"])
+                except Exception as e:
+                    logger.error("  FAILED: %s", e, exc_info=True)
+                finally:
+                    free_gpu_memory()
 
     else:
         for fname in sorted(os.listdir(raw_dir)):
@@ -577,24 +434,20 @@ def main():
         fig_dir = os.path.join(args.output_dir, "figures")
         os.makedirs(fig_dir, exist_ok=True)
 
-        a_models = sorted(set(r["model"] for r in all_results if r["section"] == "A"))
-        if a_models and run_section_A:
-            for model_name in a_models:
-                generate_plots_A(all_results, args.strategies_A, fig_dir, model_name)
-
-        b_results = [r for r in all_results if r["section"] == "B"]
-        if b_results and run_section_B:
-            generate_plots_B(b_results, args.strategies_B, args.k_values, fig_dir)
+        a_results = [r for r in all_results if r.get("section") == "A"]
+        if a_results:
+            generate_plots_A(a_results, args.strategies, fig_dir)
 
         # ── Summary table ──────────────────────────────────────────────
-        logger.info("\n%s\nE1 SECTION A SUMMARY\n%s", "=" * 80, "=" * 80)
-        for model_name in a_models:
+        models = sorted(set(r["model"] for r in a_results))
+        logger.info("\n%s\nE1 SUMMARY\n%s", "=" * 80, "=" * 80)
+        for model_name in models:
             logger.info("\nModel: %s", model_name)
             logger.info("%-22s %8s %10s %10s %8s %8s",
                         "Strategy", "VPs", "Coverage%", "Time(s)", "PoolRed", "SelRed")
             logger.info("-" * 72)
-            mr = [r for r in all_results if r["model"] == model_name and r["section"] == "A"]
-            for s in args.strategies_A:
+            mr = [r for r in a_results if r["model"] == model_name]
+            for s in args.strategies:
                 sr = [r for r in mr if r["strategy"] == s]
                 if sr:
                     logger.info(

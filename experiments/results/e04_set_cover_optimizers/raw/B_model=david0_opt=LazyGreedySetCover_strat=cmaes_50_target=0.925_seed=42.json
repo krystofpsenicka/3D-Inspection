@@ -1,0 +1,13 @@
+{
+  "model": "david0",
+  "optimizer": "LazyGreedySetCover",
+  "input_strategy": "cmaes_50",
+  "target_coverage": 0.925,
+  "seed": 42,
+  "num_candidates": 251,
+  "num_viewpoints": 20,
+  "coverage": 0.9263,
+  "optimization_time": 0.017214206003700383,
+  "redundancy": 1.3580482006072998,
+  "section": "B"
+}

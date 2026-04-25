@@ -8,17 +8,17 @@ Pipeline stages timed:
   1. Mesh loading
   2. Surface sampling
   3. Occupancy grid
-  4. Viewpoint sampling  (targeted_50 — chosen based on e01 results)
+  4. Viewpoint sampling  (weighted_curvature — chosen based on e01 results)
   5. Visibility          (GPU raycast — ground truth, from e03 results)
   6. Set cover           (LazyGreedy CPU — fastest solver, from e04 results)
-  7. VRP routing         (HiGHS, K=2 robots — from e08 results)
+  7. VRP routing         (cuOpt, K=5 robots — from e08 results)
   8. MAPF trajectory     (resolution 0.5 m — from e10 results)
 
 Implementation choice rationale (printed in summary and figure annotations):
-  - Sampler: targeted_50 achieves the best coverage/viewpoints ratio (e01)
+  - Sampler: weighted_curvature achieves the best coverage/viewpoints ratio (e01)
   - Visibility: GPU raycast is exact and fastest for N≤5K candidates (e03)
   - Set cover: LazyGreedy (CPU) beats LazyGreedy (GPU) for N~1500 due to heap (e04)
-  - VRP: HiGHS LP solver achieves near-optimal within time limit (e08)
+  - VRP: cuOpt achieves near-optimal within time limit (e08)
   - MAPF: 0.5 m voxel resolution balances path quality vs planning cost (e10)
 
 Usage:
@@ -47,10 +47,14 @@ if _PROJECT_ROOT not in sys.path:
 from experiments.common.config import (
     ModelConfig, SEEDS_3, TOSCA_ALL, RESULTS_DIR,
 )
-from experiments.common.runner import set_seed, timed, free_gpu_memory
+from experiments.common.runner import set_seed, timed, free_gpu_memory, handle_row_exception, is_oom
 from experiments.common.pipeline_setup import PipelineContext, DegenerateNormalsError
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.sampling_dispatch import sample_strategy
+from experiments.common.lower_bounds import joint_problem_lb, JOINT_LB_FIELDS
+from experiments.common.lb_sidecar import (
+    compute_all_lbs, save_lb_json, load_raw_lb_dir, ALL_LB_FIELDS,
+)
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, grouped_bar, stacked_bar,
     THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
@@ -61,13 +65,17 @@ logger = logging.getLogger(__name__)
 
 ALL_MODELS = ["duke_of_lancaster"] + TOSCA_ALL
 TARGET_COVERAGE = 0.95
-FLEET_SIZE = 2   # robots for VRP/MAPF
+FLEET_SIZE = 5   # robots for VRP/MAPF
+VRP_ALPHA = 0.5  # blend β in eq. (1.1): 0.5 · makespan + 0.5 · total_cost
+
+# Fields persisted as an LB sidecar JSON next to each main result.
+LB_SIDECAR_FIELDS = tuple(JOINT_LB_FIELDS) + tuple(ALL_LB_FIELDS)
 
 _IMPLEMENTATION_CHOICES = (
-    "Sampler: targeted_50 (best coverage/viewpoints, e01)  |  "
+    "Sampler: weighted_curvature (SDF² + curvature bias, e01)  |  "
     "Visibility: GPU raycast (exact, e03)  |  "
     "Set cover: LazyGreedy CPU (O(log N) heap, fastest, e04)  |  "
-    "VRP: HiGHS (near-optimal, e08)  |  "
+    "VRP: cuOpt (near-optimal, e08)  |  "
     "MAPF: 0.5 m resolution (e10)"
 )
 
@@ -78,10 +86,13 @@ try:
     from VRP.core.types import VRPBackend, ExecutionResult
     from VRP.mapf.mapf_planner import MultiAgentPathPlanner
     from VRP.core.geometry import compute_start_grid
+    from VRP.core.constants import AUV_CRUISE_SPEED, SPACE_TIME_DWELL_S
     _VRP_AVAILABLE = True
 except ImportError as _vrp_err:
     logger.warning("VRP/MAPF stack not available (%s) — stages 7/8 will be skipped.", _vrp_err)
     _VRP_AVAILABLE = False
+    AUV_CRUISE_SPEED = 2.0
+    SPACE_TIME_DWELL_S = 2.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -96,13 +107,20 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         # Stage timings
         "t_mesh": 0.0, "t_surface": 0.0, "t_og": 0.0,
         "t_sample": 0.0, "t_vis": 0.0, "t_opt": 0.0,
-        "t_vrp": 0.0, "t_mapf": 0.0,
+        "t_vrp": 0.0, "t_mapf": 0.0, "t_joint_lb": 0.0,
         # Metrics
         "mesh_vertices": 0, "mesh_faces": 0,
         "num_viewpoints": 0, "coverage": 0.0, "redundancy": 0.0,
-        "vrp_makespan": float("nan"), "vrp_status": "skipped",
+        "vrp_makespan": float("nan"), "vrp_total_cost": float("nan"),
+        "vrp_status": "skipped",
         "mapf_steps": 0, "mapf_collisions": 0,
+        "mapf_makespan_s": float("nan"), "mapf_total_time_s": float("nan"),
     }
+    # Joint-problem + stage LB fields (all 0.0 if not filled in).
+    for k in JOINT_LB_FIELDS:
+        result[k] = 0 if k.endswith("poses_lb") else 0.0
+    for k in ALL_LB_FIELDS:
+        result[k] = 0.0
 
     # 1. Mesh loading
     with timed() as t_mesh:
@@ -121,12 +139,12 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         og = ctx.build_sampling_og()
     result["t_og"] = t_og.elapsed
 
-    # 4. Viewpoint sampling (targeted_50)
+    # 4. Viewpoint sampling (weighted_curvature)
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
     with timed() as t_sample:
         pos_gpu, rot_gpu, _, _, _, _ = sample_strategy(
-            ctx, "targeted_50", model_cfg.num_candidates,
+            ctx, "weighted_curvature", model_cfg.num_candidates,
             target_points, normals, vis_query, model_cfg,
         )
     result["t_sample"] = t_sample.elapsed
@@ -141,6 +159,36 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)
     num_points = int(len(target_points))
+
+    # Joint-problem lower bound — computed here (after visibility) so
+    # we have V_np for Component 1. Depot layout matches the VRP stage.
+    if _VRP_AVAILABLE:
+        try:
+            bounds_min, bounds_max = ctx.mesh_bounds
+            _robot_starts_lb = compute_start_grid(
+                FLEET_SIZE, bounds_min, bounds_max)
+            _home_lb = np.array(
+                [[float(x[0]), float(x[1]), float(x[2])] for x in _robot_starts_lb],
+                dtype=np.float32)
+            _tp_np = (cp.asnumpy(target_points) if hasattr(target_points, "get")
+                      else np.asarray(target_points))
+            with timed() as t_joint_lb:
+                joint_lb = joint_problem_lb(
+                    V_np, _tp_np, _home_lb,
+                    alpha_coverage=TARGET_COVERAGE,
+                    beta_blend=VRP_ALPHA,
+                    frustum_far=float(model_cfg.frustum.far),
+                    cruise_speed=AUV_CRUISE_SPEED,
+                    dwell_s=SPACE_TIME_DWELL_S,
+                    fleet_size=FLEET_SIZE,
+                )
+            result["t_joint_lb"] = t_joint_lb.elapsed
+            for k in JOINT_LB_FIELDS:
+                result[k] = joint_lb[k]
+        except Exception as e:
+            if is_oom(e):
+                raise
+            logger.warning("Joint LB failed: %s", e, exc_info=True)
 
     with timed() as t_opt:
         optimizer = LazyGreedySetCover(num_points, pos_np, rot_np, V_np)
@@ -166,7 +214,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                                  "t_sample", "t_vis", "t_opt"))
         return result
 
-    # 7. VRP routing (HiGHS, K=FLEET_SIZE robots)
+    # 7. VRP routing (cuOpt, K=FLEET_SIZE robots)
     try:
         bounds_min, bounds_max = ctx.mesh_bounds
         robot_starts = compute_start_grid(FLEET_SIZE, bounds_min, bounds_max)
@@ -186,9 +234,26 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                 depots=home_indices,
                 backend=VRPBackend.CUOPT,
                 time_limit=60,
+                alpha=VRP_ALPHA,
             )
         result["t_vrp"] = t_vrp.elapsed
         result["vrp_status"] = vrp_result.status
+        result["vrp_total_cost"] = float(vrp_result.total_cost)
+
+        # Stage LBs for VRP / MAPF in meters/seconds, using the same
+        # dist_matrix and the cuOpt dual bound.
+        try:
+            stage_lb = compute_all_lbs(
+                dist_matrix, home_indices, FLEET_SIZE,
+                opt_result.num_viewpoints, VRP_ALPHA,
+                include_mapf=True,
+                vrp_best_bound_m=vrp_result.best_bound,
+                vrp_objective_value_m=vrp_result.objective_value,
+            )
+            for k in ALL_LB_FIELDS:
+                result[k] = float(stage_lb.get(k, 0.0))
+        except Exception as e:
+            logger.warning("Stage LB (compute_all_lbs) failed: %s", e)
 
         if any(vrp_result.routes):
             from VRP.vrp._helpers import per_vehicle_costs
@@ -216,6 +281,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                     waypoint_rotmats=wp_rot_gpu,
                     home_indices=set(home_indices),
                     dist_matrix=dist_matrix,
+                    alpha=VRP_ALPHA,
                 )
             result["t_mapf"] = t_mapf.elapsed
 
@@ -223,10 +289,17 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                 result["mapf_steps"] = max(
                     len(t) for t in exec_result.all_traj_positions)
             result["mapf_collisions"] = sum(exec_result.fail_counts)
+            result["mapf_makespan_s"] = float(exec_result.actual_makespan)
+            if exec_result.actual_per_vehicle_times:
+                result["mapf_total_time_s"] = float(
+                    sum(exec_result.actual_per_vehicle_times))
         else:
             result["vrp_status"] = "empty_routes"
 
     except Exception as e:
+        if is_oom(e):
+            # Propagate so the outer per-row handler can exit under --resume.
+            raise
         logger.error("VRP/MAPF stage failed: %s", e, exc_info=True)
         result["vrp_status"] = f"error: {e}"
 
@@ -263,29 +336,54 @@ def generate_plots(results: list[dict], output_dir: str):
     )
 
     def _mm(model, metric):
-        vals = [r[metric] for r in results if r["model"] == model
-                and not (isinstance(r[metric], float) and np.isnan(r[metric]))]
+        vals = []
+        for r in results:
+            if r.get("model") != model or metric not in r:
+                continue
+            v = r[metric]
+            if isinstance(v, float) and np.isnan(v):
+                continue
+            vals.append(v)
         return float(np.mean(vals)) if vals else float("nan")
 
     def _ms(model, metric):
-        vals = [r[metric] for r in results if r["model"] == model
-                and not (isinstance(r[metric], float) and np.isnan(r[metric]))]
+        vals = []
+        for r in results:
+            if r.get("model") != model or metric not in r:
+                continue
+            v = r[metric]
+            if isinstance(v, float) and np.isnan(v):
+                continue
+            vals.append(v)
         return float(np.std(vals)) if vals else 0.0
 
     subtitle = f"\n{_IMPLEMENTATION_CHOICES}"
 
-    # ── Fig 1: Viewpoints by model ─────────────────────────────────────
+    # ── Fig 1: Viewpoints by model (with N_poses LB overlay) ──────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     vp_m = [_mm(m, "num_viewpoints") for m in models]
     vp_s = [_ms(m, "num_viewpoints") for m in models]
     x = np.arange(len(models))
     bars = ax.bar(x, vp_m, 0.6, yerr=vp_s, capsize=3,
-                  color=CATEGORICAL_COLORS[0], alpha=0.85)
+                  color=CATEGORICAL_COLORS[0], alpha=0.85,
+                  label="Selected")
     ax.bar_label(bars, fmt="%.0f", fontsize=7, padding=2)
+    match_lb = [_mm(m, "joint_n_poses_lb") for m in models]
+    info_lb = [_mm(m, "joint_info_n_poses_lb") for m in models]
+    for xi, (mlb, ilb) in enumerate(zip(match_lb, info_lb)):
+        if mlb > 0:
+            ax.hlines(mlb, xi - 0.3, xi + 0.3, colors="black",
+                      linestyles=":", linewidth=1.2,
+                      label="Matching LB" if xi == 0 else None)
+        if ilb > 0:
+            ax.hlines(ilb, xi - 0.3, xi + 0.3, colors="gray",
+                      linestyles="--", linewidth=1.0,
+                      label="Info-theoretic LB" if xi == 0 else None)
     ax.set_xticks(x)
     ax.set_xticklabels(models, rotation=35, ha="right")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title(f"Viewpoints by Model (95% coverage){subtitle}", fontsize=9)
+    ax.legend(fontsize=7, loc="upper left")
     save_figure(fig, os.path.join(fig_dir, "e15_viewpoints"))
 
     # ── Fig 2: Coverage by model ────────────────────────────────────────
@@ -322,25 +420,56 @@ def generate_plots(results: list[dict], output_dir: str):
     ax.tick_params(axis="x", rotation=35)
     save_figure(fig, os.path.join(fig_dir, "e15_timing_breakdown"))
 
-    # ── Fig 4: VRP makespan by model (if available) ─────────────────────
-    vrp_results = [r for r in results if not np.isnan(r.get("vrp_makespan", float("nan")))]
-    if vrp_results:
+    # ── Fig 4: VRP makespan by model (with stage LB band) ──────────────
+    def _vrp_bar_with_lb(metric: str, lb_field: str, title: str,
+                         ylabel: str, stem: str, color_idx: int):
+        vrp_rows = [r for r in results
+                    if not np.isnan(r.get(metric, float("nan")))]
+        if not vrp_rows:
+            return
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-        vrp_m = [_mm(m, "vrp_makespan") for m in models]
-        vrp_s = [_ms(m, "vrp_makespan") for m in models]
-        valid_mask = [not np.isnan(v) for v in vrp_m]
-        valid_models = [m for m, v in zip(models, valid_mask) if v]
-        valid_m = [v for v, ok in zip(vrp_m, valid_mask) if ok]
-        valid_s = [v for v, ok in zip(vrp_s, valid_mask) if ok]
-        if valid_models:
-            xv = np.arange(len(valid_models))
-            ax.bar(xv, valid_m, 0.6, yerr=valid_s, capsize=3,
-                   color=CATEGORICAL_COLORS[3], alpha=0.85)
-            ax.set_xticks(xv)
-            ax.set_xticklabels(valid_models, rotation=35, ha="right")
-            ax.set_ylabel("VRP makespan (m)")
-            ax.set_title(f"VRP Makespan by Model (K={FLEET_SIZE})")
-            save_figure(fig, os.path.join(fig_dir, "e15_vrp_makespan"))
+        vm = [_mm(m, metric) for m in models]
+        vs = [_ms(m, metric) for m in models]
+        valid_models = [m for m, v in zip(models, vm) if not np.isnan(v)]
+        valid_m = [v for v in vm if not np.isnan(v)]
+        valid_s = [s for v, s in zip(vm, vs) if not np.isnan(v)]
+        if not valid_models:
+            return
+        xv = np.arange(len(valid_models))
+        ax.bar(xv, valid_m, 0.6, yerr=valid_s, capsize=3,
+               color=CATEGORICAL_COLORS[color_idx], alpha=0.85,
+               label="Observed")
+        # LB overlay (prefer cuOpt dual bound when present).
+        lb_vals = []
+        for m in valid_models:
+            cu = _mm(m, "vrp_objective_best_bound_m")
+            an = _mm(m, lb_field)
+            lb_vals.append(max(cu, an) if cu > 0 else an)
+        if any(v > 0 for v in lb_vals):
+            ax.scatter(xv, lb_vals, marker="_", s=200, color="black",
+                       linewidths=1.5, zorder=5, label="LB")
+            for xi, (obs, lb) in enumerate(zip(valid_m, lb_vals)):
+                if lb > 0 and obs > 0:
+                    gap = (obs - lb) / lb * 100.0
+                    ax.text(xi, obs, f" +{gap:.0f}%",
+                            fontsize=6, ha="center", va="bottom")
+        ax.set_xticks(xv)
+        ax.set_xticklabels(valid_models, rotation=35, ha="right")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend(fontsize=7)
+        save_figure(fig, os.path.join(fig_dir, stem))
+
+    _vrp_bar_with_lb(
+        "vrp_makespan", "vrp_makespan_lb_m",
+        f"VRP Makespan by Model (K={FLEET_SIZE}, α={VRP_ALPHA})",
+        "VRP makespan (m)", "e15_vrp_makespan", 3,
+    )
+    _vrp_bar_with_lb(
+        "vrp_total_cost", "vrp_total_cost_lb_m",
+        f"VRP Total Cost by Model (K={FLEET_SIZE}, α={VRP_ALPHA})",
+        "VRP total cost (m)", "e15_vrp_total_cost", 2,
+    )
 
     # ── Fig 5: Viewpoints vs mesh complexity (scatter) ───────────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
@@ -358,7 +487,89 @@ def generate_plots(results: list[dict], output_dir: str):
     ax.set_title("Viewpoints vs Mesh Complexity")
     save_figure(fig, os.path.join(fig_dir, "e15_scatter_faces_vs_vps"))
 
+    # ── Fig 6: Joint-problem makespan gap (seconds) ────────────────────
+    def _paired_gap_fig(value_fn, lb_field: str, title: str, ylabel: str,
+                        stem: str):
+        rows = [(m, [value_fn(r) for r in results if r["model"] == m])
+                for m in models]
+        rows = [(m, [v for v in vs if v is not None]) for m, vs in rows]
+        rows = [(m, vs) for m, vs in rows if vs]
+        if not rows:
+            return
+        lbs = []
+        for m, _ in rows:
+            lb = _mm(m, lb_field)
+            lbs.append(lb if lb > 0 else float("nan"))
+        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
+        xv = np.arange(len(rows))
+        obs_mean = [float(np.mean(vs)) for _, vs in rows]
+        obs_std = [float(np.std(vs)) for _, vs in rows]
+        w = 0.38
+        ax.bar(xv - w / 2, lbs, w, color=CATEGORICAL_COLORS[2], alpha=0.85,
+               label="Joint LB")
+        bars = ax.bar(xv + w / 2, obs_mean, w, yerr=obs_std, capsize=3,
+                      color=CATEGORICAL_COLORS[3], alpha=0.85,
+                      label="Observed")
+        for xi, (obs, lb) in enumerate(zip(obs_mean, lbs)):
+            if lb and not np.isnan(lb) and lb > 0:
+                gap = (obs - lb) / lb * 100.0
+                ax.text(xi + w / 2, obs, f" +{gap:.0f}%",
+                        fontsize=6, ha="center", va="bottom")
+        ax.set_xticks(xv)
+        ax.set_xticklabels([m for m, _ in rows], rotation=35, ha="right")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend(fontsize=7)
+        save_figure(fig, os.path.join(fig_dir, stem))
+
+    _paired_gap_fig(
+        lambda r: r.get("mapf_makespan_s") if not np.isnan(
+            r.get("mapf_makespan_s", float("nan"))) else None,
+        "joint_makespan_lb_s",
+        f"Joint Makespan Gap (K={FLEET_SIZE}, α={VRP_ALPHA})",
+        "Makespan (s)",
+        "e15_joint_makespan_gap",
+    )
+    _paired_gap_fig(
+        _observed_objective_s,
+        "joint_objective_lb_s",
+        f"Joint Objective Gap (β={VRP_ALPHA})",
+        f"β·makespan + (1-β)·total (s)",
+        "e15_joint_objective_gap",
+    )
+
     logger.info("E15 figures saved to %s", fig_dir)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Joint-LB gap helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _observed_objective_s(r: dict) -> float | None:
+    """β · observed_makespan + (1-β) · observed_total_time, or None if
+    MAPF did not run / times are missing."""
+    mks = r.get("mapf_makespan_s", float("nan"))
+    tot = r.get("mapf_total_time_s", float("nan"))
+    if np.isnan(mks) or np.isnan(tot):
+        return None
+    return VRP_ALPHA * mks + (1.0 - VRP_ALPHA) * tot
+
+
+def _objective_gap_pct(r: dict) -> float | None:
+    """(observed − joint_objective_LB) / joint_objective_LB × 100, or None."""
+    obs = _observed_objective_s(r)
+    lb = r.get("joint_objective_lb_s", 0.0)
+    if obs is None or lb is None or lb <= 0:
+        return None
+    return (obs - lb) / lb * 100.0
+
+
+def _makespan_gap_pct(r: dict) -> float | None:
+    mks = r.get("mapf_makespan_s", float("nan"))
+    lb = r.get("joint_makespan_lb_s", 0.0)
+    if np.isnan(mks) or lb <= 0:
+        return None
+    return (mks - lb) / lb * 100.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -371,7 +582,7 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir",
                    default=os.path.join(RESULTS_DIR, "e15_cross_model"))
-    p.add_argument("--skip_existing", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -386,7 +597,9 @@ def main():
         logger.warning("VRP/MAPF stack not available — stages 7/8 will be skipped")
 
     raw_dir = os.path.join(args.output_dir, "raw")
+    raw_lb_dir = os.path.join(args.output_dir, "raw_lb")
     os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs(raw_lb_dir, exist_ok=True)
     all_results: list[dict] = []
 
     if not args.plots_only:
@@ -417,9 +630,11 @@ def main():
 
             for seed in args.seeds:
                 run_idx += 1
-                rpath = os.path.join(raw_dir, f"model={model_cfg.name}_seed={seed}")
+                stem = f"model={model_cfg.name}_seed={seed}"
+                rpath = os.path.join(raw_dir, stem)
+                lb_stem = os.path.join(raw_lb_dir, stem)
 
-                if args.skip_existing and os.path.exists(rpath + ".json"):
+                if args.resume and os.path.exists(rpath + ".json"):
                     logger.info("[%d/%d] SKIP %s seed=%d",
                                 run_idx, total, model_cfg.name, seed)
                     all_results.append(load_run_result(rpath))
@@ -431,13 +646,27 @@ def main():
                     result = run_single(ctx, model_cfg, seed)
                     all_results.append(result)
                     save_run_result(result, rpath)
-                    logger.info("  vps=%d cov=%.2f%% t=%.1fs vrp=%s",
+                    save_lb_json(lb_stem,
+                                 {k: result[k] for k in LB_SIDECAR_FIELDS
+                                  if k in result})
+                    _gap = _objective_gap_pct(result)
+                    logger.info("  vps=%d cov=%.2f%% t=%.1fs vrp=%s "
+                                "mks=%.1fs jmks_lb=%.1fs jobj_gap=%s",
                                 result["num_viewpoints"],
                                 result["coverage"] * 100,
                                 result["total_time"],
-                                result["vrp_status"])
+                                result["vrp_status"],
+                                result["mapf_makespan_s"]
+                                if not np.isnan(result.get("mapf_makespan_s", float("nan")))
+                                else float("nan"),
+                                result.get("joint_makespan_lb_s", 0.0),
+                                f"{_gap:.1f}%" if _gap is not None else "n/a")
                 except Exception as e:
-                    logger.error("  FAILED: %s", e, exc_info=True)
+                    handle_row_exception(
+                        e,
+                        f"model={model_cfg.name} seed={seed}",
+                        resume=args.resume,
+                    )
                 finally:
                     free_gpu_memory()
     else:
@@ -445,27 +674,50 @@ def main():
             if fname.endswith(".json"):
                 all_results.append(load_run_result(
                     os.path.join(raw_dir, fname.replace(".json", ""))))
+        # Merge LB sidecars by stem so old main JSONs that predate the LB
+        # fields still get the bound values for plotting.
+        lb_map = load_raw_lb_dir(raw_lb_dir, raw_dir)
+        for r in all_results:
+            stem = f"model={r['model']}_seed={r['seed']}"
+            r.update(lb_map.get(stem, {}))
 
     if all_results:
         generate_plots(all_results, args.output_dir)
 
         logger.info("\n%s\nE15 SUMMARY — %s\n%s",
                     "=" * 80, _IMPLEMENTATION_CHOICES, "=" * 80)
-        logger.info("%-20s %8s %8s %8s %8s %8s %8s %8s",
+        logger.info("%-20s %7s %6s %6s %7s %9s %9s %8s %8s",
                     "Model", "Faces", "VPs", "Cov%",
-                    "t_vis(s)", "t_sc(s)", "t_vrp(s)", "t_mapf(s)")
-        logger.info("-" * 80)
+                    "VP_LB", "Mks(s)", "Jmks_LB", "Jmks%", "Jobj%")
+        logger.info("-" * 100)
         models = sorted(set(r["model"] for r in all_results))
         for m in models:
             mr = [r for r in all_results if r["model"] == m]
             if mr:
                 def _m(k):
-                    vals = [r.get(k, 0) for r in mr]
-                    return float(np.mean(vals))
-                logger.info("%-20s %8.0f %8.1f %8.2f %8.2f %8.2f %8.2f %8.2f",
-                            m, _m("mesh_faces"), _m("num_viewpoints"),
-                            _m("coverage") * 100,
-                            _m("t_vis"), _m("t_opt"), _m("t_vrp"), _m("t_mapf"))
+                    vals = []
+                    for r in mr:
+                        if k not in r:
+                            continue
+                        v = r[k]
+                        if isinstance(v, float) and np.isnan(v):
+                            continue
+                        vals.append(v)
+                    return float(np.mean(vals)) if vals else float("nan")
+                mks_gaps = [_makespan_gap_pct(r) for r in mr]
+                mks_gaps = [g for g in mks_gaps if g is not None]
+                obj_gaps = [_objective_gap_pct(r) for r in mr]
+                obj_gaps = [g for g in obj_gaps if g is not None]
+                logger.info(
+                    "%-20s %7.0f %6.1f %6.2f %7.1f %9.1f %9.1f %7s %7s",
+                    m, _m("mesh_faces"), _m("num_viewpoints"),
+                    _m("coverage") * 100,
+                    _m("joint_n_poses_lb"),
+                    _m("mapf_makespan_s"),
+                    _m("joint_makespan_lb_s"),
+                    f"{np.mean(mks_gaps):.0f}%" if mks_gaps else "n/a",
+                    f"{np.mean(obj_gaps):.0f}%" if obj_gaps else "n/a",
+                )
 
 
 if __name__ == "__main__":

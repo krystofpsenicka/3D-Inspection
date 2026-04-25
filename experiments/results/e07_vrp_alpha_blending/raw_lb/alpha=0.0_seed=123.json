@@ -1,0 +1,6 @@
+{
+  "vrp_makespan_lb_m": 64.68649291992188,
+  "vrp_total_cost_lb_m": 263.437120705843,
+  "vrp_objective_lb_m": 263.437120705843,
+  "vrp_objective_best_bound_m": 263.43712070583166
+}

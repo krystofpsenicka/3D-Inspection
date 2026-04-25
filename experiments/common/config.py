@@ -49,7 +49,7 @@ class ModelConfig:
     num_candidates: int
     frustum: FrustumConfig
     collision_radius: float = 0.35
-    voxel_resolution: float = 0.10
+    voxel_resolution: float = 0.20
 
     @staticmethod
     def duke_of_lancaster() -> ModelConfig:
@@ -201,3 +201,8 @@ E17_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "targeted_50"
 E17_CMAES_TRAVEL_WEIGHTS = [0.0, 0.1, 0.3]
 E17_N_ROBOTS = 5
 E17_N_CANDIDATES = 1500
+
+# E19: VRP time-limit sweep (full VRP + MAPF pipeline)
+E19_TIME_LIMITS = [120, 240, 360, 600]  # seconds
+E19_FLEET_SIZE = 5
+E19_N_WAYPOINTS = 75

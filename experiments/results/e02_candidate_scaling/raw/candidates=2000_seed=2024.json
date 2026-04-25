@@ -1,0 +1,13 @@
+{
+  "model": "duke_of_lancaster",
+  "num_candidates": 2000,
+  "num_candidates_requested": 2000,
+  "seed": 2024,
+  "num_viewpoints": 187,
+  "coverage": 0.950265,
+  "redundancy": 2.1812074184417725,
+  "sampling_time": 0.8582757390104234,
+  "visibility_time": 0.023886437062174082,
+  "optimization_time": 1.0546933212317526,
+  "total_time": 1.9368554973043501
+}

@@ -1,0 +1,21 @@
+{
+  "section": "A",
+  "model": "david0",
+  "strategy": "weighted",
+  "seed": 42,
+  "k_coverage": 1,
+  "n_base_candidates": 500,
+  "n_iterative_candidates": 0,
+  "n_warmstart_fallbacks": 0,
+  "base_sampler": "weighted",
+  "num_candidates_requested": 500,
+  "num_candidates": 500,
+  "num_viewpoints": 20,
+  "coverage": 0.95584,
+  "pool_redundancy": 19.8059,
+  "redundancy": 1.5338550806045532,
+  "sampling_time": 0.4178198709851131,
+  "visibility_time": 0.0077600430231541395,
+  "optimization_time": 0.021148685016669333,
+  "total_time": 0.44672859902493656
+}

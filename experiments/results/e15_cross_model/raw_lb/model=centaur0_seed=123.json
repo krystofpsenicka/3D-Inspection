@@ -1,0 +1,17 @@
+{
+  "joint_n_poses_lb": 13,
+  "joint_info_n_poses_lb": 13,
+  "joint_dwell_total_lb_s": 26.0,
+  "joint_travel_makespan_lb_s": 7.2027590042641805,
+  "joint_travel_total_lb_s": 7.2027590042641805,
+  "joint_total_time_lb_s": 33.20275900426418,
+  "joint_makespan_lb_s": 9.20275900426418,
+  "joint_objective_lb_s": 21.20275900426418,
+  "vrp_makespan_lb_m": 25.619646072387695,
+  "vrp_total_cost_lb_m": 95.91832995414734,
+  "vrp_objective_lb_m": 60.76898801326752,
+  "mapf_makespan_time_lb_s": 27.191832995414735,
+  "mapf_total_time_lb_s": 135.95916497707367,
+  "mapf_objective_time_lb_s": 81.5754989862442,
+  "vrp_objective_best_bound_m": 0.8786306003488835
+}

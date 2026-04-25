@@ -1,0 +1,13 @@
+{
+  "model": "cat0",
+  "optimizer": "GreedySetCover",
+  "input_strategy": "targeted_50",
+  "target_coverage": 0.97,
+  "seed": 123,
+  "num_candidates": 500,
+  "num_viewpoints": 19,
+  "coverage": 0.9714,
+  "optimization_time": 0.35881991499627475,
+  "redundancy": 1.6357628107070923,
+  "section": "B"
+}

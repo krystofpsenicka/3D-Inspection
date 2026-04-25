@@ -136,6 +136,23 @@ def _compute_iou_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float
     return float(iou.mean())
 
 
+def _compute_f1_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float:
+    """Mean per-candidate F1 score between method and ground truth.
+
+    F1 = 2·TP / (2·TP + FP + FN). F1 weights precision and recall equally,
+    which is the right choice here because epsilon's failure mode is
+    over-reporting (false positives inflate coverage downstream). When both
+    method and GT are empty for a candidate, define F1 = 1 (trivially
+    correct "nothing visible" agreement).
+    """
+    tp = (V_gt & V_method).sum(axis=1).astype(np.float32)
+    fp = (~V_gt & V_method).sum(axis=1).astype(np.float32)
+    fn = (V_gt & ~V_method).sum(axis=1).astype(np.float32)
+    denom = 2 * tp + fp + fn
+    f1 = np.where(denom > 0, 2 * tp / denom, 1.0)
+    return float(f1.mean())
+
+
 def _actual_coverage(V_gt_np: np.ndarray, selected_indices) -> float:
     """Compute true coverage from GPU-raycast ground truth for selected viewpoints."""
     if hasattr(selected_indices, "get"):
@@ -213,8 +230,9 @@ def run_all_methods(ctx: PipelineContext, methods: list[str],
             logger.error("  Visibility FAILED for %s: %s", method, e, exc_info=True)
             continue
 
-        # IoU vs ground truth (all candidates)
+        # IoU and F1 vs ground truth (all candidates)
         mean_iou = _compute_iou_all_candidates(V_gt_np, V_m_np)
+        mean_f1 = _compute_f1_all_candidates(V_gt_np, V_m_np)
 
         # Set cover (CPU LazyGreedy — same for all methods)
         with timed() as t_opt:
@@ -237,6 +255,7 @@ def run_all_methods(ctx: PipelineContext, methods: list[str],
             "actual_coverage": actual_cov,
             "coverage_gap": reported_cov - actual_cov,
             "mean_iou": mean_iou,
+            "mean_f1": mean_f1,
             "visibility_time": t_vis.elapsed,
             "optimization_time": t_opt.elapsed,
             "redundancy": float(opt_result.redundancy),
@@ -282,73 +301,19 @@ def generate_plots(results: list[dict], methods: list[str], output_dir: str):
                     if r["method"] == method and r["target_coverage"] == target]
             return float(np.mean(vals)) if vals else float("nan")
 
-        def _mv(method, target, metric):
-            return [r[metric] for r in mr
-                    if r["method"] == method and r["target_coverage"] == target]
-
         # ── Fig 1: Timing — grouped bars (one group per target, bars = methods) ─
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
         timing_data = {
             _METHOD_LABELS.get(m, m): [_mm(m, t, "visibility_time") for t in targets]
             for m in model_present
         }
-        m_colors = [_METHOD_COLORS.get(m, "grey") for m in model_present]
         grouped_bar(ax, timing_data, target_labels,
                     ylabel="Visibility time (s)",
                     title=f"Visibility Timing: GPU vs CPU, Raycast vs Epsilon ({model_name})")
         ax.set_xlabel("Target coverage")
         save_figure(fig, os.path.join(fig_dir, f"{model_name}_e03_timing"))
 
-        # ── Fig 2: IoU box plot — one box per (method, target) ──────────
-        approx_methods = [m for m in model_present if m != "gpu_raycast"]
-        if approx_methods:
-            fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-            n_approx = len(approx_methods)
-            n_targets = len(targets)
-            width = 0.8 / n_approx
-            x_base = np.arange(n_targets)
-            for ai, m in enumerate(approx_methods):
-                iou_per_target = [_mv(m, t, "mean_iou") for t in targets]
-                offset = (ai - n_approx / 2 + 0.5) * width
-                bp = ax.boxplot(iou_per_target,
-                                positions=x_base + offset,
-                                widths=width * 0.9,
-                                patch_artist=True,
-                                medianprops=dict(color="black", linewidth=1.5),
-                                boxprops=dict(facecolor=_METHOD_COLORS.get(m, "grey"),
-                                              alpha=0.7))
-            ax.set_xticks(x_base)
-            ax.set_xticklabels(target_labels)
-            ax.set_xlabel("Target coverage")
-            ax.set_ylabel("Mean per-candidate IoU vs GPU raycast")
-            ax.set_ylim(0, 1.05)
-            ax.axhline(1.0, color="grey", linestyle="--", alpha=0.4, linewidth=0.8)
-            ax.set_title(f"Accuracy vs Ground Truth (GPU Raycast) — {model_name}")
-            # Legend
-            from matplotlib.patches import Patch
-            legend_handles = [Patch(facecolor=_METHOD_COLORS.get(m, "grey"),
-                                    alpha=0.7, label=_METHOD_LABELS.get(m, m))
-                              for m in approx_methods]
-            ax.legend(handles=legend_handles, fontsize=8)
-            save_figure(fig, os.path.join(fig_dir, f"{model_name}_e03_iou_boxplot"))
-
-        # ── Fig 3: Coverage gap — grouped bars (epsilon variants only) ───
-        epsilon_methods = [m for m in model_present if "epsilon" in m]
-        if epsilon_methods:
-            fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
-            gap_data = {
-                _METHOD_LABELS.get(m, m): [_mm(m, t, "coverage_gap") * 100 for t in targets]
-                for m in epsilon_methods
-            }
-            gap_colors = [_METHOD_COLORS.get(m, "grey") for m in epsilon_methods]
-            grouped_bar(ax, gap_data, target_labels,
-                        ylabel="Coverage gap (reported − actual) %",
-                        title=f"Epsilon Optimism: Gap vs Ground Truth ({model_name})")
-            ax.axhline(0, color="black", linewidth=0.7)
-            ax.set_xlabel("Target coverage")
-            save_figure(fig, os.path.join(fig_dir, f"{model_name}_e03_gap"))
-
-        # ── Fig 4: Actual vs target coverage (line plot) ─────────────────
+        # ── Fig 2: Actual vs target coverage (line plot) ─────────────────
         fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
         for m in model_present:
             actual = [_mm(m, t, "actual_coverage") * 100 for t in targets]
@@ -363,18 +328,21 @@ def generate_plots(results: list[dict], methods: list[str], output_dir: str):
         ax.legend(fontsize=8)
         save_figure(fig, os.path.join(fig_dir, f"{model_name}_e03_actual_vs_target"))
 
-        # ── Fig 5: Viewpoints selected — grouped bars ─────────────────────
-        fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
-        vp_data = {
-            _METHOD_LABELS.get(m, m): [_mm(m, t, "num_viewpoints") for t in targets]
-            for m in model_present
-        }
-        vp_colors = [_METHOD_COLORS.get(m, "grey") for m in model_present]
-        grouped_bar(ax, vp_data, target_labels,
-                    ylabel="Selected viewpoints",
-                    title=f"Viewpoints Selected ({model_name})")
-        ax.set_xlabel("Target coverage")
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e03_viewpoints"))
+        # ── Fig 3: F1 vs GT — non-ground-truth methods only ──────────────
+        approx_methods = [m for m in model_present if m != "gpu_raycast"]
+        if approx_methods:
+            fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
+            f1_data = {
+                _METHOD_LABELS.get(m, m): [_mm(m, t, "mean_f1") for t in targets]
+                for m in approx_methods
+            }
+            grouped_bar(ax, f1_data, target_labels,
+                        ylabel="Mean per-candidate F1 vs GPU raycast",
+                        title=f"F1 Accuracy vs Ground Truth ({model_name})")
+            ax.axhline(1.0, color="grey", linestyle="--", alpha=0.4, linewidth=0.8)
+            ax.set_xlabel("Target coverage")
+            ax.set_ylim(0, 1.05)
+            save_figure(fig, os.path.join(fig_dir, f"{model_name}_e03_f1"))
 
         logger.info("E3 figures saved for %s", model_name)
 
@@ -394,7 +362,7 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir",
                    default=os.path.join(RESULTS_DIR, "e03_visibility_comparison"))
-    p.add_argument("--skip_existing", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -434,7 +402,7 @@ def main():
                     rpath = os.path.join(
                         raw_dir,
                         f"model={model_name}_method={method}_target={target}_seed={seed}")
-                    if args.skip_existing and os.path.exists(rpath + ".json"):
+                    if args.resume and os.path.exists(rpath + ".json"):
                         all_results.append(load_run_result(rpath))
                     else:
                         missing_methods.append(method)

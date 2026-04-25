@@ -1,0 +1,16 @@
+{
+  "model": "wolf0",
+  "method": "gpu_epsilon",
+  "target_coverage": 0.85,
+  "seed": 123,
+  "num_candidates": 500,
+  "num_viewpoints": 14,
+  "reported_coverage": 0.85202,
+  "actual_coverage": 0.83586,
+  "coverage_gap": 0.016159999999999952,
+  "mean_iou": 0.9211557507514954,
+  "mean_f1": 0.9579989910125732,
+  "visibility_time": 0.042169095017015934,
+  "optimization_time": 0.074146723956801,
+  "redundancy": 1.211356520652771
+}

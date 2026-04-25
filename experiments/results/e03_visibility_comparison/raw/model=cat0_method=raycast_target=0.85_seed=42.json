@@ -1,0 +1,15 @@
+{
+  "model": "cat0",
+  "method": "raycast",
+  "target_coverage": 0.85,
+  "seed": 42,
+  "num_viewpoints": 11,
+  "reported_coverage": 0.85198,
+  "actual_coverage": 0.85198,
+  "coverage_gap": 0.0,
+  "visibility_time": 0.005495043937116861,
+  "optimization_time": 0.08058582805097103,
+  "redundancy": 1.2898190021514893,
+  "mean_vp_iou": 1.0,
+  "num_candidates": 500
+}

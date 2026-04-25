@@ -1,0 +1,22 @@
+{
+  "model": "wolf0",
+  "seed": 123,
+  "t_mesh": 5.061039701104164e-06,
+  "t_surface": 3.53099312633276e-06,
+  "t_og": 2.25903932005167e-06,
+  "t_sample": 0.050055357976816595,
+  "t_vis": 0.004566759918816388,
+  "t_opt": 0.02079722995404154,
+  "t_vrp": 72.19845186907332,
+  "t_mapf": 138.50850580004044,
+  "mesh_vertices": 4344,
+  "mesh_faces": 8684,
+  "num_viewpoints": 24,
+  "coverage": 0.95134,
+  "redundancy": 1.6050833463668823,
+  "vrp_makespan": 26.214637756347656,
+  "vrp_status": "success",
+  "mapf_steps": 1138,
+  "mapf_collisions": 0,
+  "total_time": 210.78238786803558
+}

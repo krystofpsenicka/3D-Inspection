@@ -282,7 +282,7 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir",
                    default=os.path.join(RESULTS_DIR, "e13_viewpoint_redundancy"))
-    p.add_argument("--skip_existing", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -329,7 +329,7 @@ def main():
                     f"model={model_name}_strategy={strategy}_k={k}"
                     f"_target={target}_seed={seed}",
                 )
-                if args.skip_existing and os.path.exists(rpath + ".json"):
+                if args.resume and os.path.exists(rpath + ".json"):
                     logger.info("[%d/%d] SKIP %s %s k=%d target=%.2f seed=%d",
                                 idx, total, model_name, strategy, k, target, seed)
                     all_results.append(load_run_result(rpath))

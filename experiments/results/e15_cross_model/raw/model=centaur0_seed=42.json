@@ -1,0 +1,22 @@
+{
+  "model": "centaur0",
+  "seed": 42,
+  "t_mesh": 2.400018274784088e-06,
+  "t_surface": 1.9900035113096237e-06,
+  "t_og": 1.21991615742445e-06,
+  "t_sample": 2.8564885839587077,
+  "t_vis": 0.004387701046653092,
+  "t_opt": 0.0260220110649243,
+  "t_vrp": 92.68996966001578,
+  "t_mapf": 184.7715944229858,
+  "mesh_vertices": 15768,
+  "mesh_faces": 31532,
+  "num_viewpoints": 40,
+  "coverage": 0.95068,
+  "redundancy": 1.7570370435714722,
+  "vrp_makespan": 45.62261962890625,
+  "vrp_status": "success",
+  "mapf_steps": 1713,
+  "mapf_collisions": 0,
+  "total_time": 280.3484679890098
+}

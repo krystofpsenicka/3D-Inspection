@@ -1,0 +1,13 @@
+{
+  "model": "wolf0",
+  "strategy": "weighted",
+  "seed": 42,
+  "num_candidates": 500,
+  "num_viewpoints": 24,
+  "coverage": 0.9545,
+  "redundancy": 1.6852173805236816,
+  "sampling_time": 0.47051824908703566,
+  "visibility_time": 0.004649159032851458,
+  "optimization_time": 0.17300093825906515,
+  "total_time": 0.6481683463789523
+}

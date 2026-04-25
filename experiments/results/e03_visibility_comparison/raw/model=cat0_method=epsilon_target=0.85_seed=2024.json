@@ -1,0 +1,15 @@
+{
+  "model": "cat0",
+  "method": "epsilon",
+  "target_coverage": 0.85,
+  "seed": 2024,
+  "num_viewpoints": 11,
+  "reported_coverage": 0.85194,
+  "actual_coverage": 0.85196,
+  "coverage_gap": -2.0000000000020002e-05,
+  "visibility_time": 0.010556315071880817,
+  "optimization_time": 0.09788295580074191,
+  "redundancy": 1.2247576713562012,
+  "mean_vp_iou": 0.9640049791306087,
+  "num_candidates": 500
+}

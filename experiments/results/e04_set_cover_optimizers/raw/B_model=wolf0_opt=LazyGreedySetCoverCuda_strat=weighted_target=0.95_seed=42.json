@@ -1,0 +1,13 @@
+{
+  "model": "wolf0",
+  "optimizer": "LazyGreedySetCoverCuda",
+  "input_strategy": "weighted",
+  "target_coverage": 0.95,
+  "seed": 42,
+  "num_candidates": 500,
+  "num_viewpoints": 24,
+  "coverage": 0.9545,
+  "optimization_time": 0.3370860930008348,
+  "redundancy": 1.6852173805236816,
+  "section": "B"
+}

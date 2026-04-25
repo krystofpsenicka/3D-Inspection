@@ -1,0 +1,22 @@
+{
+  "model": "david0",
+  "seed": 42,
+  "t_mesh": 2.900022082030773e-06,
+  "t_surface": 2.4799956008791924e-06,
+  "t_og": 1.4599645510315895e-06,
+  "t_sample": 0.4172131040832028,
+  "t_vis": 0.004770581028424203,
+  "t_opt": 0.01871444599237293,
+  "t_vrp": 74.8989441540325,
+  "t_mapf": 132.39644930092618,
+  "mesh_vertices": 52565,
+  "mesh_faces": 105028,
+  "num_viewpoints": 22,
+  "coverage": 0.95184,
+  "redundancy": 1.6391199827194214,
+  "vrp_makespan": 31.315710067749023,
+  "vrp_status": "success",
+  "mapf_steps": 1200,
+  "mapf_collisions": 0,
+  "total_time": 207.73609842604492
+}

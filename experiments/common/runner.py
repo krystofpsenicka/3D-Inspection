@@ -268,6 +268,46 @@ def free_gpu_memory(dump_arrays: bool = False) -> None:
     _log_memory_snapshot("after-free")
 
 
+_OOM_MARKERS = (
+    "out_of_memory",
+    "bad_alloc",
+    "OutOfMemoryError",
+    "Unable to allocate",
+    "cudaErrorMemoryAllocation",
+    "cudaErrorStreamCaptureInvalidated",  # cuOpt post-OOM stream corruption
+)
+
+
+def is_oom(exc: BaseException) -> bool:
+    """True if the exception message looks like a CUDA OOM / RMM failure."""
+    msg = str(exc)
+    return any(m in msg for m in _OOM_MARKERS)
+
+
+def handle_row_exception(
+    exc: BaseException,
+    row_desc: str,
+    *,
+    resume: bool,
+) -> None:
+    """Log a per-row experiment failure. If ``resume`` is True and the error
+    looks like a CUDA OOM / RMM stream-capture failure, free GPU memory and
+    raise ``SystemExit(1)`` so an outer restart loop can reclaim leaked
+    device memory with a fresh process.
+
+    All other exceptions are logged and swallowed, matching the long-standing
+    per-row behaviour of the experiment scripts.
+    """
+    logger.error("  FAILED [%s]: %s", row_desc, exc, exc_info=True)
+    if resume and is_oom(exc):
+        free_gpu_memory()
+        logger.error(
+            "  Detected CUDA OOM / RMM error under --resume; exiting non-zero "
+            "so the outer restart loop can reclaim GPU memory."
+        )
+        raise SystemExit(1)
+
+
 class ExperimentRunner(ABC):
     """Base class for running parameter sweep experiments.
 

@@ -1,0 +1,21 @@
+{
+  "section": "1A",
+  "model": "wolf0",
+  "k_coverage": 4,
+  "fraction": 100,
+  "spi": 1,
+  "seed": 123,
+  "n_base": 0,
+  "n_iter_requested": 2000,
+  "n_iter_actual": 2000,
+  "num_candidates": 2000,
+  "num_viewpoints": 20,
+  "coverage": 0.95198,
+  "pool_redundancy": 74.7288,
+  "redundancy": 1.5001155138015747,
+  "sampling_time": 65.23623664400657,
+  "visibility_time": 0.014574707980500534,
+  "optimization_time": 0.05497385998023674,
+  "total_time": 65.3057852119673,
+  "early_stop_ratio": 1.0
+}

@@ -1,0 +1,22 @@
+{
+  "model": "cat0",
+  "seed": 42,
+  "t_mesh": 5.09992241859436e-06,
+  "t_surface": 2.869986928999424e-06,
+  "t_og": 1.4899997040629387e-06,
+  "t_sample": 0.26521097391378134,
+  "t_vis": 0.006375247961841524,
+  "t_opt": 0.015564888017252088,
+  "t_vrp": 70.33466550102457,
+  "t_mapf": 108.49972012196667,
+  "mesh_vertices": 27894,
+  "mesh_faces": 55712,
+  "num_viewpoints": 16,
+  "coverage": 0.95362,
+  "redundancy": 1.4900274276733398,
+  "vrp_makespan": 20.2587890625,
+  "vrp_status": "success",
+  "mapf_steps": 875,
+  "mapf_collisions": 0,
+  "total_time": 179.12154619279318
+}

@@ -143,7 +143,7 @@ def main():
     p.add_argument("--point_counts", type=int, nargs="+", default=E05_POINT_COUNTS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e05_set_cover_scaling"))
-    p.add_argument("--skip_existing", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -168,7 +168,7 @@ def main():
                 for seed in args.seeds:
                     idx += 1
                     rpath = os.path.join(raw_dir, f"cands={nc}_pts={np_}_seed={seed}")
-                    if args.skip_existing and os.path.exists(rpath + ".json"):
+                    if args.resume and os.path.exists(rpath + ".json"):
                         all_results.append(load_run_result(rpath))
                         continue
 

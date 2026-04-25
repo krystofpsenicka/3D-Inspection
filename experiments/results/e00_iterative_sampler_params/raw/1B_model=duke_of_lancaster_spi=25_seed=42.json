@@ -1,0 +1,23 @@
+{
+  "section": "1B",
+  "model": "duke_of_lancaster",
+  "k_coverage": 4,
+  "fraction": 100,
+  "spi": 25,
+  "seed": 42,
+  "base_n": 1500,
+  "max_viewpoints": 2000,
+  "n_base": 0,
+  "n_iter_requested": 6000,
+  "n_iter_actual": 6000,
+  "num_candidates": 6000,
+  "num_viewpoints": 160,
+  "coverage": 0.95022,
+  "pool_redundancy": 41.68151,
+  "redundancy": 2.03684401512146,
+  "sampling_time": 143.10074804304168,
+  "visibility_time": 0.07475924002937973,
+  "optimization_time": 0.6174478410976008,
+  "total_time": 143.79295512416866,
+  "early_stop_ratio": 1.0
+}

@@ -1,0 +1,23 @@
+{
+  "time_limit": 360,
+  "seed": 42,
+  "alpha": 0.5,
+  "vrp_status": "success",
+  "vrp_makespan_m": 165.2190399169922,
+  "vrp_total_cost_m": 649.5380172729492,
+  "vrp_objective_m": 407.3785285949707,
+  "t_vrp_solve": 362.23448199091945,
+  "vrp_makespan_lb_m": 65.91681671142578,
+  "vrp_total_cost_lb_m": 311.40854001045227,
+  "vrp_objective_lb_m": 188.66267836093903,
+  "mapf_makespan_time_lb_s": 61.14085400104523,
+  "mapf_total_time_lb_s": 305.70427000522614,
+  "mapf_objective_time_lb_s": 183.42256200313568,
+  "mapf_status": "success",
+  "mapf_makespan_s": 1468.75,
+  "mapf_total_time_s": 5900.25,
+  "mapf_objective_s": 3684.5,
+  "mapf_fail_count": 0,
+  "mapf_residual_collisions": 31,
+  "t_mapf": 687.0927505259169
+}

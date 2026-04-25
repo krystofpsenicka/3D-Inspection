@@ -1,0 +1,13 @@
+{
+  "model": "david0",
+  "strategy": "weighted_curvature",
+  "seed": 2024,
+  "num_candidates": 500,
+  "num_viewpoints": 22,
+  "coverage": 0.95638,
+  "redundancy": 1.6431753635406494,
+  "sampling_time": 0.05112527497112751,
+  "visibility_time": 0.004179444629698992,
+  "optimization_time": 0.16131816105917096,
+  "total_time": 0.21662288065999746
+}

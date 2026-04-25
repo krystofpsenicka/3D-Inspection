@@ -1,0 +1,15 @@
+{
+  "model": "david0",
+  "method": "epsilon",
+  "target_coverage": 0.925,
+  "seed": 123,
+  "num_viewpoints": 19,
+  "reported_coverage": 0.93222,
+  "actual_coverage": 0.91896,
+  "coverage_gap": 0.01326000000000005,
+  "visibility_time": 0.01134506007656455,
+  "optimization_time": 0.167589642573148,
+  "redundancy": 1.4061917066574097,
+  "mean_vp_iou": 0.9270142404654503,
+  "num_candidates": 500
+}
