@@ -34,7 +34,6 @@ import logging
 import os
 import sys
 
-import cupy as cp
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -47,6 +46,22 @@ if _PROJECT_ROOT not in sys.path:
 from experiments.common.config import (
     ModelConfig, SEEDS_3, E02_CANDIDATE_COUNTS, RESULTS_DIR,
 )
+
+# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
+_RUNTIME_IMPORT_ERROR: ImportError | None = None
+try:
+    import cupy as cp
+    from experiments.common.runner import set_seed, timed, free_gpu_memory
+    from experiments.common.pipeline_setup import PipelineContext
+    from experiments.common.sampling_dispatch import sample_strategy
+    _RUNTIME_AVAILABLE = True
+except ImportError as _e:
+    cp = None
+    set_seed = timed = free_gpu_memory = None
+    PipelineContext = None
+    sample_strategy = None
+    _RUNTIME_AVAILABLE = False
+    _RUNTIME_IMPORT_ERROR = _e
 
 # Strategy set for e02: weighted + weighted_curvature baselines,
 # targeted_100 (iterative targeted, k=3), cmaes_100 (CMA-ES, k=3, tw=0.0,
@@ -67,14 +82,13 @@ def _strategy_kwargs(strategy: str) -> dict:
             "maxiter": 40,
         }
     return {}
-from experiments.common.runner import set_seed, timed, free_gpu_memory
-from experiments.common.pipeline_setup import PipelineContext
+
+
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, log_log_with_fit,
     THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
 )
-from experiments.common.sampling_dispatch import sample_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +165,15 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
                 stds.append(0.0)
         return np.array(means), np.array(stds)
 
+    def _actual_x(strategy):
+        """Per-strategy actual generated counts (mean over seeds), x-axis values.
+
+        CMA-ES often generates far fewer candidates than requested, so plotting
+        against the requested budget hides its true behaviour. Using the actual
+        generated count makes the figures comparable across strategies.
+        """
+        return _agg(strategy, "num_candidates")[0]
+
     # Assign a colour and linestyle to each strategy group
     group_colors = {
         "weighted": CATEGORICAL_COLORS[0],
@@ -179,12 +202,13 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for strat in strategies:
         m, s = _agg(strat, "coverage")
+        x = _actual_x(strat)
         color, ls, marker = _style(strat)
-        ax.plot(candidates, m * 100, marker=marker, linestyle=ls, color=color,
+        ax.plot(x, m * 100, marker=marker, linestyle=ls, color=color,
                 label=strat, linewidth=1.5)
-        ax.fill_between(candidates, (m - s) * 100, (m + s) * 100, alpha=0.08, color=color)
+        ax.fill_between(x, (m - s) * 100, (m + s) * 100, alpha=0.08, color=color)
     ax.axhline(95, color="red", linestyle="--", alpha=0.5, label="95% target")
-    ax.set_xlabel("Candidates requested")
+    ax.set_xlabel("Candidates generated")
     ax.set_ylabel("Achieved coverage (%)")
     ax.set_title("Coverage vs. Candidate Count — All Strategies")
     ax.legend(fontsize=6, ncol=2)
@@ -194,10 +218,11 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for strat in strategies:
         m, s = _agg(strat, "num_viewpoints")
+        x = _actual_x(strat)
         color, ls, marker = _style(strat)
-        ax.plot(candidates, m, marker=marker, linestyle=ls, color=color,
+        ax.plot(x, m, marker=marker, linestyle=ls, color=color,
                 label=strat, linewidth=1.5)
-    ax.set_xlabel("Candidates requested")
+    ax.set_xlabel("Candidates generated")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title("Selected Viewpoints vs. Candidate Count — All Strategies")
     ax.legend(fontsize=6, ncol=2)
@@ -258,6 +283,12 @@ def main():
         format="%(levelname)-8s %(name)s: %(message)s",
     )
 
+    if not args.plots_only and not _RUNTIME_AVAILABLE:
+        raise SystemExit(
+            f"Runtime imports unavailable ({_RUNTIME_IMPORT_ERROR}). "
+            "Activate the isaaclab env or pass --plots_only."
+        )
+
     raw_dir = os.path.join(args.output_dir, "raw")
     os.makedirs(raw_dir, exist_ok=True)
     all_results = []
@@ -307,6 +338,10 @@ def main():
             if fname.endswith(".json"):
                 all_results.append(load_run_result(
                     os.path.join(raw_dir, fname.replace(".json", ""))))
+
+    # Older raw files predate the per-strategy schema and lack the
+    # "strategy" field — drop them so they don't crash the plot loop.
+    all_results = [r for r in all_results if "strategy" in r]
 
     if all_results:
         generate_plots(all_results, args.strategies, args.output_dir)

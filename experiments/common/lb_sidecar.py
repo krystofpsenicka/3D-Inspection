@@ -2,7 +2,7 @@
 
 Keeps LBs in their own files next to main results:
 - CSV experiments (e06): ``lower_bounds.csv`` alongside ``results.csv``.
-- JSON experiments (e07 / e17 / e19): ``raw_lb/<same_stem>.json``.
+- JSON experiments (e08 / e09): ``raw_lb/<same_stem>.json``.
 
 Why sidecars? Old runs can be reused — we never re-solve the expensive
 VRP+MAPF pipeline just to get better LBs. When a tighter LB (e.g. cuOpt
@@ -28,8 +28,16 @@ import logging
 import os
 from typing import Iterable, Mapping, Sequence
 
-import cupy as cp
 import numpy as np
+
+# `cupy` is used by compute_all_lbs/recompute_lbs only. Importing this module
+# (e.g., for `load_raw_lb_dir`/`load_lb_csv` in --plots_only mode) must work
+# in a vanilla numpy+matplotlib environment, so the cupy dependency is
+# deferred until the GPU helpers are actually called.
+try:
+    import cupy as cp
+except ImportError:
+    cp = None
 
 from experiments.common.lower_bounds import vrp_lb_meters, vrp_mapf_lb_seconds
 
@@ -303,7 +311,7 @@ def load_lb_csv(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# JSON sidecar (for e07, e17, e19)
+# JSON sidecar (for e08, e09)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def save_lb_json(stem: str, lb: Mapping[str, float]) -> None:

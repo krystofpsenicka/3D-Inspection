@@ -3,8 +3,8 @@
 
 Usage:
     conda run -n isaaclab python -m experiments.run_all
-    conda run -n isaaclab python -m experiments.run_all --experiments e01 e04 e06
-    conda run -n isaaclab python -m experiments.run_all --skip e05 e12
+    conda run -n isaaclab python -m experiments.run_all --experiments e01 e06 e07
+    conda run -n isaaclab python -m experiments.run_all --skip e10
     conda run -n isaaclab python -m experiments.run_all --list
 
 Parallel execution (subprocess-based, full CUDA-context isolation):
@@ -40,43 +40,32 @@ def _free_gpu_memory() -> None:
         pass
 
 ALL_EXPERIMENTS = [
-    
-    "e19_vrp_time_limit_sweep",
     "e01_sampling_strategy",
     "e02_candidate_scaling",
-    "e03_visibility_comparison",
-    "e15_cross_model",
-    "e04_set_cover_optimizers",
-    "e05_set_cover_scaling",
-    "e06_vrp_fleet_scaling",
-    "e07_vrp_alpha_blending",
-    "e10_sta_resolution",
-    "e17_sampler_routing_impact",
-    "e14_curvature_sensitivity",
-
+    "e03_iterative_sampler_params",
+    "e04_curvature_sensitivity",
+    "e05_visibility_comparison",
+    "e06_set_cover_optimizers",
+    "e07_vrp_fleet_scaling",
+    "e08_vrp_alpha_blending",
+    "e09_sampler_routing_impact",
+    "e10_cross_model",
 ]
 
 # GPU memory weight per experiment (1 unit ≈ 2 GB peak VRAM).
 # Used by the parallel scheduler to ensure concurrent weights ≤ --gpu-budget.
 # Tune these if you observe higher/lower actual usage via `nvidia-smi`.
 EXPERIMENT_WEIGHTS: dict[str, int] = {
-    "e01_sampling_strategy":     2,  # visibility matrix 1500×200K pts (~1.2 GB) + overhead
-    "e02_candidate_scaling":     3,  # scales to 5000 candidates → ~4 GB for V alone
-    "e03_visibility_comparison": 1,  # multiple smaller matrices, comparison runs
-    "e04_set_cover_optimizers":  2,  # GPU set cover + visibility, ~3–4 GB
-    "e05_set_cover_scaling":     1,  # moderate problem sizes
-    "e06_vrp_fleet_scaling":     4,  # OG + distance matrix, ~6–8 GB (had OOM at 0.10 m)
-    "e07_vrp_alpha_blending":    2,  # distance matrix + VRP solve, ~3–4 GB
-    "e08_vrp_solver_comparison": 1,  # small problems, ~2 GB
-    "e09_mapf_priority":         2,  # MAPF trajectories + distance matrix
-    "e10_sta_resolution":        2,  # Space-Time A*, moderate memory
-    "e11_end_to_end":            4,  # all pipeline stages combined, ~6–8 GB
-    "e12_gpu_vs_cpu_scaling":    2,  # visibility scaling up to 2000×200K
-    "e13_viewpoint_redundancy":  3,  # k=5 → 7500 candidates × 200K pts = ~6 GB for V
-    "e14_curvature_sensitivity": 1,  # parameter sweep, light
-    "e15_cross_model":           4,  # 10 models with full pipeline, ~6–8 GB
-    "e16_frustum_sensitivity":   1,  # frustum parameter sweep, moderate
-    "e19_vrp_time_limit_sweep":  2,  # VRP time limit sweep, ~3–4 GB
+    "e01_sampling_strategy":        2,
+    "e02_candidate_scaling":        3,
+    "e03_iterative_sampler_params": 2,
+    "e04_curvature_sensitivity":    1,
+    "e05_visibility_comparison":    1,
+    "e06_set_cover_optimizers":     2,
+    "e07_vrp_fleet_scaling":        4,
+    "e08_vrp_alpha_blending":       2,
+    "e09_sampler_routing_impact":   3,
+    "e10_cross_model":              4,
 }
 
 

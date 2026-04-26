@@ -7,18 +7,18 @@ across Duke of Lancaster + TOSCA_REPRESENTATIVE, 3 seeds each:
   weighted_curvature  — SDF² + curvature bias, all N from base sampler
   cmaes_100           — 100% CMA-ES optimised (k_coverage=3, popsize=40,
                         maxiter=40, travel_weight=0.1 for TOSCA / 0.0 for
-                        Duke — values from e00 Section 2B)
+                        Duke — values from e03 Section 2B)
 
-The k-coverage and k × travel_weight sweeps live in e00
+The k-coverage and k × travel_weight sweeps live in e03
 (iterative_sampler_params); this experiment fixes the CMA-ES
-hyperparameters to e00's thesis-final values and asks "under that
+hyperparameters to e03's thesis-final values and asks "under that
 configuration, how do the three samplers compare?"
 
 Fixed candidate budget: model.num_candidates (1500 Duke, 500 TOSCA).
 Target coverage: 95%. Targeted samplers are deliberately excluded — see
-e00 Section 1: they do not outperform weighted_curvature.
+e03 Section 1: they do not outperform weighted_curvature.
 
-Set-cover: LazyGreedySetCover (CPU, O(log N) heap) — fastest per e04 results.
+Set-cover: LazyGreedySetCover (CPU, O(log N) heap) — fastest per e06 results.
 
 Usage:
     conda run -n isaaclab python -m experiments.e01_sampling_strategy
@@ -32,7 +32,6 @@ import logging
 import os
 import sys
 
-import cupy as cp
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -47,11 +46,31 @@ from experiments.common.config import (
     TOSCA_REPRESENTATIVE, RESULTS_DIR,
 )
 
+# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
+_RUNTIME_IMPORT_ERROR: ImportError | None = None
+try:
+    import cupy as cp
+    from experiments.common.runner import set_seed, timed, free_gpu_memory
+    from experiments.common.pipeline_setup import (
+        PipelineContext, DegenerateNormalsError,
+    )
+    from experiments.common.sampling_dispatch import sample_strategy
+    from visibility.set_cover import LazyGreedySetCover
+    _RUNTIME_AVAILABLE = True
+except ImportError as _e:
+    cp = None
+    set_seed = timed = free_gpu_memory = None
+    PipelineContext = DegenerateNormalsError = None
+    sample_strategy = None
+    LazyGreedySetCover = None
+    _RUNTIME_AVAILABLE = False
+    _RUNTIME_IMPORT_ERROR = _e
+
 # Targeted sampler is intentionally excluded from the e01 comparison —
-# it never outperforms weighted_curvature at k=1 (see e00 Section 1).
+# it never outperforms weighted_curvature at k=1 (see e03 Section 1).
 _E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes_100"]
 
-# Thesis-final CMA-ES configuration (from e00 Section 2B).
+# Thesis-final CMA-ES configuration (from e03 Section 2B).
 _E01_K_COVERAGE = 3
 _E01_CMAES_POPSIZE = 40
 _E01_CMAES_MAXITER = 40
@@ -65,7 +84,7 @@ def _strategy_kwargs(strategy: str, model_name: str) -> dict:
     weighted and weighted_curvature are one-shot — kwargs are silently
     ignored in the dispatch's one-shot branch. For cmaes_100 we pin the
     thesis-final hyperparameters; the travel_weight is chosen per model
-    group to match e00 Section 2B's conclusion.
+    group to match e03 Section 2B's conclusion.
     """
     if strategy == "cmaes_100":
         tw = (_E01_CMAES_TRAVEL_WEIGHT_DUKE
@@ -78,15 +97,13 @@ def _strategy_kwargs(strategy: str, model_name: str) -> dict:
             "travel_weight": tw,
         }
     return {}
-from experiments.common.runner import set_seed, timed, free_gpu_memory
-from experiments.common.pipeline_setup import PipelineContext, DegenerateNormalsError
+
+
 from experiments.common.persistence import save_run_result, load_run_result
-from experiments.common.sampling_dispatch import sample_strategy
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, grouped_bar, stacked_bar,
     DOUBLE_COL, CATEGORICAL_COLORS,
 )
-from visibility.set_cover import LazyGreedySetCover
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +351,28 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
     ax.tick_params(axis="x", rotation=30)
     save_figure(fig, os.path.join(fig_dir, "e01_A_by_model_viewpoints"))
 
+    # ── Fig 5: Stage timing per model (stacked bar, one panel per model) ─
+    n_models = len(models)
+    fig, axes = plt.subplots(1, n_models,
+                             figsize=(DOUBLE_COL, 3.8),
+                             sharey=True)
+    if n_models == 1:
+        axes = [axes]
+    for ax_m, m in zip(axes, models):
+        m_rows = [r for r in mr if r["model"] == m]
+        stacked_bar(ax_m, short_labels,
+                    {
+                        "Sampling": _per_strategy_mean(m_rows, strategies, "sampling_time")[0],
+                        "Visibility": _per_strategy_mean(m_rows, strategies, "visibility_time")[0],
+                        "Optimization": _per_strategy_mean(m_rows, strategies, "optimization_time")[0],
+                    },
+                    ylabel="Time (s)" if ax_m is axes[0] else "",
+                    title=m)
+        ax_m.tick_params(axis="x", rotation=30)
+    fig.suptitle("Per-stage timing by model")
+    fig.tight_layout()
+    save_figure(fig, os.path.join(fig_dir, "e01_A_by_model_timing"))
+
     logger.info("Section A aggregated figures saved")
 
 
@@ -360,6 +399,12 @@ def main():
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)-8s %(name)s: %(message)s",
     )
+
+    if not args.plots_only and not _RUNTIME_AVAILABLE:
+        raise SystemExit(
+            f"Runtime imports unavailable ({_RUNTIME_IMPORT_ERROR}). "
+            "Activate the isaaclab env or pass --plots_only."
+        )
 
     raw_dir = os.path.join(args.output_dir, "raw")
     os.makedirs(raw_dir, exist_ok=True)

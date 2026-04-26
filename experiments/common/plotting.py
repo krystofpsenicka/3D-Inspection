@@ -25,7 +25,12 @@ DIVERGING_CMAP = "RdBu_r"
 
 
 def setup_thesis_style():
-    """Set matplotlib rcParams for publication-quality thesis figures."""
+    """Set matplotlib rcParams for publication-quality thesis figures.
+
+    Also suppresses every form of "title above the plot" so the LaTeX
+    caption is the only label for each figure. Axis labels, tick labels
+    and legends are unaffected.
+    """
     plt.rcParams.update({
         "font.size": 10,
         "font.family": "serif",
@@ -44,6 +49,16 @@ def setup_thesis_style():
         "grid.alpha": 0.3,
         "grid.linewidth": 0.5,
     })
+
+    # Suppress every kind of "upper title" — the LaTeX caption below
+    # each figure is the canonical label, so any text above the plot
+    # area just duplicates it. Patching the methods centrally avoids
+    # editing the ~30 set_title / 8 suptitle call sites across the
+    # experiment scripts.
+    from matplotlib.axes import Axes as _Axes
+    from matplotlib.figure import Figure as _Figure
+    _Axes.set_title = lambda self, *args, **kwargs: None
+    _Figure.suptitle = lambda self, *args, **kwargs: None
 
 
 def save_figure(fig, path: str, formats: list[str] | None = None):

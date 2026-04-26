@@ -90,6 +90,68 @@ def information_theoretic_lb(
     return math.ceil(points_needed / max_single_vp_coverage)
 
 
+def set_cover_lp_lb(V_bool_sparse, n_required: int) -> int:
+    """LP relaxation lower bound for partial set cover.
+
+    Solves the LP relaxation of the partial set cover integer program::
+
+        min  Σ x_i
+        s.t. Σ_i V[i,j] x_i ≥ z_j    ∀j     (coverage linking)
+             Σ_j z_j ≥ n_required              (target coverage)
+             x_i ≥ 0,  0 ≤ z_j ≤ 1
+
+    ``⌈LP_opt⌉`` is a valid lower bound on the integer optimum.
+    Subsumes the antichain and info-theoretic bounds (they correspond
+    to feasible solutions of the LP dual).
+
+    Args:
+        V_bool_sparse: (N, M) ``scipy.sparse`` visibility matrix
+            (any format; converted to CSC internally).
+        n_required: number of target points that must be covered.
+
+    Returns:
+        ``⌈LP_opt⌉``, or 0 on solver failure.
+    """
+    from scipy.sparse import csc_matrix, hstack, eye
+    from scipy.sparse import vstack as svstack
+
+    V_csc = csc_matrix(V_bool_sparse, dtype=np.float64)
+    N, M = V_csc.shape
+    if n_required <= 0:
+        return 0
+
+    # Variables: [x_1 .. x_N, z_1 .. z_M]
+    c = np.zeros(N + M)
+    c[:N] = 1.0
+
+    # Linking: -V^T x + z ≤ 0  (M rows)
+    A_link = hstack([-V_csc.T, eye(M, format="csc")], format="csc")
+
+    # Target: -Σ z_j ≤ -n_required  (1 row)
+    A_target = hstack([
+        csc_matrix((1, N)),
+        -csc_matrix(np.ones((1, M))),
+    ], format="csc")
+
+    A_ub = svstack([A_link, A_target], format="csc")
+    b_ub = np.zeros(M + 1)
+    b_ub[M] = -float(n_required)
+
+    bounds = [(0.0, None)] * N + [(0.0, 1.0)] * M
+
+    try:
+        result = linprog(
+            c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs",
+        )
+        if result.success:
+            return math.ceil(result.fun - 1e-9)
+        logger.warning("Set cover LP failed: %s", result.message)
+        return 0
+    except Exception as e:
+        logger.warning("Set cover LP error: %s", e)
+        return 0
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # VRP / MAPF (multi-depot, alpha-blended objective)
 # ═══════════════════════════════════════════════════════════════════════════

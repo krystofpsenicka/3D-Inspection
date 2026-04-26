@@ -105,7 +105,7 @@ SEEDS_10 = SEEDS_5 + [999, 55, 8888, 1337, 2025]
 # Representative: small / medium / large vertex count
 TOSCA_REPRESENTATIVE = ["wolf0", "cat0", "david0"]
 
-# One per category (for E15 cross-model sweep)
+# One per category (for E10 cross-model sweep)
 TOSCA_ALL = [
     "wolf0", "cat0", "centaur0", "david0", "dog0",
     "gorilla1", "horse0", "michael0", "victoria0",
@@ -180,23 +180,23 @@ E13_STRATEGIES = ["targeted_25", "cmaes_100"]
 E16_FOV_VALUES = [30.0, 45.0, 60.0, 90.0]  # degrees
 E16_NEAR_FAR_PAIRS = [(0.1, 5.0), (0.2, 10.0), (0.5, 15.0)]  # (near_m, far_m)
 
-# E00: Iterative sampler parameter sweeps (Targeted + CMA-ES)
-_E00_BASE_N = 500           # TOSCA candidate budget; scales as _E00_BASE_N * k_coverage
+# E03: Iterative sampler parameter sweeps (Targeted + CMA-ES)
+_E03_BASE_N = 500           # TOSCA candidate budget; scales as _E03_BASE_N * k_coverage
 
 # Section 1 — Targeted sampler
-E00_T_K_VALUES   = [1, 2, 3, 4, 6, 8]
-E00_T_FRACTIONS  = [12, 25, 50, 75, 100]    # % of budget from targeted phase
-E00_T_SPI_VALUES = [1, 5, 25, None]     # samples_per_iteration; None = all-at-once baseline
+E03_T_K_VALUES   = [1, 2, 3, 4, 6, 8]
+E03_T_FRACTIONS  = [12, 25, 50, 75, 100]    # % of budget from targeted phase
+E03_T_SPI_VALUES = [1, 5, 25, None]     # samples_per_iteration; None = all-at-once baseline
 
 # Section 2 — CMA-ES sampler
-E00_C_K_VALUES       = [1, 2, 3, 4, 6, 8]
-E00_C_FRACTIONS      = [25, 50, 75, 100]
-E00_C_TRAVEL_WEIGHTS_TOSCA = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
-E00_C_TRAVEL_WEIGHTS_DUKE  = [0.01, 0.02, 0.03, 0.06, 0.1]
-E00_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]   # population size per CMA-ES generation (default 15)
-E00_C_MAXITER_VALUES = [5, 10, 20, 40]        # max generations per optimisation round (default 20)
+E03_C_K_VALUES       = [1, 2, 3, 4, 6, 8]
+E03_C_FRACTIONS      = [25, 50, 75, 100]
+E03_C_TRAVEL_WEIGHTS_TOSCA = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
+E03_C_TRAVEL_WEIGHTS_DUKE  = [0.01, 0.02, 0.03, 0.06, 0.1]
+E03_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]   # population size per CMA-ES generation (default 15)
+E03_C_MAXITER_VALUES = [5, 10, 20, 40]        # max generations per optimisation round (default 20)
 
-# E17: Sampler routing impact
+# E09: Sampler routing impact
 E17_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "targeted_50", "cmaes_100"]
 E17_CMAES_TRAVEL_WEIGHTS = [0.0, 0.1, 0.3]
 E17_N_ROBOTS = 5
