@@ -4,13 +4,13 @@
   "target_coverage": 0.85,
   "seed": 123,
   "num_candidates": 500,
-  "num_viewpoints": 16,
-  "reported_coverage": 0.86674,
-  "actual_coverage": 0.86674,
+  "num_viewpoints": 15,
+  "reported_coverage": 0.85254,
+  "actual_coverage": 0.85254,
   "coverage_gap": 0.0,
   "mean_iou": 1.0,
   "mean_f1": 1.0,
-  "visibility_time": 0.029732869938015938,
-  "optimization_time": 0.09193747502285987,
-  "redundancy": 1.327156901359558
+  "visibility_time": 0.004528483000058259,
+  "optimization_time": 0.011853634000090096,
+  "redundancy": 1.2982616424560547
 }

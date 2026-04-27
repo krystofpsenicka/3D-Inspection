@@ -8,13 +8,11 @@ Section A — Optimizer comparison (fixed input strategy: weighted_curvature):
     GreedySetCover              — CPU greedy, O(N·M) per step
     GreedySetCoverCuda          — GPU greedy, ~30× faster than CPU for large N
     LazyGreedySetCover          — CPU lazy greedy, O(log N) heap — fastest for N~1500
-    LazyGreedySetCoverCuda      — GPU lazy greedy, O(N) argmax scan — slower than CPU
-    ExpansionIterative_weighted         — LazyGreedyCuda + weighted expansion
-    ExpansionIterative_weighted_curvature — LazyGreedyCuda + curvature-weighted expansion
-    ExpansionIterative_cmaes            — LazyGreedyCuda + CMA-ES expansion
+    ExpansionIterative_weighted         — LazyGreedy + weighted expansion
+    ExpansionIterative_weighted_curvature — LazyGreedy + curvature-weighted expansion
+    ExpansionIterative_cmaes            — LazyGreedy + CMA-ES expansion
 
-  Note: GPU LazyGreedy uses O(N) argmax scan (no heap) — slower than CPU O(log N)
-  for N~1500. GreedyCuda is fast because it evaluates all N candidates in one CUDA
+  Note: GreedyCuda is fast because it evaluates all N candidates in one CUDA
   kernel per step. Reference: e04 results confirm LazyGreedy-CPU is fastest for N≤2K.
 
 Section B — Input strategy robustness (all 10 sampling strategies × 4 key optimizers):
@@ -138,7 +136,7 @@ def _make_optimizer(name: str, ctx: PipelineContext, vis_query,
     """
     from visibility.set_cover import (
         GreedySetCover, GreedySetCoverCuda,
-        LazyGreedySetCover, LazyGreedySetCoverCuda,
+        LazyGreedySetCover,
         ExpansionIterativeSetCover,
     )
 
@@ -147,9 +145,6 @@ def _make_optimizer(name: str, ctx: PipelineContext, vis_query,
 
     if name == "GreedySetCoverCuda":
         return GreedySetCoverCuda(num_points, pos_gpu, rot_gpu, V_gpu)
-
-    elif name == "LazyGreedySetCoverCuda":
-        return LazyGreedySetCoverCuda(num_points, pos_gpu, rot_gpu, V_gpu)
 
     elif name == "GreedySetCover":
         return GreedySetCover(num_points, pos_np, rot_np, V_np)
@@ -401,8 +396,7 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
         }
         grouped_bar(ax, timing_data, target_labels,
                     ylabel="Optimization time (s)",
-                    title=f"Optimizer Timing ({model_name})\n"
-                          "Note: LazyGreedy-CPU beats LazyGreedy-GPU (O(log N) heap vs O(N) scan)",
+                    title=f"Optimizer Timing ({model_name})",
                     value_labels=True, fmt="%.3f")
         ax.set_xlabel("Target coverage")
         save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_timing"))
@@ -438,6 +432,11 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
                            label=f"LB mean = {lb_mean:.1f}")
             ax.legend(fontsize=8)
             for o, m in zip(present_opts, vp_means):
+                # ExpansionIterative refines viewpoints by sampling new ones
+                # outside the original candidate matrix, so it can legitimately
+                # beat the LB computed on that matrix.
+                if o.startswith("ExpansionIterative_"):
+                    continue
                 if not np.isnan(m) and m < lb_min - 1e-6:
                     logger.warning(
                         "LB violation: %s(%s) returned %.2f viewpoints < "
@@ -451,7 +450,7 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
         ax.set_title(f"Viewpoints at {target_95*100:.0f}% ({model_name})")
         save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_viewpoints"))
 
-        # ── Fig 3: Optimality ratio (viewpoints / mean lower bound) ──────
+        # ── Fig 3: Absolute viewpoints with per-target LB reference ──────
         if lower_bounds:
             def _lb_mean(t):
                 seeds = lower_bounds.get((model_name, t), {}).get("best", [])
@@ -459,27 +458,35 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
 
             valid_targets = [t for t in targets if _lb_mean(t) > 0]
             if valid_targets:
+                from matplotlib.lines import Line2D
                 fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
-                ratio_data = {
+                vp_data = {
                     _short(o): [
-                        _mean(o, t, "num_viewpoints", model_name) / _lb_mean(t)
+                        _mean(o, t, "num_viewpoints", model_name)
                         for t in valid_targets
                     ]
                     for o in present_opts
                 }
-                grouped_bar(ax, ratio_data,
+                grouped_bar(ax, vp_data,
                             [f"{t*100:.0f}%" for t in valid_targets],
-                            ylabel="Viewpoints / lower bound (mean)",
-                            title=f"Optimality Ratio ({model_name})",
-                            value_labels=True, fmt="%.2f")
-                ax.axhline(1.0, color="black", linestyle="--", alpha=0.4, linewidth=0.8)
+                            ylabel="Selected viewpoints",
+                            title=f"Selected Viewpoints vs. Lower Bound ({model_name})",
+                            value_labels=True, fmt="%.0f")
+                # Per-target LB segment spanning the full bar group (width 0.8).
+                for i, t in enumerate(valid_targets):
+                    ax.hlines(_lb_mean(t), xmin=i - 0.4, xmax=i + 0.4,
+                              colors="red", linestyles="--", linewidth=1.2)
+                handles, labels = ax.get_legend_handles_labels()
+                handles.append(Line2D([0], [0], color="red", linestyle="--",
+                                      linewidth=1.2, label="LP LB"))
+                labels.append("LP LB")
+                ax.legend(handles, labels)
                 ax.set_xlabel("Target coverage")
-                save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_optgap"))
+                save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_viewpoints_vs_lb"))
 
         # ── Fig 4: GPU speedup (CPU/GPU time ratio) ───────────────────────
         fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-        pairs = [("GreedySetCover", "GreedySetCoverCuda"),
-                 ("LazyGreedySetCover", "LazyGreedySetCoverCuda")]
+        pairs = [("GreedySetCover", "GreedySetCoverCuda")]
         pair_labels, speedups = [], []
         for cpu_name, gpu_name in pairs:
             cpu_t = [r["optimization_time"] for r in model_mr if r["optimizer"] == cpu_name]
@@ -489,12 +496,11 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
                 pair_labels.append(cpu_name.replace("SetCover", ""))
         if speedups:
             bars = ax.bar(pair_labels, speedups,
-                          color=[CATEGORICAL_COLORS[0], CATEGORICAL_COLORS[2]])
+                          color=[CATEGORICAL_COLORS[i] for i in range(len(speedups))])
             ax.bar_label(bars, fmt="%.2fx", fontsize=9, padding=3)
             ax.axhline(1.0, color="gray", linestyle="--", alpha=0.4)
             ax.set_ylabel("Speedup (CPU time / GPU time)")
-            ax.set_title(f"GPU Speedup ({model_name})\n"
-                         "Greedy: GPU wins (~30×).  LazyGreedy: CPU wins (heap vs scan).")
+            ax.set_title(f"GPU Speedup ({model_name})")
             save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_speedup"))
 
     # ── Cross-model figures at α=0.95 (used in the thesis chapter) ───────
@@ -503,36 +509,42 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
         present_all = [o for o in optimizers
                        if any(r["optimizer"] == o for r in mr)]
 
-        # Fig: viewpoints per model × optimizer at α=0.95, with LP LB line
+        # Fig: viewpoints per model × optimizer at α=0.95, with per-model LB
+        from matplotlib.lines import Line2D
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
         vp_data = {
             _short(o): [_mean(o, target_95, "num_viewpoints", md) for md in models]
             for o in present_all
         }
-        # Append a synthetic "LP LB" series so the bar chart shows the LB
-        # as an extra short bar per model.
-        lb_series = []
-        for md in models:
-            lb_seeds = lower_bounds.get((md, target_95), {}).get("best", [])
-            lb_series.append(float(np.mean(lb_seeds)) if lb_seeds else float("nan"))
-        vp_data["LP LB"] = lb_series
-
         grouped_bar(ax, vp_data, models,
                     ylabel="Selected viewpoints",
                     title=f"Viewpoints at {target_95*100:.0f}% — per model")
+        # Per-model LB segment spanning the full bar group (width 0.8).
+        for i, md in enumerate(models):
+            lb_seeds = lower_bounds.get((md, target_95), {}).get("best", [])
+            if lb_seeds:
+                ax.hlines(float(np.mean(lb_seeds)), xmin=i - 0.4, xmax=i + 0.4,
+                          colors="red", linestyles="--", linewidth=1.2)
+        handles, labels = ax.get_legend_handles_labels()
+        handles.append(Line2D([0], [0], color="red", linestyle="--",
+                              linewidth=1.2, label="LP LB"))
+        labels.append("LP LB")
+        ax.legend(handles, labels)
         ax.set_xlabel("Model")
         ax.tick_params(axis="x", rotation=20)
         save_figure(fig, os.path.join(fig_dir, "cross_model_e06_A_viewpoints_lb"))
 
-        # Fig: timing per model × optimizer at α=0.95
+        # Fig: timing per model × optimizer at α=0.95 (log y so the fast
+        # solvers don't get squashed by Exp_cmaes which is ~100× slower).
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
         time_data = {
             _short(o): [_mean(o, target_95, "optimization_time", md) for md in models]
             for o in present_all
         }
         grouped_bar(ax, time_data, models,
-                    ylabel="Optimization time (s)",
+                    ylabel="Optimization time (s, log scale)",
                     title=f"Optimizer Timing at {target_95*100:.0f}% — per model")
+        ax.set_yscale("log")
         ax.set_xlabel("Model")
         ax.tick_params(axis="x", rotation=20)
         save_figure(fig, os.path.join(fig_dir, "cross_model_e06_A_timing"))

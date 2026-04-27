@@ -61,7 +61,7 @@ def _load_viz(optimizer: str, seed: int = 42, target: float = 0.95):
 def main():
     p = argparse.ArgumentParser(description="Replay E04: Set Cover in Isaac Sim")
     p.add_argument("--optimizer", default="GreedySetCover",
-                   help="Optimizer name to replay (e.g. GreedySetCover, LazyGreedySetCoverCuda)")
+                   help="Optimizer name to replay (e.g. GreedySetCover, LazyGreedySetCover, GreedySetCoverCuda)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--target", type=float, default=0.95)
     p.add_argument("--list", action="store_true", help="List available viz runs and exit")

@@ -5,12 +5,12 @@
   "seed": 7,
   "num_candidates": 500,
   "num_viewpoints": 12,
-  "reported_coverage": 0.86228,
-  "actual_coverage": 0.86236,
-  "coverage_gap": -7.999999999996898e-05,
-  "mean_iou": 0.9999138712882996,
-  "mean_f1": 0.9999569058418274,
-  "visibility_time": 0.9424134850269184,
-  "optimization_time": 0.06998009898234159,
-  "redundancy": 1.3557777404785156
+  "reported_coverage": 0.87494,
+  "actual_coverage": 0.87492,
+  "coverage_gap": 2.0000000000020002e-05,
+  "mean_iou": 0.9999057650566101,
+  "mean_f1": 0.9999528527259827,
+  "visibility_time": 0.9151567060000616,
+  "optimization_time": 0.012521805999995195,
+  "redundancy": 1.3427435159683228
 }

@@ -1,0 +1,16 @@
+{
+  "model": "duke_of_lancaster",
+  "method": "gpu_raycast",
+  "target_coverage": 0.9,
+  "seed": 123,
+  "num_candidates": 1500,
+  "num_viewpoints": 128,
+  "reported_coverage": 0.90012,
+  "actual_coverage": 0.90012,
+  "coverage_gap": 0.0,
+  "mean_iou": 1.0,
+  "mean_f1": 1.0,
+  "visibility_time": 0.019207564000680577,
+  "optimization_time": 0.1393426319991704,
+  "redundancy": 1.6944074630737305
+}

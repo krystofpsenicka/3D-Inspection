@@ -395,8 +395,8 @@ def generate_plots(results: list[dict], methods: list[str], output_dir: str):
 def main():
     p = argparse.ArgumentParser(description="E3: Visibility Method Comparison")
     p.add_argument("--models", nargs="+",
-                   default=TOSCA_REPRESENTATIVE,
-                   help="Models to evaluate (default: TOSCA; add duke_of_lancaster for GPU-only)")
+                   default=TOSCA_REPRESENTATIVE + ["duke_of_lancaster"],
+                   help="Models to evaluate (default: TOSCA and duke_of_lancaster)")
     p.add_argument("--methods", nargs="+", default=_ALL_METHODS,
                    help="Visibility methods: gpu_raycast gpu_epsilon cpu_raycast cpu_epsilon")
     p.add_argument("--targets", type=float, nargs="+", default=E03_COVERAGE_TARGETS)

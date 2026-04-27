@@ -141,7 +141,6 @@ E04_OPTIMIZERS_A = [
     "GreedySetCover",
     "GreedySetCoverCuda",
     "LazyGreedySetCover",
-    "LazyGreedySetCoverCuda",
     "ExpansionIterative_weighted",
     "ExpansionIterative_weighted_curvature",
     "ExpansionIterative_cmaes",
@@ -151,7 +150,6 @@ E04_OPTIMIZERS_B = [
     "GreedySetCover",
     "GreedySetCoverCuda",
     "LazyGreedySetCover",
-    "LazyGreedySetCoverCuda",
 ]
 # All 10 input strategies for Section B
 E04_INPUT_STRATEGIES = [
