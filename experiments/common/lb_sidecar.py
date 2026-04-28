@@ -73,7 +73,7 @@ def compute_all_lbs(
     depot_indices: Sequence[int],
     k: int,
     n_waypoints: int,
-    alpha: float,
+    beta: float,
     *,
     include_mapf: bool = True,
     vrp_best_bound_m: float = 0.0,
@@ -89,7 +89,7 @@ def compute_all_lbs(
         depot_indices:  indices of depot rows/cols.
         k:              number of vehicles.
         n_waypoints:    number of inspection waypoints (n - K).
-        alpha:          VRP objective blend.
+        beta:           VRP objective blend.
         include_mapf:   if True, also compute the seconds-mapped MAPF LBs.
         vrp_best_bound_m: cuOpt dual bound if available (else 0.0).
         vrp_objective_value_m: observed VRP objective in meters (used only
@@ -104,7 +104,7 @@ def compute_all_lbs(
         ``include_mapf=False``). All in meters / seconds as labelled.
     """
     D_np = cp.asnumpy(dist_matrix_cp).astype(np.float64)
-    vrp_m = vrp_lb_meters(D_np, depot_indices, k, alpha)
+    vrp_m = vrp_lb_meters(D_np, depot_indices, k, beta)
 
     out: dict = {
         "vrp_makespan_lb_m": float(vrp_m["makespan_lb_m"]),
@@ -118,7 +118,7 @@ def compute_all_lbs(
         cs = AUV_CRUISE_SPEED if cruise_speed is None else cruise_speed
         ds = SPACE_TIME_DWELL_S if dwell_s is None else dwell_s
         mapf_s = vrp_mapf_lb_seconds(
-            vrp_m, n_waypoints=n_waypoints, k=k, alpha=alpha,
+            vrp_m, n_waypoints=n_waypoints, k=k, beta=beta,
             cruise_speed=cs, dwell_s=ds,
         )
         out["mapf_makespan_time_lb_s"] = float(mapf_s["makespan_time_lb_s"])
@@ -162,12 +162,12 @@ def extract_cuopt_bound(
     dist_matrix_cp,
     depot_indices: Sequence[int],
     k: int,
-    alpha: float,
+    beta: float,
     *,
     time_limit: int = CUOPT_BOUND_TIME_LIMIT,
     mip_gap: float = CUOPT_BOUND_MIP_GAP,
 ) -> float:
-    """Run cuOpt briefly to extract a valid dual bound on the α-blended VRP
+    """Run cuOpt briefly to extract a valid dual bound on the β-blended VRP
     objective (meters). Returns 0.0 on failure.
 
     The solve is intentionally short; the incumbent is discarded — we only
@@ -180,7 +180,7 @@ def extract_cuopt_bound(
             dist_matrix=dist_matrix_cp,
             num_vehicles=k,
             depots=list(depot_indices),
-            alpha=alpha,
+            alpha=beta,
             backend=VRPBackend.CUOPT,
             time_limit=time_limit,
             mip_gap=mip_gap,
@@ -196,7 +196,7 @@ def recompute_lbs(
     depot_indices: Sequence[int],
     k: int,
     n_waypoints: int,
-    alpha: float,
+    beta: float,
     *,
     include_mapf: bool = True,
     include_cuopt: bool = False,
@@ -212,11 +212,11 @@ def recompute_lbs(
     best_bound = 0.0
     if include_cuopt:
         best_bound = extract_cuopt_bound(
-            dist_matrix_cp, depot_indices, k, alpha,
+            dist_matrix_cp, depot_indices, k, beta,
             time_limit=cuopt_time_limit, mip_gap=cuopt_mip_gap,
         )
     return compute_all_lbs(
-        dist_matrix_cp, depot_indices, k, n_waypoints, alpha,
+        dist_matrix_cp, depot_indices, k, n_waypoints, beta,
         include_mapf=include_mapf,
         vrp_best_bound_m=best_bound,
     )

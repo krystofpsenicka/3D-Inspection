@@ -96,6 +96,11 @@ _METHOD_LABELS = {
 }
 
 
+def _display_model(name: str) -> str:
+    """Map internal model id to a compact display label used in figures."""
+    return "duke" if name == "duke_of_lancaster" else name
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Visibility helpers
 # ═══════════════════════════════════════════════════════════════════════════
@@ -305,10 +310,10 @@ def generate_plots(results: list[dict], methods: list[str], output_dir: str):
         return [r[metric] for r in results
                 if r["method"] == method and r["target_coverage"] == target]
 
-    for model_name in models:
-        mr = [r for r in results if r["model"] == model_name]
-        if not mr:
-            continue
+    # ── Per-model: actual-vs-target coverage line, Duke only ────────────
+    duke = "duke_of_lancaster"
+    if duke in models:
+        mr = [r for r in results if r["model"] == duke]
         model_present = [m for m in present_methods if any(r["method"] == m for r in mr)]
 
         def _mm(method, target, metric):
@@ -316,57 +321,25 @@ def generate_plots(results: list[dict], methods: list[str], output_dir: str):
                     if r["method"] == method and r["target_coverage"] == target]
             return float(np.mean(vals)) if vals else float("nan")
 
-        if not model_present:
-            logger.warning("No methods present for %s — skipping per-model plots", model_name)
-            continue
-
-        # ── Fig 1: Timing — grouped bars (one group per target, bars = methods) ─
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-        timing_data = {
-            _METHOD_LABELS.get(m, m): [_mm(m, t, "visibility_time") for t in targets]
-            for m in model_present
-        }
-        grouped_bar(ax, timing_data, target_labels,
-                    ylabel="Visibility time (s)",
-                    title=f"Visibility Timing: GPU vs CPU, Raycast vs Epsilon ({model_name})")
-        ax.set_xlabel("Target coverage")
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e05_timing"))
-
-        # ── Fig 2: Actual vs target coverage (line plot) ─────────────────
-        fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
-        for m in model_present:
-            actual = [_mm(m, t, "actual_coverage") * 100 for t in targets]
-            ax.plot([t * 100 for t in targets], actual, "o-",
-                    color=_METHOD_COLORS.get(m, "grey"),
-                    label=_METHOD_LABELS.get(m, m), linewidth=1.5)
-        ax.plot([t * 100 for t in targets], [t * 100 for t in targets],
-                "k--", alpha=0.3, linewidth=0.8, label="Ideal")
-        ax.set_xlabel("Target coverage (%)")
-        ax.set_ylabel("Actual coverage (%)")
-        ax.set_title(f"Actual vs Target Coverage ({model_name})")
-        ax.legend(fontsize=8)
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e05_actual_vs_target"))
-
-        # ── Fig 3: F1 vs GT — non-ground-truth methods only ──────────────
-        approx_methods = [m for m in model_present if m != "gpu_raycast"]
-        if approx_methods:
-            fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
-            f1_data = {
-                _METHOD_LABELS.get(m, m): [_mm(m, t, "mean_f1") for t in targets]
-                for m in approx_methods
-            }
-            grouped_bar(ax, f1_data, target_labels,
-                        ylabel="Mean per-candidate F1 vs GPU raycast",
-                        title=f"F1 Accuracy vs Ground Truth ({model_name})")
-            ax.axhline(1.0, color="grey", linestyle="--", alpha=0.4, linewidth=0.8)
-            ax.set_xlabel("Target coverage")
-            ax.set_ylim(0, 1.05)
-            save_figure(fig, os.path.join(fig_dir, f"{model_name}_e05_f1"))
-
-        logger.info("E3 figures saved for %s", model_name)
+        if model_present:
+            fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
+            for m in model_present:
+                actual = [_mm(m, t, "actual_coverage") * 100 for t in targets]
+                ax.plot([t * 100 for t in targets], actual, "o-",
+                        color=_METHOD_COLORS.get(m, "grey"),
+                        label=_METHOD_LABELS.get(m, m), linewidth=1.5)
+            ax.plot([t * 100 for t in targets], [t * 100 for t in targets],
+                    "k--", alpha=0.3, linewidth=0.8, label="Ideal")
+            ax.set_xlabel("Target coverage (%)")
+            ax.set_ylabel("Actual coverage (%)")
+            ax.set_title(f"Actual vs Target Coverage ({_display_model(duke)})")
+            ax.legend(fontsize=8)
+            save_figure(fig, os.path.join(fig_dir, f"{duke}_e05_actual_vs_target"))
+            logger.info("E05 actual-vs-target figure saved for %s", _display_model(duke))
 
     # ── Cross-model timing bar (one figure, bars grouped by model × method) ─
     if models:
+        model_labels = [_display_model(m) for m in models]
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
         timing_data = {
             _METHOD_LABELS.get(m, m): [
@@ -379,13 +352,24 @@ def generate_plots(results: list[dict], methods: list[str], output_dir: str):
             ]
             for m in present_methods
         }
-        grouped_bar(ax, timing_data, models,
+        grouped_bar(ax, timing_data, model_labels,
                     ylabel="Visibility time (s)",
                     title="Visibility Timing — Cross-Model Comparison")
         ax.set_xlabel("Model")
         ax.tick_params(axis="x", rotation=20)
         save_figure(fig, os.path.join(fig_dir, "cross_model_e05_timing"))
         logger.info("Cross-model timing figure saved")
+
+    # ── Print per-method mean F1 on Duke (table data for the thesis) ────
+    if duke in models:
+        f1_rows = [r for r in results if r["model"] == duke and r.get("mean_f1") is not None]
+        if f1_rows:
+            logger.info("E05 mean F1 vs gpu_raycast on Duke (averaged over targets, seeds):")
+            for m in present_methods:
+                vals = [r["mean_f1"] for r in f1_rows if r["method"] == m]
+                if vals:
+                    logger.info("  %-12s F1 = %.3f  (n=%d)",
+                                m, float(np.mean(vals)), len(vals))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

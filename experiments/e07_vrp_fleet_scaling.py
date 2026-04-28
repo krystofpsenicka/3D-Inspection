@@ -37,8 +37,8 @@ from experiments.common.lb_sidecar import (
     write_lb_csv, lb_csv_fieldnames,
 )
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure, grouped_bar, violin_with_swarm,
-    stacked_bar, heatmap_annotated, THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    setup_thesis_style, save_figure, stacked_bar,
+    THESIS_COL, CATEGORICAL_COLORS,
 )
 
 # ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
@@ -81,9 +81,9 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Alpha used by the VRP objective and propagated to the MAPF scheduler.
+# Beta used by the VRP objective and propagated to the MAPF scheduler.
 # Kept at module scope so the LB-only mode can reuse the same value.
-_VRP_ALPHA = 0.5
+_VRP_BETA = 0.5
 _VRP_TIME_LIMIT = 120
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,7 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
         t0 = time.perf_counter()
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K,
-            depots=home_indices, alpha=_VRP_ALPHA,
+            depots=home_indices, alpha=_VRP_BETA,
             backend=VRPBackend.CUOPT, time_limit=_VRP_TIME_LIMIT,
         )
         m.t_vrp_solve = time.perf_counter() - t0
@@ -162,7 +162,7 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
         # LBs alongside failed-solve rows.
         try:
             lb = compute_all_lbs(
-                dist_matrix, home_indices, K, n_waypoints, _VRP_ALPHA,
+                dist_matrix, home_indices, K, n_waypoints, _VRP_BETA,
                 include_mapf=True,
                 vrp_best_bound_m=vrp_result.best_bound,
                 vrp_objective_value_m=vrp_result.objective_value,
@@ -233,7 +233,10 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, output_dir,
     for r in successful:
         groups[(r.fleet_size, r.n_waypoints)].append(r)
 
-    wp_colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(waypoint_counts)))
+    # Use distinct categorical colors for each waypoint-count line so that
+    # bands and lines are easy to tell apart even where they overlap.
+    wp_colors = [CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
+                 for i in range(len(waypoint_counts))]
 
     def _lb_band(nw, lb_field):
         """Per-seed min/max band across fleet sizes for the given LB field.
@@ -255,7 +258,7 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, output_dir,
         return xs, lb_min, lb_max
 
     def _objective_for(r) -> float:
-        return _VRP_ALPHA * r.makespan + (1.0 - _VRP_ALPHA) * r.total_cost
+        return _VRP_BETA * r.makespan + (1.0 - _VRP_BETA) * r.total_cost
 
     # ── Fig 1: Makespan vs fleet (with per-seed analytical LB band) ───
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
@@ -327,32 +330,10 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, output_dir,
                             color=wp_colors[wi], linewidth=0)
     if any_obj:
         ax.set_xlabel("Fleet size")
-        ax.set_ylabel(f"VRP objective (α={_VRP_ALPHA}) (m)")
+        ax.set_ylabel(f"VRP objective (β={_VRP_BETA}) (m)")
         ax.set_title("VRP Objective vs. Fleet Size (shaded: cuOpt/analytical LB band)")
         ax.legend(fontsize=6, ncol=2)
         save_figure(fig, os.path.join(fig_dir, "e07_objective_vs_fleet"))
-
-    # ── Fig 2: Speedup vs fleet ──────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-    for wi, nw in enumerate(waypoint_counts):
-        baseline_vals = [r.makespan for r in groups.get((1, nw), [])]
-        if not baseline_vals:
-            continue
-        baseline = np.mean(baseline_vals)
-        xs, means = [], []
-        for k in fleet_sizes:
-            vals = [baseline / r.makespan for r in groups.get((k, nw), []) if r.makespan > 0]
-            if vals:
-                xs.append(k)
-                means.append(np.mean(vals))
-        if xs:
-            ax.plot(xs, means, "o-", color=wp_colors[wi], label=f"{nw} wps")
-    ax.plot(fleet_sizes, fleet_sizes, "k--", alpha=0.4, label="Ideal linear")
-    ax.set_xlabel("Fleet size")
-    ax.set_ylabel("Speedup")
-    ax.set_title("Makespan Speedup vs. Fleet Size")
-    ax.legend(fontsize=6, ncol=2)
-    save_figure(fig, os.path.join(fig_dir, "e07_speedup"))
 
     # ── Fig 3: Stacked bar - timing breakdown ────────────────────────
     mid_wps = waypoint_counts[len(waypoint_counts) // 2]
@@ -371,32 +352,7 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, output_dir,
                     ylabel="Time (s)", title=f"Timing ({mid_wps} waypoints)")
         save_figure(fig, os.path.join(fig_dir, "e07_timing_breakdown"))
 
-    # ── Fig 7: Heatmap - fleet x waypoints -> makespan ───────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 4))
-    fleet_labels = [str(k) for k in fleet_sizes]
-    wp_labels = [str(nw) for nw in waypoint_counts]
-    hm_vals = np.zeros((len(fleet_sizes), len(waypoint_counts)))
-    for i, k in enumerate(fleet_sizes):
-        for j, nw in enumerate(waypoint_counts):
-            vals = [r.makespan for r in groups.get((k, nw), [])]
-            hm_vals[i, j] = np.mean(vals) if vals else 0
-    heatmap_annotated(ax, fleet_labels, wp_labels, hm_vals, fmt=".0f",
-                      title="Makespan (m)", xlabel="Waypoints", ylabel="Fleet size")
-    save_figure(fig, os.path.join(fig_dir, "e07_heatmap"))
-
-    # ── Fig 7b: Heatmap - fleet x waypoints -> total cost ────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 4))
-    tc_vals = np.zeros((len(fleet_sizes), len(waypoint_counts)))
-    for i, k in enumerate(fleet_sizes):
-        for j, nw in enumerate(waypoint_counts):
-            vals = [r.total_cost for r in groups.get((k, nw), [])]
-            tc_vals[i, j] = np.mean(vals) if vals else 0
-    heatmap_annotated(ax, fleet_labels, wp_labels, tc_vals, fmt=".0f",
-                      title="Total route cost (m)", xlabel="Waypoints",
-                      ylabel="Fleet size")
-    save_figure(fig, os.path.join(fig_dir, "e07_total_cost_heatmap"))
-
-    logger.info("E6 figures saved to %s", fig_dir)
+    logger.info("E07 figures saved to %s", fig_dir)
 
 
 def _build_setup(resolution: float = 0.20):
@@ -462,7 +418,7 @@ def _recompute_lbs_for_row(m: RunMetrics, og, sampler, bmin, bmax,
     dist_matrix = compute_distance_matrix(og, cp.asarray(all_positions))
 
     return recompute_lbs(
-        dist_matrix, home_indices, K, m.n_waypoints, _VRP_ALPHA,
+        dist_matrix, home_indices, K, m.n_waypoints, _VRP_BETA,
         include_mapf=True, include_cuopt=include_cuopt,
     )
 

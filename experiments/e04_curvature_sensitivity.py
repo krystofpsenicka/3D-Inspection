@@ -144,7 +144,7 @@ def generate_plots(results: list[dict], output_dir: str):
     k_labels = [str(k) for k in k_vals]
     w_labels = [str(w) for w in w_vals]
 
-    # ── Fig 1: Heatmap - knn_k x weight -> viewpoints ──────────────
+    # ── Heatmap: knn_k × position_weight -> viewpoints ───────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 4))
     vp_vals = np.zeros((len(k_vals), len(w_vals)))
     for i, k in enumerate(k_vals):
@@ -154,21 +154,9 @@ def generate_plots(results: list[dict], output_dir: str):
             vp_vals[i, j] = np.mean(vals) if vals else 0
     heatmap_annotated(ax, k_labels, w_labels, vp_vals, fmt=".0f",
                       title="Viewpoints Selected",
-                      xlabel="Position weight", ylabel="Curvature knn_k")
+                      xlabel="Position weight", ylabel="Curvature knn_k",
+                      cbar_label="Selected viewpoints")
     save_figure(fig, os.path.join(fig_dir, "e04_heatmap_viewpoints"))
-
-    # ── Fig 2: Heatmap - knn_k x weight -> coverage ────────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 4))
-    cov_vals = np.zeros((len(k_vals), len(w_vals)))
-    for i, k in enumerate(k_vals):
-        for j, w in enumerate(w_vals):
-            vals = [r["coverage"] * 100 for r in results
-                    if r["knn_k"] == k and r["position_weight"] == w]
-            cov_vals[i, j] = np.mean(vals) if vals else 0
-    heatmap_annotated(ax, k_labels, w_labels, cov_vals, fmt=".1f",
-                      title="Coverage (%)",
-                      xlabel="Position weight", ylabel="Curvature knn_k")
-    save_figure(fig, os.path.join(fig_dir, "e04_heatmap_coverage"))
 
     logger.info("E04 figures saved to %s", fig_dir)
 

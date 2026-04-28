@@ -57,8 +57,29 @@ def setup_thesis_style():
     # experiment scripts.
     from matplotlib.axes import Axes as _Axes
     from matplotlib.figure import Figure as _Figure
+    global _ORIG_AX_SET_TITLE, _ORIG_FIG_SUPTITLE
+    if _ORIG_AX_SET_TITLE is None:
+        _ORIG_AX_SET_TITLE = _Axes.set_title
+        _ORIG_FIG_SUPTITLE = _Figure.suptitle
     _Axes.set_title = lambda self, *args, **kwargs: None
     _Figure.suptitle = lambda self, *args, **kwargs: None
+
+
+_ORIG_AX_SET_TITLE = None
+_ORIG_FIG_SUPTITLE = None
+
+
+def panel_title(ax, text: str, **kwargs):
+    """Set a per-subplot title that bypasses the global suppression patch.
+
+    Per-panel titles in multi-subplot figures label which subplot is which
+    (e.g. model name, mesh group); they are NOT redundant with the LaTeX
+    figure caption below the figure.
+    """
+    if _ORIG_AX_SET_TITLE is not None:
+        _ORIG_AX_SET_TITLE(ax, text, **kwargs)
+    else:
+        ax.set_title(text, **kwargs)
 
 
 def save_figure(fig, path: str, formats: list[str] | None = None):
@@ -255,18 +276,50 @@ def cdf_plot(ax, data: dict[str, list[float]],
 def heatmap_annotated(ax, row_labels: list[str], col_labels: list[str],
                       values: np.ndarray, fmt: str = ".1f",
                       cmap: str = "viridis", title: str = "",
-                      xlabel: str = "", ylabel: str = ""):
-    """Annotated 2D heatmap."""
+                      xlabel: str = "", ylabel: str = "",
+                      cbar_label: str = "",
+                      overlay_mask: np.ndarray | None = None):
+    """Annotated 2D heatmap.
+
+    Cell text color is chosen by normalised cell value: dark cells
+    (low end of the cmap) get white text, bright cells black. The
+    crossover at ~0.55 matches the viridis luminance midpoint.
+
+    ``cbar_label`` labels the colorbar (the third dimension).
+    ``overlay_mask`` (same shape as ``values``) draws diagonal hatching
+    across every True cell — used to flag e.g. cells whose coverage
+    fell below the target.
+    """
+    from matplotlib.patches import Rectangle
+    values = np.asarray(values)
     im = ax.imshow(values, cmap=cmap, aspect="auto")
     ax.set_xticks(range(len(col_labels)))
     ax.set_xticklabels(col_labels, rotation=45, ha="right")
     ax.set_yticks(range(len(row_labels)))
     ax.set_yticklabels(row_labels)
 
+    finite = values[np.isfinite(values)]
+    if finite.size:
+        vmin, vmax = float(finite.min()), float(finite.max())
+    else:
+        vmin, vmax = 0.0, 1.0
+    span = (vmax - vmin) or 1.0
+
     for i in range(len(row_labels)):
         for j in range(len(col_labels)):
-            ax.text(j, i, f"{values[i, j]:{fmt}}", ha="center", va="center",
-                    fontsize=7, color="white" if values[i, j] > values.mean() else "black")
+            v = values[i, j]
+            norm = (v - vmin) / span
+            text_color = "white" if norm < 0.55 else "black"
+            if overlay_mask is not None and bool(overlay_mask[i, j]):
+                # Diagonal hatching across the whole cell. Hatch colour
+                # follows the same dark/bright rule as the text so it
+                # stays visible regardless of the underlying viridis hue.
+                ax.add_patch(Rectangle(
+                    (j - 0.5, i - 0.5), 1.0, 1.0,
+                    facecolor="none", edgecolor=text_color,
+                    hatch="////", linewidth=0.0))
+            ax.text(j, i, f"{v:{fmt}}", ha="center", va="center",
+                    fontsize=7, color=text_color, zorder=5)
 
     if title:
         ax.set_title(title)
@@ -274,7 +327,9 @@ def heatmap_annotated(ax, row_labels: list[str], col_labels: list[str],
         ax.set_xlabel(xlabel)
     if ylabel:
         ax.set_ylabel(ylabel)
-    plt.colorbar(im, ax=ax)
+    cbar = plt.colorbar(im, ax=ax)
+    if cbar_label:
+        cbar.set_label(cbar_label)
 
 
 def pareto_front(ax, x, y, labels: list[str] | None = None,

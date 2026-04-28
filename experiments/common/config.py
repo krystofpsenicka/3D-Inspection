@@ -119,9 +119,9 @@ TOSCA_VALID: Optional[list] = None  # Set by validate_models.py
 # ── Parameter grids ──────────────────────────────────────────────────────────
 
 # Section A: all methods at k=1 (Duke + TOSCA)
-E01_STRATEGIES_A = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
+E01_STRATEGIES_A = ["weighted", "weighted_curvature", "targeted_25", "cmaes"]
 # Section B: k>1 comparison (TOSCA only)
-E01_STRATEGIES_B = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
+E01_STRATEGIES_B = ["weighted", "weighted_curvature", "targeted_25", "cmaes"]
 E01_K_VALUES = [1, 2, 3, 4]
 E01_STRATEGIES = E01_STRATEGIES_A
 
@@ -129,7 +129,7 @@ E02_CANDIDATE_COUNTS = [250, 500, 750, 1000, 1500, 2000, 3000, 5000]
 E02_STRATEGIES = [
     "weighted", "weighted_curvature",
     "targeted_25",
-    "cmaes_100",
+    "cmaes",
 ]
 
 E03_COVERAGE_TARGETS = [0.85, 0.90, 0.925, 0.95, 0.97]
@@ -155,7 +155,7 @@ E04_OPTIMIZERS_B = [
 E04_INPUT_STRATEGIES = [
     "weighted", "weighted_curvature",
     "targeted_25",
-    "cmaes_100",
+    "cmaes",
 ]
 # Legacy name (kept for backward compatibility with existing results)
 E04_OPTIMIZERS = E04_OPTIMIZERS_A
@@ -166,13 +166,13 @@ E05_POINT_COUNTS = [50_000, 100_000, 200_000]
 E06_FLEET_SIZES = [1, 2, 3, 4, 5, 6, 8, 10]
 E06_WAYPOINT_COUNTS = [10, 25, 50, 75, 100]
 
-E07_ALPHAS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+E07_BETAS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 E10_RESOLUTIONS = [0.25, 0.50, 0.75, 1.0, 1.5]
 
 E13_K_VALUES = [1, 2, 3, 4]
 E13_COVERAGE_TARGETS = [0.90, 0.95]
-E13_STRATEGIES = ["targeted_25", "cmaes_100"]
+E13_STRATEGIES = ["targeted_25", "cmaes"]
 
 # E16: Frustum parameter sensitivity
 E16_FOV_VALUES = [30.0, 45.0, 60.0, 90.0]  # degrees
@@ -195,7 +195,7 @@ E03_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]   # population size per CMA-ES genera
 E03_C_MAXITER_VALUES = [5, 10, 20, 40]        # max generations per optimisation round (default 20)
 
 # E09: Sampler routing impact
-E17_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "targeted_50", "cmaes_100"]
+E17_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "targeted_50", "cmaes"]
 E17_CMAES_TRAVEL_WEIGHTS = [0.0, 0.1, 0.3]
 E17_N_ROBOTS = 5
 E17_N_CANDIDATES = 1500

@@ -52,8 +52,7 @@ from experiments.common.lb_sidecar import (
     compute_all_lbs, save_lb_json, load_raw_lb_dir, ALL_LB_FIELDS,
 )
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure, grouped_bar, stacked_bar,
-    THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    setup_thesis_style, save_figure, DOUBLE_COL, CATEGORICAL_COLORS,
 )
 
 # ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
@@ -83,7 +82,7 @@ logger = logging.getLogger(__name__)
 ALL_MODELS = ["duke_of_lancaster"] + TOSCA_ALL
 TARGET_COVERAGE = 0.95
 FLEET_SIZE = 5   # robots for VRP/MAPF
-VRP_ALPHA = 0.5  # blend β in eq. (1.1): 0.5 · makespan + 0.5 · total_cost
+VRP_BETA = 0.5  # blend β in eq. (1.1): 0.5 · makespan + 0.5 · total_cost
 
 # Fields persisted as an LB sidecar JSON next to each main result.
 LB_SIDECAR_FIELDS = tuple(JOINT_LB_FIELDS) + tuple(ALL_LB_FIELDS)
@@ -193,7 +192,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                 joint_lb = joint_problem_lb(
                     V_np, _tp_np, _home_lb,
                     alpha_coverage=TARGET_COVERAGE,
-                    beta_blend=VRP_ALPHA,
+                    beta_blend=VRP_BETA,
                     frustum_far=float(model_cfg.frustum.far),
                     cruise_speed=AUV_CRUISE_SPEED,
                     dwell_s=SPACE_TIME_DWELL_S,
@@ -251,7 +250,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                 depots=home_indices,
                 backend=VRPBackend.CUOPT,
                 time_limit=60,
-                alpha=VRP_ALPHA,
+                alpha=VRP_BETA,
             )
         result["t_vrp"] = t_vrp.elapsed
         result["vrp_status"] = vrp_result.status
@@ -262,7 +261,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         try:
             stage_lb = compute_all_lbs(
                 dist_matrix, home_indices, FLEET_SIZE,
-                opt_result.num_viewpoints, VRP_ALPHA,
+                opt_result.num_viewpoints, VRP_BETA,
                 include_mapf=True,
                 vrp_best_bound_m=vrp_result.best_bound,
                 vrp_objective_value_m=vrp_result.objective_value,
@@ -298,7 +297,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                     waypoint_rotmats=wp_rot_gpu,
                     home_indices=set(home_indices),
                     dist_matrix=dist_matrix,
-                    alpha=VRP_ALPHA,
+                    alpha=VRP_BETA,
                 )
             result["t_mapf"] = t_mapf.elapsed
 
@@ -331,10 +330,9 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
 # Plot generation
 # ═══════════════════════════════════════════════════════════════════════════
 
-_STAGE_NAMES = ["Mesh", "Surface", "OG", "Sampling", "Visibility",
-                "Set Cover", "VRP", "MAPF"]
-_STAGE_KEYS = ["t_mesh", "t_surface", "t_og", "t_sample", "t_vis",
-               "t_opt", "t_vrp", "t_mapf"]
+def _display_model(name: str) -> str:
+    """Map internal model id to a compact display label used in figures."""
+    return "duke" if name == "duke_of_lancaster" else name
 
 
 def generate_plots(results: list[dict], output_dir: str):
@@ -375,143 +373,146 @@ def generate_plots(results: list[dict], output_dir: str):
         return float(np.std(vals)) if vals else 0.0
 
     subtitle = f"\n{_IMPLEMENTATION_CHOICES}"
-
-    # ── Fig 1: Viewpoints by model (with N_poses LB overlay) ──────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    vp_m = [_mm(m, "num_viewpoints") for m in models]
-    vp_s = [_ms(m, "num_viewpoints") for m in models]
+    model_labels = [_display_model(m) for m in models]
     x = np.arange(len(models))
-    bars = ax.bar(x, vp_m, 0.6, yerr=vp_s, capsize=3,
-                  color=CATEGORICAL_COLORS[0], alpha=0.85,
-                  label="Selected")
-    ax.bar_label(bars, fmt="%.0f", fontsize=7, padding=2)
-    match_lb = [_mm(m, "joint_n_poses_lb") for m in models]
-    info_lb = [_mm(m, "joint_info_n_poses_lb") for m in models]
-    for xi, (mlb, ilb) in enumerate(zip(match_lb, info_lb)):
-        if mlb > 0:
-            ax.hlines(mlb, xi - 0.3, xi + 0.3, colors="black",
-                      linestyles=":", linewidth=1.2,
-                      label="Matching LB" if xi == 0 else None)
-        if ilb > 0:
-            ax.hlines(ilb, xi - 0.3, xi + 0.3, colors="gray",
-                      linestyles="--", linewidth=1.0,
-                      label="Info-theoretic LB" if xi == 0 else None)
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=35, ha="right")
-    ax.set_ylabel("Selected viewpoints")
-    ax.set_title(f"Viewpoints by Model (95% coverage){subtitle}", fontsize=9)
-    ax.legend(fontsize=7, loc="upper left")
-    save_figure(fig, os.path.join(fig_dir, "e10_viewpoints"))
 
-    # ── Fig 2: Coverage by model ────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    cov_m = [_mm(m, "coverage") * 100 for m in models]
-    cov_s = [_ms(m, "coverage") * 100 for m in models]
-    bars = ax.bar(x, cov_m, 0.6, yerr=cov_s, capsize=3,
-                  color=CATEGORICAL_COLORS[1], alpha=0.85)
-    ax.bar_label(bars, fmt="%.1f%%", fontsize=7, padding=2)
-    ax.axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=35, ha="right")
-    ax.set_ylabel("Coverage (%)")
-    ax.set_title(f"Coverage by Model{subtitle}", fontsize=9)
-    save_figure(fig, os.path.join(fig_dir, "e10_coverage"))
+    # ── Three-bar timing breakdown per model ────────────────────────────
+    #   Bar 1 (left)   : total pipeline time as a single segment
+    #   Bar 2 (middle) : 3-group stack — preprocessing / sampling-pipeline / routing
+    #   Bar 3 (right)  : full 8-stage stack
+    # The two stacked bars share their cumulative heights at the group
+    # boundaries, so the reader can read off how each high-level group
+    # decomposes into its constituent stages just by tracing horizontally
+    # from one bar to the next.
+    #
+    # Note: e10's raw data records eight `t_*` fields (mesh, surface, og,
+    # sample, vis, opt, vrp, mapf). Trajectory creation/densification is
+    # part of the MAPF stage (Multi-Agent Path Planning, space-time A*),
+    # which already returns dense 6-DOF trajectories — there is no
+    # separately measured postprocessing stage to break out as a fourth
+    # high-level group.
+    GROUP_DEFS = [
+        ("Preprocessing",
+         ["t_mesh", "t_surface", "t_og"],
+         ["Mesh", "Surface", "Occupancy grid"]),
+        ("Sampling pipeline",
+         ["t_sample", "t_vis", "t_opt"],
+         ["Sampling", "Visibility", "Set cover"]),
+        ("Routing",
+         ["t_vrp", "t_mapf"],
+         ["VRP", "MAPF (space-time A*)"]),
+    ]
+    # Bold colour per group; lighter shades for the constituent stages.
+    # Colourblind-safe Okabe-Ito-inspired palette with strong light→dark range.
+    GROUP_COLORS = ["#0072B2", "#D55E00", "#009E73"]
+    STAGE_COLORS = [
+        "#9ECAE1", "#3182BD", "#08306B",   # preprocessing shades (blue)
+        "#FDAE6B", "#E6550D", "#7F2704",   # sampling-pipeline shades (vermillion)
+        "#A1D99B", "#00441B",              # routing shades (green)
+    ]
 
-    # ── Fig 3: Full 8-stage timing breakdown (stacked bar) ───────────────
-    # Include only stages that have non-zero values (VRP/MAPF may be skipped)
-    active_stages = []
-    active_keys = []
-    for name, key in zip(_STAGE_NAMES, _STAGE_KEYS):
-        if any(r.get(key, 0) > 0 for r in results):
-            active_stages.append(name)
-            active_keys.append(key)
-
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4.5))
-    stage_data = {
-        sname: [_mm(m, skey) for m in models]
-        for sname, skey in zip(active_stages, active_keys)
-    }
-    stacked_bar(ax, models, stage_data,
-                ylabel="Time (s)",
-                title=f"Pipeline Stage Timing by Model (K={FLEET_SIZE} robots){subtitle}")
-    ax.tick_params(axis="x", rotation=35)
-    save_figure(fig, os.path.join(fig_dir, "e10_timing_breakdown"))
-
-    # Same data on a log y-axis so the small stages (sampling, visibility,
-    # set cover) remain readable next to the dominant VRP/MAPF stages.
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4.5))
-    width = 0.8 / max(1, len(active_stages))
+    fig, ax = plt.subplots(figsize=(DOUBLE_COL * 1.15, 5.2))
+    bar_w = 0.26
     xv = np.arange(len(models))
-    for i, (sname, skey) in enumerate(zip(active_stages, active_keys)):
-        vals = [_mm(m, skey) for m in models]
-        # Replace zero / NaN with NaN so log axis doesn't blow up.
-        vals = [v if (v is not None and v > 0 and not np.isnan(v)) else float("nan")
-                for v in vals]
-        ax.bar(xv + (i - (len(active_stages) - 1) / 2) * width, vals,
-               width, label=sname,
-               color=CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)],
-               alpha=0.85)
+
+    # Log-scale stacking needs a strictly positive floor so segments below
+    # the floor don't render as -inf. Stages with timing below this floor
+    # (e.g. sub-millisecond mesh-load on every mesh) are clipped, which
+    # is acceptable since they are not operationally significant.
+    LOG_FLOOR = 1e-3  # seconds
+
+    for mi, m in enumerate(models):
+        per_stage = {key: max(_mm(m, key), 0.0) for _, keys, _ in GROUP_DEFS for key in keys}
+        per_group = [sum(per_stage[k] for k in keys)
+                     for _, keys, _ in GROUP_DEFS]
+        total = sum(per_group)
+
+        # Bar 1: total — single segment from the log floor up to the total.
+        if total > LOG_FLOOR:
+            ax.bar(xv[mi] - bar_w, total - LOG_FLOOR, bar_w,
+                   bottom=LOG_FLOOR,
+                   color="0.55", edgecolor="0.2", linewidth=0.5)
+
+        # Bar 2: 3-group stack. First visible segment starts at LOG_FLOOR
+        # (segments wholly below LOG_FLOOR are skipped); subsequent segments
+        # stack at the cumulative top, so the heights align with Bar 3.
+        cumulative = 0.0
+        first = True
+        for gi, (gname, _, _) in enumerate(GROUP_DEFS):
+            v = per_group[gi]
+            new_top = cumulative + v
+            if new_top > LOG_FLOOR:
+                seg_bottom = max(cumulative, LOG_FLOOR) if first else cumulative
+                ax.bar(xv[mi], new_top - seg_bottom, bar_w,
+                       bottom=seg_bottom,
+                       color=GROUP_COLORS[gi], edgecolor="0.2",
+                       linewidth=0.4)
+                first = False
+            cumulative = new_top
+
+        # Bar 3: full 8-stage stack — same colour families, finer slices.
+        cumulative = 0.0
+        flat_idx = 0
+        first = True
+        for gi, (_, keys, snames) in enumerate(GROUP_DEFS):
+            for k, sn in zip(keys, snames):
+                v = per_stage[k]
+                new_top = cumulative + v
+                if new_top > LOG_FLOOR:
+                    seg_bottom = max(cumulative, LOG_FLOOR) if first else cumulative
+                    ax.bar(xv[mi] + bar_w, new_top - seg_bottom, bar_w,
+                           bottom=seg_bottom,
+                           color=STAGE_COLORS[flat_idx], edgecolor="0.2",
+                           linewidth=0.3)
+                    first = False
+                cumulative = new_top
+                flat_idx += 1
+
+    # Build legend handles as Patch proxies so every group/stage appears in
+    # the legend, even when its segments are clipped below the log floor on
+    # every mesh (e.g. preprocessing).
+    from matplotlib.patches import Patch
+    total_handle = Patch(facecolor="0.55", edgecolor="0.2", label="Total")
+    group_handles = [Patch(facecolor=GROUP_COLORS[gi], edgecolor="0.2",
+                            label=gname)
+                     for gi, (gname, _, _) in enumerate(GROUP_DEFS)]
+    stage_handles_flat = []
+    flat_idx = 0
+    for gi, (_, keys, snames) in enumerate(GROUP_DEFS):
+        for k, sn in zip(keys, snames):
+            stage_handles_flat.append(Patch(
+                facecolor=STAGE_COLORS[flat_idx], edgecolor="0.2", label=sn))
+            flat_idx += 1
+
     ax.set_yscale("log")
+    ax.set_ylim(bottom=LOG_FLOOR)
     ax.set_xticks(xv)
-    ax.set_xticklabels(models, rotation=35, ha="right")
+    ax.set_xticklabels(model_labels, rotation=35, ha="right")
     ax.set_ylabel("Time (s, log scale)")
     ax.set_title(
-        f"Pipeline Stage Timing — log scale (K={FLEET_SIZE} robots){subtitle}")
-    ax.legend(fontsize=7, ncol=2)
-    save_figure(fig, os.path.join(fig_dir, "e10_timing_breakdown_log"))
+        f"Pipeline Stage Timing — total / 3-group / 8-stage breakdown "
+        f"(K={FLEET_SIZE} robots){subtitle}")
 
-    # ── Fig 4: VRP makespan by model (with stage LB band) ──────────────
-    def _vrp_bar_with_lb(metric: str, lb_field: str, title: str,
-                         ylabel: str, stem: str, color_idx: int):
-        vrp_rows = [r for r in results
-                    if not np.isnan(r.get(metric, float("nan")))]
-        if not vrp_rows:
-            return
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-        vm = [_mm(m, metric) for m in models]
-        vs = [_ms(m, metric) for m in models]
-        valid_models = [m for m, v in zip(models, vm) if not np.isnan(v)]
-        valid_m = [v for v in vm if not np.isnan(v)]
-        valid_s = [s for v, s in zip(vm, vs) if not np.isnan(v)]
-        if not valid_models:
-            return
-        xv = np.arange(len(valid_models))
-        ax.bar(xv, valid_m, 0.6, yerr=valid_s, capsize=3,
-               color=CATEGORICAL_COLORS[color_idx], alpha=0.85,
-               label="Observed")
-        # LB overlay (prefer cuOpt dual bound when present).
-        lb_vals = []
-        for m in valid_models:
-            cu = _mm(m, "vrp_objective_best_bound_m")
-            an = _mm(m, lb_field)
-            lb_vals.append(max(cu, an) if cu > 0 else an)
-        if any(v > 0 for v in lb_vals):
-            ax.scatter(xv, lb_vals, marker="_", s=200, color="black",
-                       linewidths=1.5, zorder=5, label="LB")
-            for xi, (obs, lb) in enumerate(zip(valid_m, lb_vals)):
-                if lb > 0 and obs > 0:
-                    gap = (obs - lb) / lb * 100.0
-                    ax.text(xi, obs, f" +{gap:.0f}%",
-                            fontsize=6, ha="center", va="bottom")
-        ax.set_xticks(xv)
-        ax.set_xticklabels(valid_models, rotation=35, ha="right")
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-        ax.legend(fontsize=7)
-        save_figure(fig, os.path.join(fig_dir, stem))
+    # Two legends so the user can read total/group rows separately from
+    # the per-stage colours.
+    leg_top = ax.legend(
+        handles=[total_handle] + group_handles,
+        labels=["Total"] + [g[0] for g in GROUP_DEFS],
+        title="Total / high-level groups",
+        fontsize=7, title_fontsize=7, ncol=4,
+        loc="upper center", bbox_to_anchor=(0.5, -0.16))
+    ax.add_artist(leg_top)
+    flat_labels = [sn for _, _, snames in GROUP_DEFS for sn in snames]
+    ax.legend(
+        handles=stage_handles_flat, labels=flat_labels,
+        title="8 stages (in temporal order, bottom→top within each bar)",
+        fontsize=7, title_fontsize=7, ncol=4,
+        loc="upper center", bbox_to_anchor=(0.5, -0.32))
 
-    _vrp_bar_with_lb(
-        "vrp_makespan", "vrp_makespan_lb_m",
-        f"VRP Makespan by Model (K={FLEET_SIZE}, α={VRP_ALPHA})",
-        "VRP makespan (m)", "e10_vrp_makespan", 3,
-    )
-    _vrp_bar_with_lb(
-        "vrp_total_cost", "vrp_total_cost_lb_m",
-        f"VRP Total Cost by Model (K={FLEET_SIZE}, α={VRP_ALPHA})",
-        "VRP total cost (m)", "e10_vrp_total_cost", 2,
-    )
+    fig.tight_layout()
+    save_figure(fig, os.path.join(fig_dir, "e10_timing_breakdown"))
 
-    # ── Fig 5: Viewpoints vs mesh complexity (scatter, per-mesh colors) ──
+    # ── Viewpoints vs mesh complexity (scatter, per-mesh colors) ────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for i, m in enumerate(models):
         mr = [r for r in results if r["model"] == m]
@@ -520,14 +521,14 @@ def generate_plots(results: list[dict], output_dir: str):
         color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
         ax.scatter([r["mesh_faces"] for r in mr],
                    [r["num_viewpoints"] for r in mr],
-                   color=color, s=40, alpha=0.85, label=m)
+                   color=color, s=40, alpha=0.85, label=_display_model(m))
     ax.set_xlabel("Mesh faces")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title("Viewpoints vs Mesh Complexity")
     ax.legend(fontsize=6, ncol=2, loc="best")
     save_figure(fig, os.path.join(fig_dir, "e10_scatter_faces_vs_vps"))
 
-    # ── Fig 6: Joint-problem makespan gap (seconds) ────────────────────
+    # ── Joint-objective gap (paired bars, observed vs LB, with %-labels) ─
     def _paired_gap_fig(value_fn, lb_field: str, title: str, ylabel: str,
                         stem: str):
         rows = [(m, [value_fn(r) for r in results if r["model"] == m])
@@ -547,33 +548,29 @@ def generate_plots(results: list[dict], output_dir: str):
         w = 0.38
         ax.bar(xv - w / 2, lbs, w, color=CATEGORICAL_COLORS[2], alpha=0.85,
                label="Joint LB")
-        bars = ax.bar(xv + w / 2, obs_mean, w, yerr=obs_std, capsize=3,
-                      color=CATEGORICAL_COLORS[3], alpha=0.85,
-                      label="Observed")
-        for xi, (obs, lb) in enumerate(zip(obs_mean, lbs)):
+        ax.bar(xv + w / 2, obs_mean, w, yerr=obs_std, capsize=3,
+               color=CATEGORICAL_COLORS[3], alpha=0.85,
+               label="Observed")
+        # Position percent labels above the std whisker so they don't
+        # overlap with the error bars.
+        for xi, (obs, std, lb) in enumerate(zip(obs_mean, obs_std, lbs)):
             if lb and not np.isnan(lb) and lb > 0:
                 gap = (obs - lb) / lb * 100.0
-                ax.text(xi + w / 2, obs, f" +{gap:.0f}%",
+                ax.text(xi + w / 2, obs + std * 1.05 + max(obs, 1.0) * 0.01,
+                        f"+{gap:.0f}%",
                         fontsize=6, ha="center", va="bottom")
         ax.set_xticks(xv)
-        ax.set_xticklabels([m for m, _ in rows], rotation=35, ha="right")
+        ax.set_xticklabels([_display_model(m) for m, _ in rows],
+                           rotation=35, ha="right")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.legend(fontsize=7)
         save_figure(fig, os.path.join(fig_dir, stem))
 
     _paired_gap_fig(
-        lambda r: r.get("mapf_makespan_s") if not np.isnan(
-            r.get("mapf_makespan_s", float("nan"))) else None,
-        "joint_makespan_lb_s",
-        f"Joint Makespan Gap (K={FLEET_SIZE}, α={VRP_ALPHA})",
-        "Makespan (s)",
-        "e10_joint_makespan_gap",
-    )
-    _paired_gap_fig(
         _observed_objective_s,
         "joint_objective_lb_s",
-        f"Joint Objective Gap (β={VRP_ALPHA})",
+        f"Joint Objective Gap (β={VRP_BETA})",
         f"β·makespan + (1-β)·total (s)",
         "e10_joint_objective_gap",
     )
@@ -592,7 +589,7 @@ def _observed_objective_s(r: dict) -> float | None:
     tot = r.get("mapf_total_time_s", float("nan"))
     if np.isnan(mks) or np.isnan(tot):
         return None
-    return VRP_ALPHA * mks + (1.0 - VRP_ALPHA) * tot
+    return VRP_BETA * mks + (1.0 - VRP_BETA) * tot
 
 
 def _objective_gap_pct(r: dict) -> float | None:

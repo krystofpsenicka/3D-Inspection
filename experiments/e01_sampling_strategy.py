@@ -5,7 +5,7 @@ Compares three sampling strategies under the thesis-final configuration
 across Duke of Lancaster + TOSCA_REPRESENTATIVE, 3 seeds each:
   weighted            — SDF² uniform, all N from the weighted base sampler
   weighted_curvature  — SDF² + curvature bias, all N from base sampler
-  cmaes_100           — 100% CMA-ES optimised (k_coverage=3, popsize=40,
+  cmaes           — 100% CMA-ES optimised (k_coverage=3, popsize=40,
                         maxiter=40, travel_weight=0.1 for TOSCA / 0.0 for
                         Duke — values from e03 Section 2B)
 
@@ -68,7 +68,7 @@ except ImportError as _e:
 
 # Targeted sampler is intentionally excluded from the e01 comparison —
 # it never outperforms weighted_curvature at k=1 (see e03 Section 1).
-_E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes_100"]
+_E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes"]
 
 # Thesis-final CMA-ES configuration (from e03 Section 2B).
 _E01_K_COVERAGE = 3
@@ -82,11 +82,11 @@ def _strategy_kwargs(strategy: str, model_name: str) -> dict:
     """Per-strategy + per-model kwargs forwarded to sample_strategy().
 
     weighted and weighted_curvature are one-shot — kwargs are silently
-    ignored in the dispatch's one-shot branch. For cmaes_100 we pin the
+    ignored in the dispatch's one-shot branch. For cmaes we pin the
     thesis-final hyperparameters; the travel_weight is chosen per model
     group to match e03 Section 2B's conclusion.
     """
-    if strategy == "cmaes_100":
+    if strategy == "cmaes":
         tw = (_E01_CMAES_TRAVEL_WEIGHT_DUKE
               if model_name == "duke_of_lancaster"
               else _E01_CMAES_TRAVEL_WEIGHT_TOSCA)
@@ -102,8 +102,13 @@ def _strategy_kwargs(strategy: str, model_name: str) -> dict:
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, grouped_bar, stacked_bar,
-    DOUBLE_COL, CATEGORICAL_COLORS,
+    panel_title, DOUBLE_COL,
 )
+
+
+def _display_model(name: str) -> str:
+    """Map internal model id to a compact display label used in figures."""
+    return "duke" if name == "duke_of_lancaster" else name
 
 logger = logging.getLogger(__name__)
 
@@ -200,60 +205,9 @@ def run_single_A(ctx: PipelineContext, strategy: str, seed: int,
 # Plotting helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Consistent color/style per strategy group (matches e02)
-_GROUP_COLORS = {
-    "weighted": CATEGORICAL_COLORS[0],
-    "weighted_curvature": CATEGORICAL_COLORS[1],
-    "targeted": CATEGORICAL_COLORS[2],
-    "cmaes": CATEGORICAL_COLORS[3],
-}
-
-
-def _bar_color(strategy: str) -> str:
-    if strategy == "weighted":
-        return _GROUP_COLORS["weighted"]
-    if strategy == "weighted_curvature":
-        return _GROUP_COLORS["weighted_curvature"]
-    if strategy.startswith("targeted_"):
-        return _GROUP_COLORS["targeted"]
-    if strategy.startswith("cmaes_"):
-        return _GROUP_COLORS["cmaes"]
-    return "grey"
-
-
-def _agg(results, strategy, metric, model=None):
-    """Return (mean, std) for a metric filtered by strategy (and optionally model)."""
-    rows = [r for r in results if r["strategy"] == strategy]
-    if model is not None:
-        rows = [r for r in rows if r["model"] == model]
-    vals = [r[metric] for r in rows]
-    if not vals:
-        return float("nan"), 0.0
-    return float(np.mean(vals)), float(np.std(vals))
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Section A plots
 # ═══════════════════════════════════════════════════════════════════════════
-
-def _normalized_vp_values(rows, strategies):
-    """For each strategy, collect per-(model, seed) num_viewpoints normalized
-    by the same (model, seed) weighted-baseline. Returns {strategy: [float]}."""
-    # Index weighted baselines
-    weighted = {
-        (r["model"], r["seed"]): r["num_viewpoints"]
-        for r in rows if r["strategy"] == "weighted"
-    }
-    out: dict = {s: [] for s in strategies}
-    for r in rows:
-        s = r["strategy"]
-        if s not in out:
-            continue
-        base = weighted.get((r["model"], r["seed"]))
-        if base and base > 0:
-            out[s].append(r["num_viewpoints"] / base)
-    return out
-
 
 def _per_strategy_mean(rows, strategies, metric, mult=1.0):
     means, stds = [], []
@@ -265,77 +219,17 @@ def _per_strategy_mean(rows, strategies, metric, mult=1.0):
 
 
 def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
-    """Aggregated Section A plots across all models.
-
-    Produces four aggregated figures (pooled across models + seeds) and one
-    by-model grouped-bar comparison for absolute viewpoint counts.
-    """
+    """Section A plots: by-model viewpoint counts and per-model timing breakdown."""
     mr = [r for r in results if r["section"] == "A"]
     if not mr:
         return
 
-    colors = [_bar_color(s) for s in strategies]
     short_labels = [s.replace("weighted_curvature", "w_curv") for s in strategies]
-
-    # ── Fig 1: Viewpoints (normalized to weighted baseline) + Coverage ──
-    fig, (ax_vp, ax_cov) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.5))
-
-    norm_vals = _normalized_vp_values(mr, strategies)
-    vp_m = [float(np.mean(norm_vals[s])) if norm_vals[s] else float("nan")
-            for s in strategies]
-    vp_s = [float(np.std(norm_vals[s])) if len(norm_vals[s]) > 1 else 0.0
-            for s in strategies]
-    ax_vp.bar(short_labels, vp_m, yerr=vp_s, color=colors, capsize=3, alpha=0.85)
-    ax_vp.axhline(1.0, color="grey", linestyle="--", alpha=0.5, linewidth=0.8)
-    ax_vp.set_ylabel("Selected viewpoints / weighted baseline")
-    ax_vp.set_title("Viewpoints (normalized, pooled across models)")
-    ax_vp.tick_params(axis="x", rotation=30)
-
-    cov_m, cov_s = _per_strategy_mean(mr, strategies, "coverage", mult=100.0)
-    ax_cov.bar(short_labels, cov_m, yerr=cov_s, color=colors, capsize=3, alpha=0.85)
-    ax_cov.axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
-    ax_cov.set_ylabel("Coverage (%)")
-    ax_cov.set_title("Coverage (pooled across models)")
-    ax_cov.tick_params(axis="x", rotation=30)
-
-    fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, "e01_A_aggregated_viewpoints_coverage"))
-
-    # ── Fig 2: Redundancy (pool + selected, side-by-side, pooled) ───────
-    fig, (ax_pool, ax_sel) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 3.5))
-
-    pool_m, pool_s = _per_strategy_mean(mr, strategies, "pool_redundancy")
-    ax_pool.bar(short_labels, pool_m, yerr=pool_s, color=colors, capsize=3, alpha=0.85)
-    ax_pool.set_ylabel("Avg candidates per surface point")
-    ax_pool.set_title("Pool Redundancy (pre-set-cover)")
-    ax_pool.tick_params(axis="x", rotation=30)
-
-    sel_m, sel_s = _per_strategy_mean(mr, strategies, "redundancy")
-    ax_sel.bar(short_labels, sel_m, yerr=sel_s, color=colors, capsize=3, alpha=0.85)
-    ax_sel.set_ylabel("Avg viewpoints per covered point")
-    ax_sel.set_title("Selected Redundancy (post-set-cover)")
-    ax_sel.tick_params(axis="x", rotation=30)
-
-    fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, "e01_A_aggregated_redundancy"))
-
-    # ── Fig 3: Stage timing (stacked bar, absolute seconds, pooled mean) ─
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
-    stacked_bar(ax, short_labels,
-                {
-                    "Sampling": _per_strategy_mean(mr, strategies, "sampling_time")[0],
-                    "Visibility": _per_strategy_mean(mr, strategies, "visibility_time")[0],
-                    "Optimization": _per_strategy_mean(mr, strategies, "optimization_time")[0],
-                },
-                ylabel="Time (s)",
-                title="Per-Stage Timing (mean across models)")
-    ax.tick_params(axis="x", rotation=30)
-    save_figure(fig, os.path.join(fig_dir, "e01_A_aggregated_timing"))
-
-    # ── Fig 4: By-model grouped bars (absolute viewpoints) ──────────────
     models = sorted(set(r["model"] for r in mr))
+    model_labels = [_display_model(m) for m in models]
+
+    # ── Fig 1: By-model grouped bars (absolute viewpoints) ──────────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    # data: strategy -> list of means, one per model
     vp_data: dict = {}
     for s in strategies:
         per_model = []
@@ -344,21 +238,21 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
                     if r["strategy"] == s and r["model"] == m]
             per_model.append(float(np.mean(vals)) if vals else float("nan"))
         vp_data[s.replace("weighted_curvature", "w_curv")] = per_model
-    grouped_bar(ax, vp_data, models,
+    grouped_bar(ax, vp_data, model_labels,
                 ylabel="Selected viewpoints",
                 title="Viewpoints by Model (absolute, per strategy)")
     ax.set_xlabel("Model")
     ax.tick_params(axis="x", rotation=30)
     save_figure(fig, os.path.join(fig_dir, "e01_A_by_model_viewpoints"))
 
-    # ── Fig 5: Stage timing per model (stacked bar, one panel per model) ─
+    # ── Fig 2: Stage timing per model (stacked bar, one panel per model) ─
     n_models = len(models)
     fig, axes = plt.subplots(1, n_models,
                              figsize=(DOUBLE_COL, 3.8),
                              sharey=True)
     if n_models == 1:
         axes = [axes]
-    for ax_m, m in zip(axes, models):
+    for ax_m, m, m_label in zip(axes, models, model_labels):
         m_rows = [r for r in mr if r["model"] == m]
         stacked_bar(ax_m, short_labels,
                     {
@@ -367,9 +261,10 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
                         "Optimization": _per_strategy_mean(m_rows, strategies, "optimization_time")[0],
                     },
                     ylabel="Time (s)" if ax_m is axes[0] else "",
-                    title=m)
+                    title="")
+        ax_m.set_yscale("log")
         ax_m.tick_params(axis="x", rotation=30)
-    fig.suptitle("Per-stage timing by model")
+        panel_title(ax_m, m_label)
     fig.tight_layout()
     save_figure(fig, os.path.join(fig_dir, "e01_A_by_model_timing"))
 

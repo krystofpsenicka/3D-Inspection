@@ -68,7 +68,7 @@ from experiments.common.config import (
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, heatmap_annotated,
-    DOUBLE_COL, CATEGORICAL_COLORS,
+    panel_title, DOUBLE_COL, CATEGORICAL_COLORS,
 )
 
 # ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
@@ -374,110 +374,27 @@ def _std(results, metric, **filters):
 
 
 def _heatmap_2d(ax, results, row_key, row_vals, col_key, col_vals,
-                metric, fmt, title, mult=1.0, xlabel="", ylabel=""):
+                metric, fmt, title, mult=1.0, xlabel="", ylabel="",
+                cbar_label: str = "", overlay_mask: np.ndarray | None = None):
     """General annotated heatmap for any two parameter axes."""
     vals = np.zeros((len(row_vals), len(col_vals)))
     for i, rv in enumerate(row_vals):
         for j, cv in enumerate(col_vals):
             vals[i, j] = _mean(results, metric, **{row_key: rv, col_key: cv}) * mult
     heatmap_annotated(ax, [str(v) for v in row_vals], [str(v) for v in col_vals],
-                      vals, fmt=fmt, title=title, xlabel=xlabel, ylabel=ylabel)
+                      vals, fmt=fmt, title=title, xlabel=xlabel, ylabel=ylabel,
+                      cbar_label=cbar_label, overlay_mask=overlay_mask)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plotting — Section 1 (Targeted)
-# ═══════════════════════════════════════════════════════════════════════════
-
-def generate_plots_section1(results: list[dict],
-                            spi_values: list, fig_dir: str,
-                            group_tag: str, group_label: str) -> None:
-    """Generate all Section 1 figures for one model group."""
-    r1B = [r for r in results if r.get("section") == "1B"]
-
-    # ── Sub-B: spi bar charts ────────────────────────────────────────────
-    if r1B:
-        spi_labels = ["all-at-once" if s is None else str(s) for s in spi_values]
-        metrics = [
-            ("coverage",      100.0, "Coverage (%)",       ".1f"),
-            ("num_viewpoints", 1.0,  "Selected viewpoints", ".0f"),
-            ("sampling_time",  1.0,  "Sampling time (s)",  ".1f"),
-        ]
-        fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL * 1.2, 3.5))
-        for ax, (metric, mult, ylabel, _) in zip(axes, metrics):
-            means = [_mean(r1B, metric, spi=s) * mult for s in spi_values]
-            stds  = [_std(r1B,  metric, spi=s) * mult for s in spi_values]
-            colors = [CATEGORICAL_COLORS[0] if s is None else CATEGORICAL_COLORS[2]
-                      for s in spi_values]
-            ax.bar(spi_labels, means, yerr=stds, color=colors, capsize=3, alpha=0.85)
-            ax.set_ylabel(ylabel)
-            ax.set_title(ylabel)
-            ax.tick_params(axis="x", rotation=20)
-        axes[0].axhline(95, color="red", linestyle="--", alpha=0.5, linewidth=0.8)
-        s1b_k = r1B[0]["k_coverage"]
-        fig.suptitle(
-            f"Section 1B — Targeted: spi sweep (k={s1b_k}, frac=100%, {group_label})")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, f"e03_{group_tag}_s1B_spi_sweep"))
-        logger.info("Section 1B figures saved (%s).", group_tag)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Plotting — Section 2 (CMA-ES)
-# ═══════════════════════════════════════════════════════════════════════════
-
-def generate_plots_section2(results: list[dict],
-                            k_values: list[int],
-                            popsize_values: list[int], maxiter_values: list[int],
-                            fig_dir: str,
-                            group_tag: str, group_label: str) -> None:
-    """Generate all Section 2 figures for one model group.
-
-    Sub-2B is a joint k × travel_weight heatmap; the travel-weight axis is
-    derived from the data so the plot works regardless of which per-group
-    list was swept.
-    """
-    r2B = [r for r in results if r.get("section") == "2B"]
-    r2C = [r for r in results if r.get("section") == "2C"]
-
-    # ── Sub-B: joint k × travel_weight heatmap (fraction=100%) ──────────
-    if r2B:
-        tws = sorted(set(r["travel_weight"] for r in r2B))
-        fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL * 1.4, 3.5))
-        _heatmap_2d(axes[0], r2B, "k_coverage", k_values, "travel_weight", tws,
-                    "coverage", ".1f", "Coverage (%)", mult=100,
-                    xlabel="travel_weight", ylabel="k-coverage")
-        _heatmap_2d(axes[1], r2B, "k_coverage", k_values, "travel_weight", tws,
-                    "num_viewpoints", ".0f", "Selected viewpoints",
-                    xlabel="travel_weight", ylabel="k-coverage")
-        _heatmap_2d(axes[2], r2B, "k_coverage", k_values, "travel_weight", tws,
-                    "sampling_time", ".1f", "Sampling time (s)",
-                    xlabel="travel_weight", ylabel="k-coverage")
-        fig.suptitle(
-            f"Section 2B — CMA-ES: k × travel_weight (frac=100%, {group_label})")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, f"e03_{group_tag}_s2B_k_tw_heatmap"))
-        logger.info("Section 2B figures saved (%s).", group_tag)
-
-    # ── Sub-C: popsize × maxiter heatmaps ────────────────────────────────
-    if r2C:
-        fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL * 1.4, 3.5))
-        _heatmap_2d(axes[0], r2C, "popsize", popsize_values, "maxiter", maxiter_values,
-                    "coverage", ".2f", "Coverage (%)", mult=100,
-                    xlabel="maxiter", ylabel="popsize")
-        _heatmap_2d(axes[1], r2C, "popsize", popsize_values, "maxiter", maxiter_values,
-                    "num_viewpoints", ".0f", "Selected viewpoints",
-                    xlabel="maxiter", ylabel="popsize")
-        _heatmap_2d(axes[2], r2C, "popsize", popsize_values, "maxiter", maxiter_values,
-                    "sampling_time", ".1f", "Sampling time (s)",
-                    xlabel="maxiter", ylabel="popsize")
-        s2c_k = r2C[0]["k_coverage"]
-        s2c_tw = r2C[0]["travel_weight"]
-        fig.suptitle(
-            f"Section 2C — CMA-ES: popsize × maxiter "
-            f"(k={s2c_k}, frac=100%, tw={s2c_tw}, {group_label})")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, f"e03_{group_tag}_s2C_popsize_maxiter"))
-        logger.info("Section 2C figures saved (%s).", group_tag)
+def _coverage_below_target_mask(results, row_key, row_vals, col_key, col_vals,
+                                target: float) -> np.ndarray:
+    """Boolean mask of (row, col) cells whose mean coverage < target."""
+    mask = np.zeros((len(row_vals), len(col_vals)), dtype=bool)
+    for i, rv in enumerate(row_vals):
+        for j, cv in enumerate(col_vals):
+            cov = _mean(results, "coverage", **{row_key: rv, col_key: cv})
+            mask[i, j] = (cov > 0) and (cov < target)
+    return mask
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -489,7 +406,8 @@ def generate_plots_section1_combined(groups: list[tuple[str, str, list[dict]]],
     """One combined figure for Section 1B with Duke + TOSCA side-by-side.
 
     Drops the coverage panel (always >= target) and shows two metrics
-    (selected viewpoints, sampling time) for each group.
+    (selected viewpoints, sampling time) for each group. Each row is one
+    mesh group (panel-titled with the group label).
     """
     spi_labels = ["all-at-once" if s is None else str(s) for s in spi_values]
     metrics = [
@@ -499,13 +417,10 @@ def generate_plots_section1_combined(groups: list[tuple[str, str, list[dict]]],
     fig, axes = plt.subplots(len(groups), len(metrics),
                              figsize=(DOUBLE_COL, 3.4 * len(groups)),
                              squeeze=False)
-    s1b_k = None
     for row, (tag, label, results) in enumerate(groups):
         r1B = [r for r in results if r.get("section") == "1B"]
         if not r1B:
             continue
-        if s1b_k is None:
-            s1b_k = r1B[0]["k_coverage"]
         for col, (metric, mult, ylabel) in enumerate(metrics):
             ax = axes[row][col]
             means = [_mean(r1B, metric, spi=s) * mult for s in spi_values]
@@ -514,10 +429,8 @@ def generate_plots_section1_combined(groups: list[tuple[str, str, list[dict]]],
                       for s in spi_values]
             ax.bar(spi_labels, means, yerr=stds, color=colors, capsize=3, alpha=0.85)
             ax.set_ylabel(ylabel)
-            ax.set_title(f"{label} — {ylabel}")
             ax.tick_params(axis="x", rotation=20)
-    fig.suptitle(
-        f"Section 1B — Targeted: spi sweep (k={s1b_k}, frac=100%)")
+            panel_title(ax, f"{label} — {ylabel}")
     fig.tight_layout()
     save_figure(fig, os.path.join(fig_dir, "e03_combined_s1B_spi_sweep"))
     logger.info("Section 1B combined figure saved.")
@@ -527,11 +440,13 @@ def generate_plots_section2_combined(groups: list[tuple[str, str, list[dict]]],
                                      k_values: list[int],
                                      popsize_values: list[int],
                                      maxiter_values: list[int],
-                                     fig_dir: str) -> None:
+                                     fig_dir: str,
+                                     target_coverage: float = 0.95) -> None:
     """Combined Duke + TOSCA figures for Section 2B (k × tw) and 2C (pop × mi).
 
-    Each metric becomes a 1×2 grid (Duke left, TOSCA right) to make the
-    single-group conclusions directly comparable.
+    Cells whose mean coverage falls below ``target_coverage`` are flagged
+    with an overlay marker so the reader can see where CMA-ES failed to
+    meet the target while inspecting the viewpoint-count heatmap.
     """
     # ── Sub-B: viewpoints heatmap (k × travel_weight, frac=100%) ────────
     fig, axes = plt.subplots(1, len(groups), figsize=(DOUBLE_COL, 3.5), squeeze=False)
@@ -540,33 +455,37 @@ def generate_plots_section2_combined(groups: list[tuple[str, str, list[dict]]],
         if not r2B:
             continue
         tws = sorted(set(r["travel_weight"] for r in r2B))
-        _heatmap_2d(axes[0][col], r2B, "k_coverage", k_values,
+        below = _coverage_below_target_mask(
+            r2B, "k_coverage", k_values, "travel_weight", tws, target_coverage)
+        ax = axes[0][col]
+        _heatmap_2d(ax, r2B, "k_coverage", k_values,
                     "travel_weight", tws,
-                    "num_viewpoints", ".0f",
-                    f"{label} — Selected viewpoints",
-                    xlabel="travel_weight", ylabel="k-coverage")
-    fig.suptitle("Section 2B — CMA-ES: k × travel_weight (frac=100%)")
+                    "num_viewpoints", ".0f", "",
+                    xlabel="travel_weight", ylabel="k-coverage",
+                    cbar_label="Selected viewpoints",
+                    overlay_mask=below)
+        panel_title(ax, label)
     fig.tight_layout()
     save_figure(fig, os.path.join(fig_dir, "e03_combined_s2B_k_tw_heatmap"))
     logger.info("Section 2B combined figure saved.")
 
     # ── Sub-C: viewpoints heatmap (popsize × maxiter) ────────────────────
     fig, axes = plt.subplots(1, len(groups), figsize=(DOUBLE_COL, 3.5), squeeze=False)
-    s2c_k = s2c_tw = None
     for col, (tag, label, results) in enumerate(groups):
         r2C = [r for r in results if r.get("section") == "2C"]
         if not r2C:
             continue
-        if s2c_k is None:
-            s2c_k = r2C[0]["k_coverage"]
-            s2c_tw = r2C[0]["travel_weight"]
-        _heatmap_2d(axes[0][col], r2C, "popsize", popsize_values,
+        below = _coverage_below_target_mask(
+            r2C, "popsize", popsize_values, "maxiter", maxiter_values,
+            target_coverage)
+        ax = axes[0][col]
+        _heatmap_2d(ax, r2C, "popsize", popsize_values,
                     "maxiter", maxiter_values,
-                    "num_viewpoints", ".0f",
-                    f"{label} — Selected viewpoints",
-                    xlabel="maxiter", ylabel="popsize")
-    fig.suptitle(
-        f"Section 2C — CMA-ES: popsize × maxiter (k={s2c_k}, frac=100%, tw={s2c_tw})")
+                    "num_viewpoints", ".0f", "",
+                    xlabel="maxiter", ylabel="popsize",
+                    cbar_label="Selected viewpoints",
+                    overlay_mask=below)
+        panel_title(ax, label)
     fig.tight_layout()
     save_figure(fig, os.path.join(fig_dir, "e03_combined_s2C_popsize_maxiter"))
     logger.info("Section 2C combined figure saved.")
@@ -824,21 +743,12 @@ def main():
             if run_s2 or args.plots_only:
                 generate_plots_section2_combined(
                     non_empty, E03_C_K_VALUES,
-                    E03_C_POPSIZE_VALUES, E03_C_MAXITER_VALUES, fig_dir)
+                    E03_C_POPSIZE_VALUES, E03_C_MAXITER_VALUES, fig_dir,
+                    target_coverage=args.target_coverage)
 
         for tag, label, group_results in groups:
             if not group_results:
                 continue
-
-            if run_s1 or args.plots_only:
-                generate_plots_section1(
-                    group_results, E03_T_SPI_VALUES, fig_dir,
-                    group_tag=tag, group_label=label)
-            if run_s2 or args.plots_only:
-                generate_plots_section2(
-                    group_results, E03_C_K_VALUES,
-                    E03_C_POPSIZE_VALUES, E03_C_MAXITER_VALUES, fig_dir,
-                    group_tag=tag, group_label=label)
 
             # ── Summary tables (per group) ────────────────────────────────
             r2B = [r for r in group_results if r.get("section") == "2B"]

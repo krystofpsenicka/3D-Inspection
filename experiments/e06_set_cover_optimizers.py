@@ -57,8 +57,7 @@ from experiments.common.lower_bounds import (
     matching_lb_set_cover, information_theoretic_lb, set_cover_lp_lb,
 )
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure, grouped_bar,
-    heatmap_annotated, THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    setup_thesis_style, save_figure, grouped_bar, DOUBLE_COL,
 )
 
 # ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
@@ -363,17 +362,20 @@ def _short(optimizer_name: str) -> str:
             .replace("ExpansionIterative_", "Exp_"))
 
 
+def _display_model(name: str) -> str:
+    """Map internal model id to a compact display label used in figures."""
+    return "duke" if name == "duke_of_lancaster" else name
+
+
 def generate_plots_A(results: list[dict], lower_bounds: dict,
                      optimizers: list[str], fig_dir: str):
-    """Section A plots: optimizer comparison on targeted_50 input."""
+    """Section A plots: cross-model summary plus the per-target LB plot for Duke."""
     mr = [r for r in results if r.get("section") == "A"]
     if not mr:
         return
 
     models = sorted(set(r["model"] for r in mr))
     targets = sorted(set(r["target_coverage"] for r in mr))
-    target_labels = [f"{t*100:.0f}%" for t in targets]
-    opt_labels = [_short(o) for o in optimizers]
 
     def _mean(opt, target, metric, model=None):
         rows = [r for r in mr if r["optimizer"] == opt and r["target_coverage"] == target]
@@ -382,132 +384,47 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
         vals = [r[metric] for r in rows]
         return float(np.mean(vals)) if vals else float("nan")
 
-    for model_name in models:
-        model_mr = [r for r in mr if r["model"] == model_name]
+    # ── Per-target LB plot for Duke only ─────────────────────────────────
+    duke = "duke_of_lancaster"
+    if duke in models and lower_bounds:
+        duke_mr = [r for r in mr if r["model"] == duke]
         present_opts = [o for o in optimizers
-                        if any(r["optimizer"] == o for r in model_mr)]
-        present_labels = [_short(o) for o in present_opts]
+                        if any(r["optimizer"] == o for r in duke_mr)]
 
-        # ── Fig 1: Timing — grouped bars per target ──────────────────────
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-        timing_data = {
-            _short(o): [_mean(o, t, "optimization_time", model_name) for t in targets]
-            for o in present_opts
-        }
-        grouped_bar(ax, timing_data, target_labels,
-                    ylabel="Optimization time (s)",
-                    title=f"Optimizer Timing ({model_name})",
-                    value_labels=True, fmt="%.3f")
-        ax.set_xlabel("Target coverage")
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_timing"))
+        def _lb_mean(t):
+            seeds = lower_bounds.get((duke, t), {}).get("best", [])
+            return float(np.mean(seeds)) if seeds else 0.0
 
-        # ── Fig 2: Viewpoints at 95% target ──────────────────────────────
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
-        target_95 = min(targets, key=lambda t: abs(t - 0.95))
-        vp_means = [_mean(o, target_95, "num_viewpoints", model_name) for o in present_opts]
-        vp_stds = []
-        for o in present_opts:
-            vals = [r["num_viewpoints"] for r in model_mr
-                    if r["optimizer"] == o and r["target_coverage"] == target_95]
-            vp_stds.append(float(np.std(vals)) if vals else 0.0)
-
-        x = np.arange(len(present_opts))
-        bars = ax.bar(x, vp_means, yerr=vp_stds, capsize=3, alpha=0.85,
-                      color=[CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
-                             for i in range(len(present_opts))])
-        ax.bar_label(bars, fmt="%.1f", fontsize=7, padding=2)
-
-        # Lower-bound band across seeds + warn if a greedy beats the tightest one
-        lb_seeds = lower_bounds.get((model_name, target_95), {}).get("best", [])
-        if lb_seeds:
-            lb_mean = float(np.mean(lb_seeds))
-            lb_min, lb_max = float(min(lb_seeds)), float(max(lb_seeds))
-            if len(lb_seeds) == 1 or lb_min == lb_max:
-                ax.axhline(lb_mean, color="red", linestyle="--", alpha=0.7,
-                           label=f"LB = {lb_mean:.0f}")
-            else:
-                ax.axhspan(lb_min, lb_max, color="red", alpha=0.15,
-                           label=f"LB band [{lb_min:.0f}, {lb_max:.0f}]")
-                ax.axhline(lb_mean, color="red", linestyle="--", alpha=0.7,
-                           label=f"LB mean = {lb_mean:.1f}")
-            ax.legend(fontsize=8)
-            for o, m in zip(present_opts, vp_means):
-                # ExpansionIterative refines viewpoints by sampling new ones
-                # outside the original candidate matrix, so it can legitimately
-                # beat the LB computed on that matrix.
-                if o.startswith("ExpansionIterative_"):
-                    continue
-                if not np.isnan(m) and m < lb_min - 1e-6:
-                    logger.warning(
-                        "LB violation: %s(%s) returned %.2f viewpoints < "
-                        "min-LB=%.0f at target=%.2f — check lower_bounds.py",
-                        o, model_name, m, lb_min, target_95,
-                    )
-
-        ax.set_xticks(x)
-        ax.set_xticklabels(present_labels, rotation=30, ha="right")
-        ax.set_ylabel("Selected viewpoints")
-        ax.set_title(f"Viewpoints at {target_95*100:.0f}% ({model_name})")
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_viewpoints"))
-
-        # ── Fig 3: Absolute viewpoints with per-target LB reference ──────
-        if lower_bounds:
-            def _lb_mean(t):
-                seeds = lower_bounds.get((model_name, t), {}).get("best", [])
-                return float(np.mean(seeds)) if seeds else 0.0
-
-            valid_targets = [t for t in targets if _lb_mean(t) > 0]
-            if valid_targets:
-                from matplotlib.lines import Line2D
-                fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
-                vp_data = {
-                    _short(o): [
-                        _mean(o, t, "num_viewpoints", model_name)
-                        for t in valid_targets
-                    ]
-                    for o in present_opts
-                }
-                grouped_bar(ax, vp_data,
-                            [f"{t*100:.0f}%" for t in valid_targets],
-                            ylabel="Selected viewpoints",
-                            title=f"Selected Viewpoints vs. Lower Bound ({model_name})",
-                            value_labels=True, fmt="%.0f")
-                # Per-target LB segment spanning the full bar group (width 0.8).
-                for i, t in enumerate(valid_targets):
-                    ax.hlines(_lb_mean(t), xmin=i - 0.4, xmax=i + 0.4,
-                              colors="red", linestyles="--", linewidth=1.2)
-                handles, labels = ax.get_legend_handles_labels()
-                handles.append(Line2D([0], [0], color="red", linestyle="--",
-                                      linewidth=1.2, label="LP LB"))
-                labels.append("LP LB")
-                ax.legend(handles, labels)
-                ax.set_xlabel("Target coverage")
-                save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_viewpoints_vs_lb"))
-
-        # ── Fig 4: GPU speedup (CPU/GPU time ratio) ───────────────────────
-        fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-        pairs = [("GreedySetCover", "GreedySetCoverCuda")]
-        pair_labels, speedups = [], []
-        for cpu_name, gpu_name in pairs:
-            cpu_t = [r["optimization_time"] for r in model_mr if r["optimizer"] == cpu_name]
-            gpu_t = [r["optimization_time"] for r in model_mr if r["optimizer"] == gpu_name]
-            if cpu_t and gpu_t:
-                speedups.append(np.mean(cpu_t) / np.mean(gpu_t))
-                pair_labels.append(cpu_name.replace("SetCover", ""))
-        if speedups:
-            bars = ax.bar(pair_labels, speedups,
-                          color=[CATEGORICAL_COLORS[i] for i in range(len(speedups))])
-            ax.bar_label(bars, fmt="%.2fx", fontsize=9, padding=3)
-            ax.axhline(1.0, color="gray", linestyle="--", alpha=0.4)
-            ax.set_ylabel("Speedup (CPU time / GPU time)")
-            ax.set_title(f"GPU Speedup ({model_name})")
-            save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_A_speedup"))
+        valid_targets = [t for t in targets if _lb_mean(t) > 0]
+        if valid_targets and present_opts:
+            from matplotlib.lines import Line2D
+            fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
+            vp_data = {
+                _short(o): [_mean(o, t, "num_viewpoints", duke) for t in valid_targets]
+                for o in present_opts
+            }
+            grouped_bar(ax, vp_data,
+                        [f"{t*100:.0f}%" for t in valid_targets],
+                        ylabel="Selected viewpoints",
+                        title=f"Selected Viewpoints vs. Lower Bound ({_display_model(duke)})",
+                        value_labels=False)
+            for i, t in enumerate(valid_targets):
+                ax.hlines(_lb_mean(t), xmin=i - 0.4, xmax=i + 0.4,
+                          colors="red", linestyles="--", linewidth=1.2)
+            handles, labels = ax.get_legend_handles_labels()
+            handles.append(Line2D([0], [0], color="red", linestyle="--",
+                                  linewidth=1.2, label="LP LB"))
+            labels.append("LP LB")
+            ax.legend(handles, labels)
+            ax.set_xlabel("Target coverage")
+            save_figure(fig, os.path.join(fig_dir, f"{duke}_e06_A_viewpoints_vs_lb"))
 
     # ── Cross-model figures at α=0.95 (used in the thesis chapter) ───────
     if models:
         target_95 = min(targets, key=lambda t: abs(t - 0.95))
         present_all = [o for o in optimizers
                        if any(r["optimizer"] == o for r in mr)]
+        model_labels = [_display_model(m) for m in models]
 
         # Fig: viewpoints per model × optimizer at α=0.95, with per-model LB
         from matplotlib.lines import Line2D
@@ -516,10 +433,9 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
             _short(o): [_mean(o, target_95, "num_viewpoints", md) for md in models]
             for o in present_all
         }
-        grouped_bar(ax, vp_data, models,
+        grouped_bar(ax, vp_data, model_labels,
                     ylabel="Selected viewpoints",
                     title=f"Viewpoints at {target_95*100:.0f}% — per model")
-        # Per-model LB segment spanning the full bar group (width 0.8).
         for i, md in enumerate(models):
             lb_seeds = lower_bounds.get((md, target_95), {}).get("best", [])
             if lb_seeds:
@@ -541,7 +457,7 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
             _short(o): [_mean(o, target_95, "optimization_time", md) for md in models]
             for o in present_all
         }
-        grouped_bar(ax, time_data, models,
+        grouped_bar(ax, time_data, model_labels,
                     ylabel="Optimization time (s, log scale)",
                     title=f"Optimizer Timing at {target_95*100:.0f}% — per model")
         ax.set_yscale("log")
@@ -551,90 +467,6 @@ def generate_plots_A(results: list[dict], lower_bounds: dict,
         logger.info("Cross-model A figures saved (target=%.2f)", target_95)
 
     logger.info("Section A figures saved to %s", fig_dir)
-
-
-def generate_plots_B(results: list[dict], optimizers: list[str],
-                     strategies: list[str], fig_dir: str):
-    """Section B plots: optimizer robustness across input strategies."""
-    br = [r for r in results if r.get("section") == "B"]
-    if not br:
-        return
-
-    models = sorted(set(r["model"] for r in br))
-    target_95 = 0.95
-    close_targets = sorted(set(r["target_coverage"] for r in br))
-    target_main = min(close_targets, key=lambda t: abs(t - target_95))
-
-    opt_labels = [_short(o) for o in optimizers]
-    strat_labels = strategies
-
-    def _mean_vp(model, opt, strat):
-        vals = [r["num_viewpoints"] for r in br
-                if r["model"] == model and r["optimizer"] == opt
-                and r["input_strategy"] == strat
-                and abs(r["target_coverage"] - target_main) < 0.01]
-        return float(np.mean(vals)) if vals else float("nan")
-
-    def _mean_time(model, opt, strat):
-        vals = [r["optimization_time"] for r in br
-                if r["model"] == model and r["optimizer"] == opt
-                and r["input_strategy"] == strat
-                and abs(r["target_coverage"] - target_main) < 0.01]
-        return float(np.mean(vals)) if vals else float("nan")
-
-    for model_name in models:
-        present_opts = [o for o in optimizers
-                        if any(r["optimizer"] == o and r["model"] == model_name for r in br)]
-        present_strats = [s for s in strategies
-                          if any(r["input_strategy"] == s and r["model"] == model_name
-                                 for r in br)]
-        if not present_opts or not present_strats:
-            continue
-
-        # ── Fig 5: Heatmap — input strategy × optimizer → viewpoints ────
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, max(3, len(present_strats) * 0.4 + 1)))
-        vals = np.array([[_mean_vp(model_name, o, s)
-                          for o in present_opts]
-                         for s in present_strats])
-        heatmap_annotated(
-            ax,
-            present_strats,
-            [_short(o) for o in present_opts],
-            vals, fmt=".0f",
-            title=f"Viewpoints at {target_main*100:.0f}% ({model_name}) — Input vs Optimizer",
-            xlabel="Optimizer", ylabel="Input strategy",
-        )
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_B_vp_heatmap"))
-
-        # ── Fig 6: Heatmap — timing ───────────────────────────────────────
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, max(3, len(present_strats) * 0.4 + 1)))
-        t_vals = np.array([[_mean_time(model_name, o, s)
-                            for o in present_opts]
-                           for s in present_strats])
-        heatmap_annotated(
-            ax,
-            present_strats,
-            [_short(o) for o in present_opts],
-            t_vals, fmt=".3f",
-            title=f"Optimization Time (s) ({model_name})",
-            xlabel="Optimizer", ylabel="Input strategy",
-        )
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_B_timing_heatmap"))
-
-        # ── Fig 7: Grouped bar — viewpoints by input strategy ────────────
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-        vp_data = {
-            _short(o): [_mean_vp(model_name, o, s) for s in present_strats]
-            for o in present_opts
-        }
-        grouped_bar(ax, vp_data, present_strats,
-                    ylabel="Selected viewpoints",
-                    title=f"Optimizer Ranking by Input Strategy ({model_name})")
-        ax.tick_params(axis="x", rotation=40)
-        ax.set_xlabel("Input sampling strategy")
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e06_B_ranking"))
-
-    logger.info("Section B figures saved to %s", fig_dir)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -895,8 +727,6 @@ def main():
 
         if run_A:
             generate_plots_A(all_results, lower_bounds, args.optimizers_A, fig_dir)
-        if run_B:
-            generate_plots_B(all_results, args.optimizers_B, args.strategies_B, fig_dir)
 
 
 if __name__ == "__main__":

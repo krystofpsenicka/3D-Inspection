@@ -153,19 +153,19 @@ def set_cover_lp_lb(V_bool_sparse, n_required: int) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# VRP / MAPF (multi-depot, alpha-blended objective)
+# VRP / MAPF (multi-depot, beta-blended objective)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def vrp_lb_meters(
     dist_matrix: np.ndarray,
     depot_indices: Iterable[int],
     k: int,
-    alpha: float,
+    beta: float,
 ) -> dict:
     """Lower bounds (in meters) for the multi-depot VRP used in this pipeline.
 
     The VRP objective solved by cuOpt is
-    ``alpha · makespan + (1-alpha) · total_cost`` where both terms are in
+    ``beta · makespan + (1-beta) · total_cost`` where both terms are in
     meters (from the shortest-path distance matrix).
 
     Returns a dict with three keys, each a provably valid LB on the integer
@@ -178,7 +178,7 @@ def vrp_lb_meters(
     - ``makespan_lb_m``    — max of (i) the maximum over waypoints of
       ``2 · min_depot_distance`` (a round-trip LB on the robot that visits
       the farthest waypoint), and (ii) ``total_cost_lb_m / k``.
-    - ``objective_lb_m``   — ``alpha · makespan_lb_m + (1-alpha) · total_cost_lb_m``.
+    - ``objective_lb_m``   — ``beta · makespan_lb_m + (1-beta) · total_cost_lb_m``.
 
     Args:
         dist_matrix:  (n, n) symmetric non-negative metric distance matrix,
@@ -186,7 +186,7 @@ def vrp_lb_meters(
         depot_indices: indices of the depot rows/columns in ``dist_matrix``.
         k: number of vehicles (should equal ``len(depot_indices)`` in this
            pipeline but we don't enforce it).
-        alpha: blend coefficient in [0, 1]; matches what the VRP solver used.
+        beta: blend coefficient in [0, 1]; matches what the VRP solver used.
 
     Returns:
         Dict with ``total_cost_lb_m``, ``makespan_lb_m``, ``objective_lb_m``.
@@ -272,7 +272,7 @@ def vrp_lb_meters(
     makespan_lb = max(round_trip_lb, divided_lb)
 
     # ── Blended objective LB ─────────────────────────────────────────────
-    objective_lb = alpha * makespan_lb + (1.0 - alpha) * total_cost_lb
+    objective_lb = beta * makespan_lb + (1.0 - beta) * total_cost_lb
 
     return {
         "total_cost_lb_m": total_cost_lb,
@@ -285,7 +285,7 @@ def vrp_mapf_lb_seconds(
     vrp_lb_m: dict,
     n_waypoints: int,
     k: int,
-    alpha: float,
+    beta: float,
     cruise_speed: float,
     dwell_s: float,
 ) -> dict:
@@ -303,15 +303,15 @@ def vrp_mapf_lb_seconds(
       The slowest robot has at least its VRP travel time (in seconds), plus
       at least one dwell; separately, ``total / k`` lower-bounds the
       slowest robot when dwell load dominates.
-    - ``objective_time_lb_s`` is the alpha blend of the two, matching the
-      MAPF objective (``alpha · makespan + (1-alpha) · total``) expressed
+    - ``objective_time_lb_s`` is the beta blend of the two, matching the
+      MAPF objective (``beta · makespan + (1-beta) · total``) expressed
       in seconds.
 
     Args:
         vrp_lb_m: dict returned by :func:`vrp_lb_meters`.
         n_waypoints: number of inspection waypoints (excluding depots).
         k: number of vehicles.
-        alpha: blend coefficient (should match the VRP solver's alpha).
+        beta: blend coefficient (should match the VRP solver's beta).
         cruise_speed: constant travel speed in m/s (AUV_CRUISE_SPEED).
         dwell_s: per-waypoint dwell time in seconds (SPACE_TIME_DWELL_S).
 
@@ -325,7 +325,7 @@ def vrp_mapf_lb_seconds(
     total_time_lb_s = (total_cost_m / cruise_speed) + n_waypoints * dwell_s
     travel_per_robot_s = makespan_m / cruise_speed + (dwell_s if n_waypoints > 0 else 0.0)
     makespan_time_lb_s = max(travel_per_robot_s, total_time_lb_s / max(1, k))
-    objective_time_lb_s = alpha * makespan_time_lb_s + (1.0 - alpha) * total_time_lb_s
+    objective_time_lb_s = beta * makespan_time_lb_s + (1.0 - beta) * total_time_lb_s
 
     return {
         "total_time_lb_s": total_time_lb_s,

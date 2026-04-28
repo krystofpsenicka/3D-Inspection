@@ -64,17 +64,17 @@ except ImportError as _e:
     _RUNTIME_IMPORT_ERROR = _e
 
 # Strategy set for e02: weighted + weighted_curvature baselines,
-# targeted_100 (iterative targeted, k=3), cmaes_100 (CMA-ES, k=3, tw=0.0,
+# targeted (iterative targeted, k=3), cmaes (CMA-ES, k=3, tw=0.0,
 # popsize=40, maxiter=40). Historical raw data using older strategy names
 # is still loadable via --plots_only.
-_E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
+_E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted", "cmaes"]
 
 
 def _strategy_kwargs(strategy: str) -> dict:
     """Per-strategy kwargs forwarded to sample_strategy()."""
-    if strategy == "targeted_100":
+    if strategy == "targeted":
         return {"k_coverage": 3}
-    if strategy == "cmaes_100":
+    if strategy == "cmaes":
         return {
             "k_coverage": 3,
             "travel_weight": 0.0,
@@ -86,8 +86,8 @@ def _strategy_kwargs(strategy: str) -> dict:
 
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure, log_log_with_fit,
-    THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    setup_thesis_style, save_figure,
+    DOUBLE_COL, CATEGORICAL_COLORS,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,15 +165,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
                 stds.append(0.0)
         return np.array(means), np.array(stds)
 
-    def _actual_x(strategy):
-        """Per-strategy actual generated counts (mean over seeds), x-axis values.
-
-        CMA-ES often generates far fewer candidates than requested, so plotting
-        against the requested budget hides its true behaviour. Using the actual
-        generated count makes the figures comparable across strategies.
-        """
-        return _agg(strategy, "num_candidates")[0]
-
     # Assign a colour and linestyle to each strategy group
     group_colors = {
         "weighted": CATEGORICAL_COLORS[0],
@@ -188,41 +179,40 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             return group_colors["weighted"], "solid", "o"
         if strategy == "weighted_curvature":
             return group_colors["weighted_curvature"], "solid", "s"
-        if strategy.startswith("targeted_"):
-            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot", "100": "solid"}
-            pct = strategy.split("_")[1]
+        if strategy.startswith("targeted"):
+            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot"}
+            pct = strategy.split("_")[1] if "_" in strategy else None
             return group_colors["targeted"], pct_styles.get(pct, "solid"), "^"
-        if strategy.startswith("cmaes_"):
-            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot", "100": "solid"}
-            pct = strategy.split("_")[1]
+        if strategy.startswith("cmaes"):
+            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot"}
+            pct = strategy.split("_")[1] if "_" in strategy else None
             return group_colors["cmaes"], pct_styles.get(pct, "solid"), "D"
         return "grey", "solid", "x"
 
-    # ── Fig 1: Coverage vs candidates (all strategies) ───────────────────
+    # ── Fig 1: Coverage vs candidates requested (all strategies) ─────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for strat in strategies:
         m, s = _agg(strat, "coverage")
-        x = _actual_x(strat)
         color, ls, marker = _style(strat)
-        ax.plot(x, m * 100, marker=marker, linestyle=ls, color=color,
+        ax.plot(candidates, m * 100, marker=marker, linestyle=ls, color=color,
                 label=strat, linewidth=1.5)
-        ax.fill_between(x, (m - s) * 100, (m + s) * 100, alpha=0.08, color=color)
+        ax.fill_between(candidates, (m - s) * 100, (m + s) * 100,
+                        alpha=0.08, color=color)
     ax.axhline(95, color="red", linestyle="--", alpha=0.5, label="95% target")
-    ax.set_xlabel("Candidates generated")
+    ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Achieved coverage (%)")
     ax.set_title("Coverage vs. Candidate Count — All Strategies")
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e02_coverage_vs_candidates"))
 
-    # ── Fig 2: Selected viewpoints vs candidates ──────────────────────────
+    # ── Fig 2: Selected viewpoints vs candidates requested ───────────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for strat in strategies:
         m, s = _agg(strat, "num_viewpoints")
-        x = _actual_x(strat)
         color, ls, marker = _style(strat)
-        ax.plot(x, m, marker=marker, linestyle=ls, color=color,
+        ax.plot(candidates, m, marker=marker, linestyle=ls, color=color,
                 label=strat, linewidth=1.5)
-    ax.set_xlabel("Candidates generated")
+    ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title("Selected Viewpoints vs. Candidate Count — All Strategies")
     ax.legend(fontsize=6, ncol=2)
@@ -242,20 +232,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     ax.set_title("Actual Candidates Generated\n(CMA-ES may generate fewer due to early stopping)")
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e02_candidates_generated"))
-
-    # ── Fig 4: Visibility time (log-log) — by strategy group ─────────────
-    fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-    for strat in ["weighted", "targeted_50", "cmaes_50"]:
-        if strat not in strategies:
-            continue
-        m, _ = _agg(strat, "visibility_time")
-        color, ls, marker = _style(strat)
-        log_log_with_fit(ax, candidates, m, label=strat, color=color)
-    ax.set_xlabel("Candidates requested")
-    ax.set_ylabel("Visibility time (s)")
-    ax.set_title("Visibility Computation Time (log-log)")
-    ax.legend(fontsize=7)
-    save_figure(fig, os.path.join(fig_dir, "e02_visibility_time_loglog"))
 
     logger.info("E2 figures saved to %s", fig_dir)
 

@@ -9,8 +9,8 @@ propagates to routing cost.
 Hypothesis: CMA-ES's travel_weight parameter penalises point-to-point distance
 during sampling, producing viewpoint sets that are cheaper to route through.
 
-Strategies: weighted, weighted_curvature, targeted_100 (spi=100, k=3),
-            cmaes_100 (popsize=40, maxiter=40, k=3)
+Strategies: weighted, weighted_curvature, targeted (spi=100, k=3),
+            cmaes (popsize=40, maxiter=40, k=3)
 CMA-ES travel_weight sweep: per-model-group — Duke uses E03_C_TRAVEL_WEIGHTS_DUKE
             and TOSCA uses E03_C_TRAVEL_WEIGHTS_TOSCA (same as e03 Section 2B).
 Models: Duke of Lancaster + TOSCA_REPRESENTATIVE (wolf0, cat0, david0).
@@ -79,9 +79,9 @@ except ImportError as _e:
     _RUNTIME_IMPORT_ERROR = _e
 
 # Strategy set for e09 (thesis-final): weighted + weighted_curvature baselines,
-# targeted_100 (iterative targeted at k=3 with spi=100), cmaes_100 (CMA-ES
+# targeted (iterative targeted at k=3 with spi=100), cmaes (CMA-ES
 # with k=3, popsize=40, maxiter=40 and a per-model-group travel_weight sweep).
-_E09_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
+_E09_STRATEGIES = ["weighted", "weighted_curvature", "targeted", "cmaes"]
 _E09_MODELS = ["duke_of_lancaster"] + list(TOSCA_REPRESENTATIVE)
 
 
@@ -97,9 +97,9 @@ def _cmaes_travel_weights(model_name: str) -> list[float]:
 
 def _strategy_kwargs_e09(strategy: str, travel_weight: float | None) -> dict:
     """Per-strategy kwargs forwarded to sample_strategy() for e09."""
-    if strategy == "targeted_100":
+    if strategy == "targeted":
         return {"k_coverage": 3, "samples_per_iteration": 100}
-    if strategy == "cmaes_100":
+    if strategy == "cmaes":
         return {
             "k_coverage": 3,
             "popsize": 40,
@@ -111,13 +111,13 @@ def _strategy_kwargs_e09(strategy: str, travel_weight: float | None) -> dict:
 
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure, stacked_bar,
-    THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    setup_thesis_style, save_figure,
+    DOUBLE_COL, CATEGORICAL_COLORS,
 )
 
-# e09's solve_vrp currently uses the default alpha=1.0 (pure makespan).
+# e09's solve_vrp currently uses the default beta=1.0 (pure makespan).
 # Centralised so the LB sidecar uses the same value.
-_E09_ALPHA = 1.0
+_E09_BETA = 1.0
 
 logger = logging.getLogger(__name__)
 
@@ -125,26 +125,6 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
-
-_GROUP_COLORS = {
-    "weighted": CATEGORICAL_COLORS[0],
-    "weighted_curvature": CATEGORICAL_COLORS[1],
-    "targeted": CATEGORICAL_COLORS[2],
-    "cmaes": CATEGORICAL_COLORS[3],
-}
-
-
-def _bar_color(strategy: str) -> str:
-    if strategy == "weighted":
-        return _GROUP_COLORS["weighted"]
-    if strategy == "weighted_curvature":
-        return _GROUP_COLORS["weighted_curvature"]
-    if strategy.startswith("targeted_"):
-        return _GROUP_COLORS["targeted"]
-    if strategy.startswith("cmaes_"):
-        return _GROUP_COLORS["cmaes"]
-    return "grey"
-
 
 def _display_label(strategy: str, travel_weight) -> str:
     if travel_weight is not None:
@@ -160,7 +140,7 @@ def _build_run_configs(strategies, cmaes_travel_weights):
     """
     configs = []
     for s in strategies:
-        if s.startswith("cmaes_"):
+        if s.startswith("cmaes"):
             for tw in cmaes_travel_weights:
                 configs.append((s, tw))
         else:
@@ -332,7 +312,7 @@ def run_single(ctx: PipelineContext, strategy: str, travel_weight,
         dist_matrix = compute_distance_matrix(og_vrp, cp.asarray(all_pos))
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
-            alpha=_E09_ALPHA, backend=VRPBackend.CUOPT, time_limit=120,
+            alpha=_E09_BETA, backend=VRPBackend.CUOPT, time_limit=120,
         )
 
     pv = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)
@@ -343,7 +323,7 @@ def run_single(ctx: PipelineContext, strategy: str, travel_weight,
     lb: dict | None = None
     try:
         lb = compute_all_lbs(
-            dist_matrix, home_indices, K, num_viewpoints, _E09_ALPHA,
+            dist_matrix, home_indices, K, num_viewpoints, _E09_BETA,
             include_mapf=False,
             vrp_best_bound_m=vrp_result.best_bound,
             vrp_objective_value_m=vrp_result.objective_value,
@@ -402,13 +382,6 @@ def generate_plots(results: list[dict], output_dir: str,
                                   target_coverage)
 
 
-def _e09_lb_stem(r: dict) -> str:
-    tw = r.get("travel_weight")
-    tw_str = f"tw={tw}" if tw is not None else "tw=none"
-    return (f"model={r['model']}_strategy={r['strategy']}_{tw_str}"
-            f"_seed={r['seed']}")
-
-
 def _generate_plots_for_model(ok: list[dict], fig_dir: str, model_name: str,
                               lb_by_stem: dict, target_coverage: float):
     # Thesis chapter only uses Duke for E09; TOSCA per-model figures are not
@@ -428,101 +401,7 @@ def _generate_plots_for_model(ok: list[dict], fig_dir: str, model_name: str,
     cmaes = sorted([c for c in run_cfgs if c[1] is not None], key=lambda x: x[1])
     run_cfgs = non_cmaes + cmaes
 
-    labels = [_display_label(s, tw) for s, tw in run_cfgs]
-    colors = [_bar_color(s) for s, _ in run_cfgs]
-    x = np.arange(len(run_cfgs))
-
-    def _vals(metric):
-        means, stds = [], []
-        for s, tw in run_cfgs:
-            vals = [r[metric] for r in ok
-                    if r["strategy"] == s and r["travel_weight"] == tw]
-            means.append(np.mean(vals) if vals else 0)
-            stds.append(np.std(vals) if vals else 0)
-        return means, stds
-
-    # Coverage is a confounder on makespan/total_cost — a strategy that finishes
-    # early with missed points will look cheap. Flag any (strategy, tw) whose
-    # mean coverage is below target, and hatch those bars on the main plots.
-    cov_m, cov_s = _vals("coverage")  # mean in [0, 1]
-    below_target = [c < target_coverage for c in cov_m]
-
-    def _mark_below_target(bars):
-        for bar, below in zip(bars, below_target):
-            if below:
-                bar.set_hatch("///")
-                bar.set_edgecolor("0.25")
-                bar.set_linewidth(0.8)
-
-    # ── Fig 1: Makespan by strategy (main result) ──────────────────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    mk_m, mk_s = _vals("makespan")
-    bars = ax.bar(x, mk_m, yerr=mk_s, color=colors, capsize=3, alpha=0.85)
-    _mark_below_target(bars)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=40, ha="right")
-    ax.set_ylabel("Makespan (m)")
-    ax.set_title("VRP Makespan by Sampler Strategy")
-    if any(below_target):
-        hatch_proxy = plt.Rectangle(
-            (0, 0), 1, 1, facecolor="white", edgecolor="0.25",
-            hatch="///", linewidth=0.8)
-        ax.legend([hatch_proxy],
-                  [f"Coverage < {target_coverage*100:.0f}% target"],
-                  fontsize=7, loc="best")
-    fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e09_makespan_by_strategy"))
-
-    # ── Fig 2: Total cost by strategy ──────────────────────────────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    tc_m, tc_s = _vals("total_cost")
-    bars = ax.bar(x, tc_m, yerr=tc_s, color=colors, capsize=3, alpha=0.85)
-    _mark_below_target(bars)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=40, ha="right")
-    ax.set_ylabel("Total route cost (m)")
-    ax.set_title("VRP Total Cost by Sampler Strategy")
-    if any(below_target):
-        hatch_proxy = plt.Rectangle(
-            (0, 0), 1, 1, facecolor="white", edgecolor="0.25",
-            hatch="///", linewidth=0.8)
-        ax.legend([hatch_proxy],
-                  [f"Coverage < {target_coverage*100:.0f}% target"],
-                  fontsize=7, loc="best")
-    fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e09_total_cost_by_strategy"))
-
-    # ── Fig 2b: Coverage by strategy (interprets Fig 1 / Fig 2) ────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.5))
-    cov_m_pct = [c * 100 for c in cov_m]
-    cov_s_pct = [c * 100 for c in cov_s]
-    ax.bar(x, cov_m_pct, yerr=cov_s_pct, color=colors, capsize=3, alpha=0.85)
-    ax.axhline(target_coverage * 100, color="red", linestyle="--",
-               linewidth=1.0, label=f"Target {target_coverage*100:.0f}%")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=40, ha="right")
-    ax.set_ylabel("Coverage (%)")
-    ax.set_title("Coverage by Sampler Strategy")
-    # Zoom y-axis to the interesting band (don't waste space on 0-100 when all
-    # strategies are near the target).
-    y_min = max(0.0, min(min(cov_m_pct), target_coverage * 100) - 5)
-    ax.set_ylim(bottom=y_min, top=102)
-    ax.legend(fontsize=7, loc="lower right")
-    fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e09_coverage_by_strategy"))
-
-    # ── Fig 3: Num viewpoints by strategy ──────────────────────────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    vp_m, vp_s = _vals("num_viewpoints")
-    ax.bar(x, vp_m, yerr=vp_s, color=colors, capsize=3, alpha=0.85)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=40, ha="right")
-    ax.set_ylabel("Selected viewpoints")
-    ax.set_title("Viewpoints After Set Cover by Strategy")
-    fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e09_viewpoints_by_strategy"))
-
-    # ── Fig 4: Scatter — viewpoints vs makespan / total_cost ──────────
+    # ── Scatter — viewpoints vs makespan / total_cost ─────────────────
     # Each (strategy, travel_weight) is treated as a distinct "method" with
     # its own discrete color and legend entry. Runs whose coverage fell below
     # the target are drawn with a star marker so they are visually flagged.
@@ -577,74 +456,6 @@ def _generate_plots_for_model(ok: list[dict], fig_dir: str, model_name: str,
     _scatter("total_cost", "Total route cost (m)",
              "Viewpoints vs Total Cost",
              f"{model_name}_e09_scatter_vp_vs_total_cost")
-
-    # ── Fig 5: Stacked bar — timing breakdown ─────────────────────────
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-    stage_data = {
-        "Sampling": _vals("t_sample")[0],
-        "Visibility": _vals("t_vis")[0],
-        "Set Cover": _vals("t_opt")[0],
-        "VRP": _vals("t_vrp")[0],
-    }
-    stacked_bar(ax, labels, stage_data,
-                ylabel="Time (s)",
-                title="Pipeline Time Breakdown by Strategy")
-    ax.tick_params(axis="x", rotation=40)
-    fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, f"{model_name}_e09_timing_breakdown"))
-
-    # ── Fig 6: CMA-ES makespan vs travel_weight ──────────────────────
-    cmaes_runs = [r for r in ok if r["strategy"] == "cmaes_100"
-                  and r["travel_weight"] is not None]
-    if cmaes_runs:
-        fig, ax = plt.subplots(figsize=(THESIS_COL, 3.5))
-        tws = sorted(set(r["travel_weight"] for r in cmaes_runs))
-        mk_means = [np.mean([r["makespan"] for r in cmaes_runs
-                             if r["travel_weight"] == tw]) for tw in tws]
-        mk_stds = [np.std([r["makespan"] for r in cmaes_runs
-                           if r["travel_weight"] == tw]) for tw in tws]
-        ax.errorbar(tws, mk_means, yerr=mk_stds, marker="o", capsize=3,
-                    color=CATEGORICAL_COLORS[3], linewidth=1.5)
-        ax.set_xlabel("Travel weight")
-        ax.set_ylabel("Makespan (m)")
-        ax.set_title("CMA-ES: Makespan vs Travel Weight")
-        fig.tight_layout()
-        save_figure(fig, os.path.join(fig_dir, f"{model_name}_e09_cmaes_tw_vs_makespan"))
-
-    # ── Fig 7: Objective + cuOpt bound by strategy (paired bars) ──────
-    # Only drawn when at least one matching LB sidecar was loaded.
-    lb_pairs = []  # (incumbent_obj, cuopt_lb) per (strategy, tw) combo
-    for s, tw in run_cfgs:
-        rows = [r for r in ok if r["strategy"] == s and r["travel_weight"] == tw]
-        if not rows:
-            lb_pairs.append((float("nan"), float("nan")))
-            continue
-        incumbent = float(np.mean(
-            [_E09_ALPHA * r["makespan"] + (1 - _E09_ALPHA) * r["total_cost"]
-             for r in rows]))
-        lbs = [lb_by_stem.get(_e09_lb_stem(r), {}).get(
-                   "vrp_objective_best_bound_m", 0.0) for r in rows]
-        lbs = [v for v in lbs if v > 0]
-        lb_m = float(np.mean(lbs)) if lbs else float("nan")
-        lb_pairs.append((incumbent, lb_m))
-    if any(not np.isnan(p[1]) for p in lb_pairs):
-        fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
-        width = 0.38
-        inc = [p[0] for p in lb_pairs]
-        lb_vals = [p[1] if not np.isnan(p[1]) else 0.0 for p in lb_pairs]
-        ax.bar(x - width / 2, inc, width, color=colors, alpha=0.85,
-               label="Incumbent objective")
-        ax.bar(x + width / 2, lb_vals, width,
-               color=[c for c in colors], alpha=0.4, hatch="//",
-               label="cuOpt dual bound (mean)")
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=40, ha="right")
-        ax.set_ylabel(f"VRP objective (α={_E09_ALPHA}) (m)")
-        ax.set_title(f"Objective vs cuOpt Bound ({model_name})")
-        ax.legend(fontsize=7)
-        fig.tight_layout()
-        save_figure(fig, os.path.join(
-            fig_dir, f"{model_name}_e09_objective_by_strategy"))
 
     logger.info("E09 figures saved to %s", fig_dir)
 
@@ -750,7 +561,7 @@ def main():
                         int(row["seed"]), args.target_coverage,
                     )
                     lb = recompute_lbs(
-                        dist_matrix, home_indices, K, n_vp, _E09_ALPHA,
+                        dist_matrix, home_indices, K, n_vp, _E09_BETA,
                         include_mapf=False,
                         include_cuopt=args.include_cuopt_bound,
                     )
