@@ -5,7 +5,7 @@ Compares three sampling strategies under the thesis-final configuration
 across Duke of Lancaster + TOSCA_REPRESENTATIVE, 3 seeds each:
   weighted            — SDF² uniform, all N from the weighted base sampler
   weighted_curvature  — SDF² + curvature bias, all N from base sampler
-  cmaes           — 100% CMA-ES optimised (k_coverage=3, popsize=40,
+  cmaes_100       — 100% CMA-ES optimised (k_coverage=3, popsize=40,
                         maxiter=40, travel_weight=0.1 for TOSCA / 0.0 for
                         Duke — values from e03 Section 2B)
 
@@ -68,7 +68,7 @@ except ImportError as _e:
 
 # Targeted sampler is intentionally excluded from the e01 comparison —
 # it never outperforms weighted_curvature at k=1 (see e03 Section 1).
-_E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes"]
+_E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes_100"]
 
 # Thesis-final CMA-ES configuration (from e03 Section 2B).
 _E01_K_COVERAGE = 3
@@ -82,11 +82,11 @@ def _strategy_kwargs(strategy: str, model_name: str) -> dict:
     """Per-strategy + per-model kwargs forwarded to sample_strategy().
 
     weighted and weighted_curvature are one-shot — kwargs are silently
-    ignored in the dispatch's one-shot branch. For cmaes we pin the
+    ignored in the dispatch's one-shot branch. For cmaes_100 we pin the
     thesis-final hyperparameters; the travel_weight is chosen per model
     group to match e03 Section 2B's conclusion.
     """
-    if strategy == "cmaes":
+    if strategy == "cmaes_100":
         tw = (_E01_CMAES_TRAVEL_WEIGHT_DUKE
               if model_name == "duke_of_lancaster"
               else _E01_CMAES_TRAVEL_WEIGHT_TOSCA)
@@ -102,7 +102,7 @@ def _strategy_kwargs(strategy: str, model_name: str) -> dict:
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
     setup_thesis_style, save_figure, grouped_bar, stacked_bar,
-    panel_title, DOUBLE_COL,
+    panel_title, display_strategy, DOUBLE_COL,
 )
 
 
@@ -224,21 +224,27 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
     if not mr:
         return
 
-    short_labels = [s.replace("weighted_curvature", "w_curv") for s in strategies]
+    short_labels = [display_strategy(s).replace("weighted_curvature", "w_curv") for s in strategies]
     models = sorted(set(r["model"] for r in mr))
     model_labels = [_display_model(m) for m in models]
 
     # ── Fig 1: By-model grouped bars (absolute viewpoints) ──────────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     vp_data: dict = {}
+    vp_err: dict = {}
     for s in strategies:
-        per_model = []
+        per_model_mean = []
+        per_model_std = []
         for m in models:
             vals = [r["num_viewpoints"] for r in mr
                     if r["strategy"] == s and r["model"] == m]
-            per_model.append(float(np.mean(vals)) if vals else float("nan"))
-        vp_data[s.replace("weighted_curvature", "w_curv")] = per_model
+            per_model_mean.append(float(np.mean(vals)) if vals else float("nan"))
+            per_model_std.append(float(np.std(vals)) if len(vals) > 1 else 0.0)
+        label = display_strategy(s).replace("weighted_curvature", "w_curv")
+        vp_data[label] = per_model_mean
+        vp_err[label] = per_model_std
     grouped_bar(ax, vp_data, model_labels,
+                yerr=vp_err,
                 ylabel="Selected viewpoints",
                 title="Viewpoints by Model (absolute, per strategy)")
     ax.set_xlabel("Model")

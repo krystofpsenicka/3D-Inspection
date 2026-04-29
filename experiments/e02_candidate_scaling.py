@@ -64,17 +64,17 @@ except ImportError as _e:
     _RUNTIME_IMPORT_ERROR = _e
 
 # Strategy set for e02: weighted + weighted_curvature baselines,
-# targeted (iterative targeted, k=3), cmaes (CMA-ES, k=3, tw=0.0,
+# targeted_100 (iterative targeted, k=3), cmaes_100 (CMA-ES, k=3, tw=0.0,
 # popsize=40, maxiter=40). Historical raw data using older strategy names
 # is still loadable via --plots_only.
-_E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted", "cmaes"]
+_E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
 
 
 def _strategy_kwargs(strategy: str) -> dict:
     """Per-strategy kwargs forwarded to sample_strategy()."""
-    if strategy == "targeted":
+    if strategy == "targeted_100":
         return {"k_coverage": 3}
-    if strategy == "cmaes":
+    if strategy == "cmaes_100":
         return {
             "k_coverage": 3,
             "travel_weight": 0.0,
@@ -86,7 +86,7 @@ def _strategy_kwargs(strategy: str) -> dict:
 
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure,
+    setup_thesis_style, save_figure, display_strategy,
     DOUBLE_COL, CATEGORICAL_COLORS,
 )
 
@@ -179,13 +179,13 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             return group_colors["weighted"], "solid", "o"
         if strategy == "weighted_curvature":
             return group_colors["weighted_curvature"], "solid", "s"
-        if strategy.startswith("targeted"):
-            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot"}
-            pct = strategy.split("_")[1] if "_" in strategy else None
+        if strategy.startswith("targeted_"):
+            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot", "100": "solid"}
+            pct = strategy.split("_")[1]
             return group_colors["targeted"], pct_styles.get(pct, "solid"), "^"
-        if strategy.startswith("cmaes"):
-            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot"}
-            pct = strategy.split("_")[1] if "_" in strategy else None
+        if strategy.startswith("cmaes_"):
+            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot", "100": "solid"}
+            pct = strategy.split("_")[1]
             return group_colors["cmaes"], pct_styles.get(pct, "solid"), "D"
         return "grey", "solid", "x"
 
@@ -195,7 +195,7 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
         m, s = _agg(strat, "coverage")
         color, ls, marker = _style(strat)
         ax.plot(candidates, m * 100, marker=marker, linestyle=ls, color=color,
-                label=strat, linewidth=1.5)
+                label=display_strategy(strat), linewidth=1.5)
         ax.fill_between(candidates, (m - s) * 100, (m + s) * 100,
                         alpha=0.08, color=color)
     ax.axhline(95, color="red", linestyle="--", alpha=0.5, label="95% target")
@@ -211,7 +211,7 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
         m, s = _agg(strat, "num_viewpoints")
         color, ls, marker = _style(strat)
         ax.plot(candidates, m, marker=marker, linestyle=ls, color=color,
-                label=strat, linewidth=1.5)
+                label=display_strategy(strat), linewidth=1.5)
     ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title("Selected Viewpoints vs. Candidate Count — All Strategies")
@@ -224,7 +224,7 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
         m, s = _agg(strat, "num_candidates")
         color, ls, marker = _style(strat)
         ax.plot(candidates, m, marker=marker, linestyle=ls, color=color,
-                label=strat, linewidth=1.5)
+                label=display_strategy(strat), linewidth=1.5)
     # Identity line
     ax.plot(candidates, candidates, "k--", alpha=0.3, label="N requested")
     ax.set_xlabel("Candidates requested")

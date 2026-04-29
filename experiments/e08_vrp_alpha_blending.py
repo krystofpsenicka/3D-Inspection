@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""E7: VRP Beta Blending
+"""E7: VRP Alpha Blending
 
-Sweeps beta parameter (makespan vs total-distance objective weighting)
+Sweeps alpha parameter (makespan vs total-distance objective weighting)
 and measures the tradeoff.
 
 Usage:
@@ -25,7 +25,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from experiments.common.config import ModelConfig, SEEDS_3, E07_BETAS, RESULTS_DIR
+from experiments.common.config import ModelConfig, SEEDS_3, E07_ALPHAS, RESULTS_DIR
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.lb_sidecar import (
     compute_all_lbs, recompute_lbs, save_lb_json, load_raw_lb_dir,
@@ -74,7 +74,7 @@ N_WAYPOINTS = 50
 N_ROBOTS = 5
 
 
-def _build_instance(beta: float, seed: int, og, sampler, bmin, bmax):
+def _build_instance(alpha: float, seed: int, og, sampler, bmin, bmax):
     """Deterministic instance construction (shared between the full run and
     the LB-only recompute path)."""
     np.random.seed(seed)
@@ -95,12 +95,12 @@ def _build_instance(beta: float, seed: int, og, sampler, bmin, bmax):
     return K, home_indices, dist_matrix
 
 
-def run_single(beta: float, seed: int, og, sampler, mesh_bounds_min,
+def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
                mesh_bounds_max):
-    """Run VRP with the given beta on one frozen instance. Returns
+    """Run VRP with the given alpha on one frozen instance. Returns
     ``(main_result, lb_dict)``; ``lb_dict`` is None on VRP failure."""
     K, home_indices, dist_matrix = _build_instance(
-        beta, seed, og, sampler, mesh_bounds_min, mesh_bounds_max)
+        alpha, seed, og, sampler, mesh_bounds_min, mesh_bounds_max)
 
     from VRP.vrp._helpers import per_vehicle_costs
     t0 = time.perf_counter()
@@ -108,7 +108,7 @@ def run_single(beta: float, seed: int, og, sampler, mesh_bounds_min,
     try:
         vrp_result = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
-            alpha=beta, backend=VRPBackend.CUOPT, time_limit=120,
+            alpha=alpha, backend=VRPBackend.CUOPT, time_limit=120,
         )
         solve_time = time.perf_counter() - t0
         per_v = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)
@@ -119,7 +119,7 @@ def run_single(beta: float, seed: int, og, sampler, mesh_bounds_min,
         # LB sidecar (no MAPF in this experiment — VRP-only LBs).
         try:
             lb = compute_all_lbs(
-                dist_matrix, home_indices, K, N_WAYPOINTS, beta,
+                dist_matrix, home_indices, K, N_WAYPOINTS, alpha,
                 include_mapf=False,
                 vrp_best_bound_m=vrp_result.best_bound,
                 vrp_objective_value_m=vrp_result.objective_value,
@@ -128,15 +128,15 @@ def run_single(beta: float, seed: int, og, sampler, mesh_bounds_min,
             logger.warning("LB computation failed: %s", e)
     except RuntimeError as exc:
         solve_time = time.perf_counter() - t0
-        logger.warning("solve_vrp failed (beta=%.2f seed=%d): %s — skipping",
-                       beta, seed, exc)
+        logger.warning("solve_vrp failed (alpha=%.2f seed=%d): %s — skipping",
+                       alpha, seed, exc)
         per_v = []
         makespan = float("nan")
         total_cost = float("nan")
         status = f"failed: {exc}"
 
     main = {
-        "beta": beta,
+        "alpha": alpha,
         "seed": seed,
         "makespan": makespan,
         "total_cost": total_cost,
@@ -148,14 +148,14 @@ def run_single(beta: float, seed: int, og, sampler, mesh_bounds_min,
     return main, lb
 
 
-def _recompute_lb_only(beta: float, seed: int, og, sampler, bmin, bmax,
+def _recompute_lb_only(alpha: float, seed: int, og, sampler, bmin, bmax,
                        *, include_cuopt: bool = False) -> dict:
-    """Recompute analytical LBs for a given (beta, seed) and optionally
+    """Recompute analytical LBs for a given (alpha, seed) and optionally
     also extract a cuOpt dual bound via a short solve."""
     K, home_indices, dist_matrix = _build_instance(
-        beta, seed, og, sampler, bmin, bmax)
+        alpha, seed, og, sampler, bmin, bmax)
     return recompute_lbs(
-        dist_matrix, home_indices, K, N_WAYPOINTS, beta,
+        dist_matrix, home_indices, K, N_WAYPOINTS, alpha,
         include_mapf=False, include_cuopt=include_cuopt,
     )
 
@@ -167,21 +167,21 @@ def generate_plots(results: list[dict], output_dir: str,
     os.makedirs(fig_dir, exist_ok=True)
     lb_by_stem = lb_by_stem or {}
 
-    betas = sorted(set(r["beta"] for r in results))
+    alphas = sorted(set(r["alpha"] for r in results))
     ok = [r for r in results if r["status"] == "success"]
 
     makespan_means = [
-        np.mean([r["makespan"] for r in ok if r["beta"] == b]) if any(r["beta"] == b for r in ok) else float("nan")
-        for b in betas
+        np.mean([r["makespan"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
+        for a in alphas
     ]
     cost_means = [
-        np.mean([r["total_cost"] for r in ok if r["beta"] == b]) if any(r["beta"] == b for r in ok) else float("nan")
-        for b in betas
+        np.mean([r["total_cost"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
+        for a in alphas
     ]
 
-    # ── Dual y-axis: makespan vs total cost across beta ──────────────
+    # ── Dual y-axis: makespan vs total cost across alpha ─────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
-    dual_yaxis(ax, betas, makespan_means, cost_means,
+    dual_yaxis(ax, alphas, makespan_means, cost_means,
                "Makespan", "Total cost",
                ylabel1="Makespan (m)", ylabel2="Total cost (m)",
                title="Beta Blending Tradeoff")
@@ -192,8 +192,8 @@ def generate_plots(results: list[dict], output_dir: str,
 
 
 def main():
-    p = argparse.ArgumentParser(description="E7: VRP Beta Blending")
-    p.add_argument("--betas", type=float, nargs="+", default=E07_BETAS)
+    p = argparse.ArgumentParser(description="E7: VRP Alpha Blending")
+    p.add_argument("--alphas", type=float, nargs="+", default=E07_ALPHAS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e08_vrp_alpha_blending"))
     p.add_argument("--plots_only", action="store_true")
@@ -271,7 +271,7 @@ def main():
             main = load_run_result(os.path.join(raw_dir, stem))
             try:
                 lb = _recompute_lb_only(
-                    main["beta"], main["seed"], og, sampler, bmin, bmax,
+                    main["alpha"], main["seed"], og, sampler, bmin, bmax,
                     include_cuopt=args.include_cuopt_bound,
                 )
                 save_lb_json(os.path.join(raw_lb_dir, stem), lb)
@@ -287,12 +287,12 @@ def main():
         os.makedirs(raw_dir, exist_ok=True)
         os.makedirs(raw_lb_dir, exist_ok=True)
 
-        for beta in args.betas:
+        for alpha in args.alphas:
             for seed in args.seeds:
-                stem = f"beta={beta}_seed={seed}"
+                stem = f"alpha={alpha}_seed={seed}"
                 rpath = os.path.join(raw_dir, stem)
                 lb_path = os.path.join(raw_lb_dir, stem)
-                row_desc = f"beta={beta} seed={seed}"
+                row_desc = f"alpha={alpha} seed={seed}"
 
                 if args.resume and os.path.exists(rpath + ".json"):
                     all_results.append(load_run_result(rpath))
@@ -301,11 +301,11 @@ def main():
 
                 logger.info("Running %s", row_desc)
                 try:
-                    result, lb = run_single(beta, seed, og, sampler, bmin, bmax)
+                    result, lb = run_single(alpha, seed, og, sampler, bmin, bmax)
                 except Exception as exc:
                     handle_row_exception(exc, row_desc, resume=args.resume)
                     result = {
-                        "beta": beta, "seed": seed,
+                        "alpha": alpha, "seed": seed,
                         "makespan": float("nan"), "total_cost": float("nan"),
                         "per_vehicle_costs": [], "route_balance_ratio": float("nan"),
                         "solve_time": 0.0, "status": f"crashed: {exc}",

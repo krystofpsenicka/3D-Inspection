@@ -81,9 +81,9 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Beta used by the VRP objective and propagated to the MAPF scheduler.
+# Alpha used by the VRP objective and propagated to the MAPF scheduler.
 # Kept at module scope so the LB-only mode can reuse the same value.
-_VRP_BETA = 0.5
+_VRP_ALPHA = 0.5
 _VRP_TIME_LIMIT = 120
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,7 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
         t0 = time.perf_counter()
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K,
-            depots=home_indices, alpha=_VRP_BETA,
+            depots=home_indices, alpha=_VRP_ALPHA,
             backend=VRPBackend.CUOPT, time_limit=_VRP_TIME_LIMIT,
         )
         m.t_vrp_solve = time.perf_counter() - t0
@@ -162,7 +162,7 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min,
         # LBs alongside failed-solve rows.
         try:
             lb = compute_all_lbs(
-                dist_matrix, home_indices, K, n_waypoints, _VRP_BETA,
+                dist_matrix, home_indices, K, n_waypoints, _VRP_ALPHA,
                 include_mapf=True,
                 vrp_best_bound_m=vrp_result.best_bound,
                 vrp_objective_value_m=vrp_result.objective_value,
@@ -258,7 +258,7 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, output_dir,
         return xs, lb_min, lb_max
 
     def _objective_for(r) -> float:
-        return _VRP_BETA * r.makespan + (1.0 - _VRP_BETA) * r.total_cost
+        return _VRP_ALPHA * r.makespan + (1.0 - _VRP_ALPHA) * r.total_cost
 
     # ── Fig 1: Makespan vs fleet (with per-seed analytical LB band) ───
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
@@ -330,7 +330,7 @@ def generate_plots(all_metrics, fleet_sizes, waypoint_counts, output_dir,
                             color=wp_colors[wi], linewidth=0)
     if any_obj:
         ax.set_xlabel("Fleet size")
-        ax.set_ylabel(f"VRP objective (β={_VRP_BETA}) (m)")
+        ax.set_ylabel(f"VRP objective (β={_VRP_ALPHA}) (m)")
         ax.set_title("VRP Objective vs. Fleet Size (shaded: cuOpt/analytical LB band)")
         ax.legend(fontsize=6, ncol=2)
         save_figure(fig, os.path.join(fig_dir, "e07_objective_vs_fleet"))
@@ -418,7 +418,7 @@ def _recompute_lbs_for_row(m: RunMetrics, og, sampler, bmin, bmax,
     dist_matrix = compute_distance_matrix(og, cp.asarray(all_positions))
 
     return recompute_lbs(
-        dist_matrix, home_indices, K, m.n_waypoints, _VRP_BETA,
+        dist_matrix, home_indices, K, m.n_waypoints, _VRP_ALPHA,
         include_mapf=True, include_cuopt=include_cuopt,
     )
 

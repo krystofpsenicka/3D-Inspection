@@ -23,6 +23,19 @@ CATEGORICAL_COLORS = plt.cm.tab10.colors[:10]
 SEQUENTIAL_CMAP = "viridis"
 DIVERGING_CMAP = "RdBu_r"
 
+# ── Strategy display names ─────────────────────────────────────────────────
+# Internal data keys → shorter labels used in plot legends/axes.
+
+STRATEGY_DISPLAY_NAMES = {
+    "cmaes_100": "cmaes",
+    "targeted_100": "targeted",
+}
+
+
+def display_strategy(name: str) -> str:
+    """Map internal strategy id to a shorter display label for plots."""
+    return STRATEGY_DISPLAY_NAMES.get(name, name)
+
 
 def setup_thesis_style():
     """Set matplotlib rcParams for publication-quality thesis figures.

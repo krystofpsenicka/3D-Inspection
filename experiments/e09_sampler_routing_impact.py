@@ -9,8 +9,8 @@ propagates to routing cost.
 Hypothesis: CMA-ES's travel_weight parameter penalises point-to-point distance
 during sampling, producing viewpoint sets that are cheaper to route through.
 
-Strategies: weighted, weighted_curvature, targeted (spi=100, k=3),
-            cmaes (popsize=40, maxiter=40, k=3)
+Strategies: weighted, weighted_curvature, targeted_100 (spi=100, k=3),
+            cmaes_100 (popsize=40, maxiter=40, k=3)
 CMA-ES travel_weight sweep: per-model-group — Duke uses E03_C_TRAVEL_WEIGHTS_DUKE
             and TOSCA uses E03_C_TRAVEL_WEIGHTS_TOSCA (same as e03 Section 2B).
 Models: Duke of Lancaster + TOSCA_REPRESENTATIVE (wolf0, cat0, david0).
@@ -79,9 +79,9 @@ except ImportError as _e:
     _RUNTIME_IMPORT_ERROR = _e
 
 # Strategy set for e09 (thesis-final): weighted + weighted_curvature baselines,
-# targeted (iterative targeted at k=3 with spi=100), cmaes (CMA-ES
+# targeted_100 (iterative targeted at k=3 with spi=100), cmaes_100 (CMA-ES
 # with k=3, popsize=40, maxiter=40 and a per-model-group travel_weight sweep).
-_E09_STRATEGIES = ["weighted", "weighted_curvature", "targeted", "cmaes"]
+_E09_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
 _E09_MODELS = ["duke_of_lancaster"] + list(TOSCA_REPRESENTATIVE)
 
 
@@ -97,9 +97,9 @@ def _cmaes_travel_weights(model_name: str) -> list[float]:
 
 def _strategy_kwargs_e09(strategy: str, travel_weight: float | None) -> dict:
     """Per-strategy kwargs forwarded to sample_strategy() for e09."""
-    if strategy == "targeted":
+    if strategy == "targeted_100":
         return {"k_coverage": 3, "samples_per_iteration": 100}
-    if strategy == "cmaes":
+    if strategy == "cmaes_100":
         return {
             "k_coverage": 3,
             "popsize": 40,
@@ -111,13 +111,13 @@ def _strategy_kwargs_e09(strategy: str, travel_weight: float | None) -> dict:
 
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure,
+    setup_thesis_style, save_figure, display_strategy,
     DOUBLE_COL, CATEGORICAL_COLORS,
 )
 
-# e09's solve_vrp currently uses the default beta=1.0 (pure makespan).
+# e09's solve_vrp currently uses the default alpha=1.0 (pure makespan).
 # Centralised so the LB sidecar uses the same value.
-_E09_BETA = 1.0
+_E09_ALPHA = 1.0
 
 logger = logging.getLogger(__name__)
 
@@ -127,9 +127,10 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _display_label(strategy: str, travel_weight) -> str:
+    name = display_strategy(strategy)
     if travel_weight is not None:
-        return f"{strategy}\ntw={travel_weight}"
-    return strategy.replace("weighted_curvature", "w_curv")
+        return f"{name}\ntw={travel_weight}"
+    return name.replace("weighted_curvature", "w_curv")
 
 
 def _build_run_configs(strategies, cmaes_travel_weights):
@@ -140,7 +141,7 @@ def _build_run_configs(strategies, cmaes_travel_weights):
     """
     configs = []
     for s in strategies:
-        if s.startswith("cmaes"):
+        if s.startswith("cmaes_"):
             for tw in cmaes_travel_weights:
                 configs.append((s, tw))
         else:
@@ -312,7 +313,7 @@ def run_single(ctx: PipelineContext, strategy: str, travel_weight,
         dist_matrix = compute_distance_matrix(og_vrp, cp.asarray(all_pos))
         vrp_result: VRPResult = solve_vrp(
             dist_matrix=dist_matrix, num_vehicles=K, depots=home_indices,
-            alpha=_E09_BETA, backend=VRPBackend.CUOPT, time_limit=120,
+            alpha=_E09_ALPHA, backend=VRPBackend.CUOPT, time_limit=120,
         )
 
     pv = per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices)
@@ -323,7 +324,7 @@ def run_single(ctx: PipelineContext, strategy: str, travel_weight,
     lb: dict | None = None
     try:
         lb = compute_all_lbs(
-            dist_matrix, home_indices, K, num_viewpoints, _E09_BETA,
+            dist_matrix, home_indices, K, num_viewpoints, _E09_ALPHA,
             include_mapf=False,
             vrp_best_bound_m=vrp_result.best_bound,
             vrp_objective_value_m=vrp_result.objective_value,
@@ -561,7 +562,7 @@ def main():
                         int(row["seed"]), args.target_coverage,
                     )
                     lb = recompute_lbs(
-                        dist_matrix, home_indices, K, n_vp, _E09_BETA,
+                        dist_matrix, home_indices, K, n_vp, _E09_ALPHA,
                         include_mapf=False,
                         include_cuopt=args.include_cuopt_bound,
                     )

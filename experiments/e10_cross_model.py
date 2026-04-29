@@ -82,7 +82,7 @@ logger = logging.getLogger(__name__)
 ALL_MODELS = ["duke_of_lancaster"] + TOSCA_ALL
 TARGET_COVERAGE = 0.95
 FLEET_SIZE = 5   # robots for VRP/MAPF
-VRP_BETA = 0.5  # blend β in eq. (1.1): 0.5 · makespan + 0.5 · total_cost
+VRP_ALPHA = 0.5  # blend β in eq. (1.1): 0.5 · makespan + 0.5 · total_cost
 
 # Fields persisted as an LB sidecar JSON next to each main result.
 LB_SIDECAR_FIELDS = tuple(JOINT_LB_FIELDS) + tuple(ALL_LB_FIELDS)
@@ -192,7 +192,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                 joint_lb = joint_problem_lb(
                     V_np, _tp_np, _home_lb,
                     alpha_coverage=TARGET_COVERAGE,
-                    beta_blend=VRP_BETA,
+                    beta_blend=VRP_ALPHA,
                     frustum_far=float(model_cfg.frustum.far),
                     cruise_speed=AUV_CRUISE_SPEED,
                     dwell_s=SPACE_TIME_DWELL_S,
@@ -250,7 +250,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                 depots=home_indices,
                 backend=VRPBackend.CUOPT,
                 time_limit=60,
-                alpha=VRP_BETA,
+                alpha=VRP_ALPHA,
             )
         result["t_vrp"] = t_vrp.elapsed
         result["vrp_status"] = vrp_result.status
@@ -261,7 +261,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         try:
             stage_lb = compute_all_lbs(
                 dist_matrix, home_indices, FLEET_SIZE,
-                opt_result.num_viewpoints, VRP_BETA,
+                opt_result.num_viewpoints, VRP_ALPHA,
                 include_mapf=True,
                 vrp_best_bound_m=vrp_result.best_bound,
                 vrp_objective_value_m=vrp_result.objective_value,
@@ -297,7 +297,7 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
                     waypoint_rotmats=wp_rot_gpu,
                     home_indices=set(home_indices),
                     dist_matrix=dist_matrix,
-                    alpha=VRP_BETA,
+                    alpha=VRP_ALPHA,
                 )
             result["t_mapf"] = t_mapf.elapsed
 
@@ -378,37 +378,33 @@ def generate_plots(results: list[dict], output_dir: str):
 
     # ── Three-bar timing breakdown per model ────────────────────────────
     #   Bar 1 (left)   : total pipeline time as a single segment
-    #   Bar 2 (middle) : 3-group stack — preprocessing / sampling-pipeline / routing
-    #   Bar 3 (right)  : full 8-stage stack
+    #   Bar 2 (middle) : 2-group stack — sampling-pipeline / routing
+    #   Bar 3 (right)  : full 6-stage stack
     # The two stacked bars share their cumulative heights at the group
     # boundaries, so the reader can read off how each high-level group
     # decomposes into its constituent stages just by tracing horizontally
     # from one bar to the next.
     #
-    # Note: e10's raw data records eight `t_*` fields (mesh, surface, og,
-    # sample, vis, opt, vrp, mapf). Trajectory creation/densification is
-    # part of the MAPF stage (Multi-Agent Path Planning, space-time A*),
-    # which already returns dense 6-DOF trajectories — there is no
-    # separately measured postprocessing stage to break out as a fourth
-    # high-level group.
+    # Note: mesh load and surface sampling are cached at the start of the
+    # run and are not shown in the figure. Occupancy-grid construction is
+    # counted under the sampling pipeline because it is part of that
+    # stage's setup. Trajectory creation/densification is part of the
+    # MAPF stage (Multi-Agent Path Planning, space-time A*), which
+    # already returns dense 6-DOF trajectories.
     GROUP_DEFS = [
-        ("Preprocessing",
-         ["t_mesh", "t_surface", "t_og"],
-         ["Mesh", "Surface", "Occupancy grid"]),
         ("Sampling pipeline",
-         ["t_sample", "t_vis", "t_opt"],
-         ["Sampling", "Visibility", "Set cover"]),
+         ["t_og", "t_sample", "t_vis", "t_opt"],
+         ["Occupancy grid", "Sampling", "Visibility", "Set cover"]),
         ("Routing",
          ["t_vrp", "t_mapf"],
          ["VRP", "MAPF (space-time A*)"]),
     ]
     # Bold colour per group; lighter shades for the constituent stages.
     # Colourblind-safe Okabe-Ito-inspired palette with strong light→dark range.
-    GROUP_COLORS = ["#0072B2", "#D55E00", "#009E73"]
+    GROUP_COLORS = ["#D55E00", "#009E73"]
     STAGE_COLORS = [
-        "#9ECAE1", "#3182BD", "#08306B",   # preprocessing shades (blue)
-        "#FDAE6B", "#E6550D", "#7F2704",   # sampling-pipeline shades (vermillion)
-        "#A1D99B", "#00441B",              # routing shades (green)
+        "#FDD0A2", "#FDAE6B", "#E6550D", "#7F2704",  # sampling-pipeline shades (vermillion)
+        "#A1D99B", "#00441B",                          # routing shades (green)
     ]
 
     fig, ax = plt.subplots(figsize=(DOUBLE_COL * 1.15, 5.2))
@@ -570,7 +566,7 @@ def generate_plots(results: list[dict], output_dir: str):
     _paired_gap_fig(
         _observed_objective_s,
         "joint_objective_lb_s",
-        f"Joint Objective Gap (β={VRP_BETA})",
+        f"Joint Objective Gap (β={VRP_ALPHA})",
         f"β·makespan + (1-β)·total (s)",
         "e10_joint_objective_gap",
     )
@@ -589,7 +585,7 @@ def _observed_objective_s(r: dict) -> float | None:
     tot = r.get("mapf_total_time_s", float("nan"))
     if np.isnan(mks) or np.isnan(tot):
         return None
-    return VRP_BETA * mks + (1.0 - VRP_BETA) * tot
+    return VRP_ALPHA * mks + (1.0 - VRP_ALPHA) * tot
 
 
 def _objective_gap_pct(r: dict) -> float | None:
