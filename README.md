@@ -102,3 +102,15 @@ pip uninstall -y \
 | `rapids` | `pip install -e ".[rapids]"` | cupy-cuda12x, cudf-cu12, cugraph-cu12, cuopt-cu12 |
 | `isaac` | `pip install -e ".[isaac]"` | torch, torchvision, torchaudio, isaacsim, isaaclab |
 | `test` | `pip install -e ".[test]"` | pytest |
+
+---
+
+## Use of AI tools
+
+This framework was developed as part of a Bachelor thesis at MFF UK (Charles University). In accordance with Article 4 of Dean's Directive 26/2023, I disclose that I used **Claude Code**, Anthropic's AI coding assistant (powered primarily by the Claude Opus 4 model family, with occasional use of related Anthropic models), as a tool throughout the implementation of this codebase.
+
+AI assistance was used across essentially the entire framework — visibility kernels, the routing and mixed-integer programming layer, the priority-based multi-agent path-finding stage, the Isaac Sim integration, and the experiment scripts under `experiments/e00`–`experiments/e16`. The work was driven by detailed specifications I authored, refined over many iterations, and reviewed line by line; every module was specified, reviewed, tested and edited by me, and AI output was never accepted unmodified.
+
+The algorithmic contributions claimed in the thesis (the GPU batch adaptation of Lien's ε-visibility, the β-aware per-vehicle tour upper bound with forbidden-pair cuts, and the 4D space-time extension of Zhou and Zeng's GPU parallel-frontier A*) are my own designs; AI was used as an implementation aid following those designs.
+
+A more detailed disclosure covering thesis text and literature review is provided in the "Use of AI tools" section of the thesis Preface.

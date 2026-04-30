@@ -167,6 +167,7 @@ def generate_plots(results: list[dict], output_dir: str,
     os.makedirs(fig_dir, exist_ok=True)
     lb_by_stem = lb_by_stem or {}
 
+<<<<<<< Updated upstream
     alphas = sorted(set(r["alpha"] for r in results))
     ok = [r for r in results if r["status"] == "success"]
 
@@ -177,6 +178,21 @@ def generate_plots(results: list[dict], output_dir: str,
     cost_means = [
         np.mean([r["total_cost"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
         for a in alphas
+=======
+    def _beta(r: dict) -> float:
+        return r["beta"] if "beta" in r else r["alpha"]
+
+    betas = sorted(set(_beta(r) for r in results))
+    ok = [r for r in results if r["status"] == "success"]
+
+    makespan_means = [
+        np.mean([r["makespan"] for r in ok if _beta(r) == b]) if any(_beta(r) == b for r in ok) else float("nan")
+        for b in betas
+    ]
+    cost_means = [
+        np.mean([r["total_cost"] for r in ok if _beta(r) == b]) if any(_beta(r) == b for r in ok) else float("nan")
+        for b in betas
+>>>>>>> Stashed changes
     ]
 
     # ── Dual y-axis: makespan vs total cost across alpha ─────────────
