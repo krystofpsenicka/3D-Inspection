@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
 
-from shared.types import Side
+import numpy as np
 
 
 class VRPBackend(Enum):
     """MIP solver backend for VRP."""
+
     HIGHS = "highs"
     CUOPT = "cuopt"
 
@@ -29,6 +29,7 @@ class VRPResult:
     solver failure, or older cuOpt builds). Readers should treat
     ``best_bound == 0.0`` as "unavailable".
     """
+
     routes: list[list[int]]
     total_cost: float
     makespan: float = 0.0
@@ -47,6 +48,7 @@ class PlanningStats:
     Used by the priority ordering heuristic to identify robots that
     have the most conflicts and should be planned earlier.
     """
+
     wait_steps: int = 0
     detour_ratio: float = 0.0
     astar_failures: int = 0
@@ -56,6 +58,7 @@ class PlanningStats:
 @dataclass
 class ExecutionResult:
     """Full trajectory output for every robot after route execution."""
+
     all_traj_positions: list[np.ndarray]
     all_traj_velocities: list[np.ndarray]
     all_waypoints: list[list[list[float]]]
@@ -70,19 +73,3 @@ class ExecutionResult:
             self.actual_per_vehicle_times = []
         if self.actual_per_leg_times is None:
             self.actual_per_leg_times = []
-
-
-@dataclass
-class PipelineConfig:
-    """All user-facing settings for one VRP planning run."""
-    num_robots: int = 2
-    side: Side = Side.OUTSIDE
-    solver_backend: VRPBackend = VRPBackend.HIGHS
-    alpha: float = 1.0
-    mip_time_limit: int = 120
-    mip_gap: float = 0.05
-    feedback_iterations: int = 3
-    feedback_threshold: float = 0.20
-    headless: bool = True
-    replay_in_isaac: bool = False
-    save_solution_path: str | None = None

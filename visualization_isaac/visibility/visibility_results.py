@@ -6,10 +6,11 @@ import numpy as np
 import trimesh
 
 from visibility.core.types import FrustumParams
+
+from .._helpers import generate_tab20_colors
+from .._usd_primitives import create_points_prim
 from .frustum_utils import add_viewpoint_geometry
 from .model import ModelVisualizer
-from .._usd_primitives import create_points_prim
-from .._helpers import generate_tab20_colors
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,9 @@ class VisibilityVisualizer:
     frustum_params : Camera frustum geometry.
     """
 
-    def __init__(self, mesh: trimesh.Trimesh,
-                 target_points: np.ndarray,
-                 frustum_params: FrustumParams):
+    def __init__(
+        self, mesh: trimesh.Trimesh, target_points: np.ndarray, frustum_params: FrustumParams
+    ):
         self.mesh = mesh
         self.target_points = target_points
         self.num_points = len(target_points)
@@ -36,10 +37,14 @@ class VisibilityVisualizer:
     # Single viewpoint
     # ------------------------------------------------------------------
 
-    def add_single(self, stage, base_path: str,
-                   visible_indices: np.ndarray,
-                   position: np.ndarray,
-                   rotation: np.ndarray) -> list[str]:
+    def add_single(
+        self,
+        stage,
+        base_path: str,
+        visible_indices: np.ndarray,
+        position: np.ndarray,
+        rotation: np.ndarray,
+    ) -> list[str]:
         """Add geometry for a single viewpoint's visibility.
 
         Parameters
@@ -62,13 +67,17 @@ class VisibilityVisualizer:
         # Point cloud coloured by visibility
         colors = np.full((self.num_points, 3), [0.3, 0.3, 0.3], dtype=np.float64)
         colors[visible_indices] = [0.0, 1.0, 0.0]
-        paths.append(create_points_prim(
-            stage, f"{base_path}/points", self.target_points, colors=colors))
+        paths.append(
+            create_points_prim(stage, f"{base_path}/points", self.target_points, colors=colors)
+        )
 
         # Viewpoint sphere + frustum + arrow
         paths += add_viewpoint_geometry(
-            stage, f"{base_path}/viewpoint",
-            position, rotation, self.frustum_params,
+            stage,
+            f"{base_path}/viewpoint",
+            position,
+            rotation,
+            self.frustum_params,
             color=(1.0, 1.0, 0.0),
             sphere_radius=0.015,
             arrow_length=self.frustum_params.far * 0.2,
@@ -80,8 +89,7 @@ class VisibilityVisualizer:
     # All viewpoints
     # ------------------------------------------------------------------
 
-    def add_all(self, stage, base_path: str,
-                visibility_map, candidates) -> list[str]:
+    def add_all(self, stage, base_path: str, visibility_map, candidates) -> list[str]:
         """Add geometry for all viewpoints with per-viewpoint colours.
 
         Parameters
@@ -114,10 +122,14 @@ class VisibilityVisualizer:
         uncovered_indices = set(range(self.num_points)) - all_covered
 
         if uncovered_indices:
-            paths.append(create_points_prim(
-                stage, f"{base_path}/uncovered",
-                self.target_points[list(uncovered_indices)],
-                colors=(1.0, 0.0, 0.0)))
+            paths.append(
+                create_points_prim(
+                    stage,
+                    f"{base_path}/uncovered",
+                    self.target_points[list(uncovered_indices)],
+                    colors=(1.0, 0.0, 0.0),
+                )
+            )
 
         for i in range(num_vps):
             pos = np.asarray(candidates[i][0])
@@ -126,15 +138,24 @@ class VisibilityVisualizer:
             color = tuple(vp_colors[i % len(vp_colors)])
 
             paths += add_viewpoint_geometry(
-                stage, f"{base_path}/vp_{i}",
-                pos, rotation, self.frustum_params, color)
+                stage, f"{base_path}/vp_{i}", pos, rotation, self.frustum_params, color
+            )
 
             if len(visible_indices) > 0:
-                paths.append(create_points_prim(
-                    stage, f"{base_path}/vp_{i}/visible",
-                    self.target_points[visible_indices], colors=color))
+                paths.append(
+                    create_points_prim(
+                        stage,
+                        f"{base_path}/vp_{i}/visible",
+                        self.target_points[visible_indices],
+                        colors=color,
+                    )
+                )
 
-        logger.info("[VisibilityVisualizer] Added %d viewpoints (%d/%d covered).",
-                    num_vps, len(all_covered), self.num_points)
+        logger.info(
+            "[VisibilityVisualizer] Added %d viewpoints (%d/%d covered).",
+            num_vps,
+            len(all_covered),
+            self.num_points,
+        )
 
         return paths

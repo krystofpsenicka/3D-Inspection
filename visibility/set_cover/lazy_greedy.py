@@ -1,12 +1,12 @@
-"""Lazy greedy set-cover optimizer — Minoux 1978 (CPU)."""
+"""Lazy greedy set-cover optimizer  --  Minoux 1978 (CPU)."""
 
 from __future__ import annotations
 
 import heapq
 import logging
+
 import cupy as cp
 import numpy as np
-from typing import Optional, Tuple
 
 from .base import IterativeSetCoverOptimizer
 
@@ -21,8 +21,13 @@ class LazyGreedySetCover(IterativeSetCoverOptimizer):
     cupy at the boundary.
     """
 
-    def __init__(self, num_points: int, positions: np.ndarray,
-                 rotmats: np.ndarray, visibility_map: np.ndarray):
+    def __init__(
+        self,
+        num_points: int,
+        positions: np.ndarray,
+        rotmats: np.ndarray,
+        visibility_map: np.ndarray,
+    ):
         self.num_points = num_points
         self.positions = positions
         self.rotmats = rotmats
@@ -32,16 +37,17 @@ class LazyGreedySetCover(IterativeSetCoverOptimizer):
         self._last_idx = -1
         self._generation = 0
 
-        # Initialise the max-heap: (negative gain, candidate index, generation)
+        # Initialise the min-heap: (negative gain, candidate index, generation)
         self._heap: list = []
         for i in range(n_cand):
             gain = int(np.count_nonzero(self.V[i] & self.uncovered))
             heapq.heappush(self._heap, (-gain, i, self._generation))
 
-        logger.info("[LazyGreedySetCover] Initialized with %d candidates, %d points.",
-                    n_cand, num_points)
+        logger.info(
+            "[LazyGreedySetCover] Initialized with %d candidates, %d points.", n_cand, num_points
+        )
 
-    def select_next(self) -> Optional[Tuple[cp.ndarray, cp.ndarray, cp.ndarray]]:
+    def select_next(self) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray] | None:
         if not self._heap:
             return None
 
@@ -54,9 +60,11 @@ class LazyGreedySetCover(IterativeSetCoverOptimizer):
                     return None
                 self._last_idx = idx
                 vis = np.where(self.V[idx])[0]
-                return (cp.asarray(self.positions[idx]),
-                        cp.asarray(self.rotmats[idx]),
-                        cp.asarray(vis))
+                return (
+                    cp.asarray(self.positions[idx]),
+                    cp.asarray(self.rotmats[idx]),
+                    cp.asarray(vis),
+                )
             # Re-evaluate with current uncovered state
             fresh_gain = int(np.count_nonzero(self.V[idx] & self.uncovered))
             heapq.heappush(self._heap, (-fresh_gain, idx, self._generation))

@@ -1,8 +1,8 @@
 from .samplers import (
+    CMAESBackend,
+    OptimizationBackend,
+    OptimizingSampler,
+    TargetedViewpointSampler,
     ViewpointSamplerBase,
     WeightedViewpointSampler,
-    TargetedViewpointSampler,
-    OptimizingSampler,
-    OptimizationBackend,
-    CMAESBackend,
 )

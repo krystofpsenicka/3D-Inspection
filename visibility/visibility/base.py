@@ -1,10 +1,9 @@
 import logging
-import numpy as np
-from abc import ABC, abstractmethod
-from scipy.spatial import KDTree
-from numpy.linalg import norm
 import time
-from typing import Tuple
+from abc import ABC, abstractmethod
+
+import numpy as np
+from scipy.spatial import KDTree
 
 from ..core.types import FrustumParams
 
@@ -32,11 +31,11 @@ class VisibilityQueryBase(ABC):
         self.num_points = num_points
 
     @abstractmethod
-    def compute_visibility(self, viewpoint, rotation) -> Tuple[np.ndarray, float]:
+    def compute_visibility(self, viewpoint, rotation) -> tuple[np.ndarray, float]:
         """Compute visible indices from a single viewpoint."""
 
     @abstractmethod
-    def compute_visibility_batch(self, positions, rotations) -> Tuple[np.ndarray, float]:
+    def compute_visibility_batch(self, positions, rotations) -> tuple[np.ndarray, float]:
         """Compute visibility for a batch of viewpoints.
 
         Args:
@@ -52,18 +51,23 @@ class VisibilityQueryBase(ABC):
 class VisibilityQuery(VisibilityQueryBase):
     """CPU visibility query base with numpy arrays and KDTree."""
 
-    def __init__(self, target_points: np.ndarray,
-                 normals: np.ndarray, frustum_params: FrustumParams):
+    def __init__(
+        self, target_points: np.ndarray, normals: np.ndarray, frustum_params: FrustumParams
+    ):
         super().__init__(frustum_params, num_points=len(target_points))
         self.target_points = target_points
         self.normals = normals
         self.kdtree = KDTree(self.target_points)
-        logger.info("[VisibilityQuery] Initialized base query for %d target points.", self.num_points)
+        logger.info(
+            "[VisibilityQuery] Initialized base query for %d target points.", self.num_points
+        )
 
-    def compute_visibility(self, viewpoint: np.ndarray, rotmat: np.ndarray) -> Tuple[np.ndarray, float]:
+    def compute_visibility(
+        self, viewpoint: np.ndarray, rotmat: np.ndarray
+    ) -> tuple[np.ndarray, float]:
         raise NotImplementedError("Subclasses must implement compute_visibility")
 
-    def compute_visibility_batch(self, positions, rotations) -> Tuple[np.ndarray, float]:
+    def compute_visibility_batch(self, positions, rotations) -> tuple[np.ndarray, float]:
         """CPU batch visibility via per-viewpoint loop.
 
         Returns ``(visibility_matrix, total_time)`` where ``visibility_matrix``
@@ -76,16 +80,19 @@ class VisibilityQuery(VisibilityQueryBase):
         matrix = np.zeros((n, self.num_points), dtype=np.bool_)
         for i in range(n):
             if (i + 1) % 100 == 0:
-                logger.info("  [%s] ... computed %d / %d candidates",
-                            class_name, i + 1, n)
+                logger.info("  [%s] ... computed %d / %d candidates", class_name, i + 1, n)
 
             visible_indices, _ = self.compute_visibility(positions[i], rotations[i])
             if len(visible_indices) > 0:
                 matrix[i, visible_indices] = True
 
         total_time = time.perf_counter() - start_time
-        logger.info("[%s] Visibility computation for %d candidates finished in %.2fs",
-                    class_name, n, total_time)
+        logger.info(
+            "[%s] Visibility computation for %d candidates finished in %.2fs",
+            class_name,
+            n,
+            total_time,
+        )
         return matrix, total_time
 
     def points_in_frustum_with_kdtree(self, viewpoint: np.ndarray, rotmat: np.ndarray):
@@ -103,7 +110,9 @@ class VisibilityQuery(VisibilityQueryBase):
         vp_vectors = candidate_points - viewpoint
         proj_distance = np.dot(vp_vectors, forward)
 
-        mask = (proj_distance >= self.frustum_params.near) & (proj_distance <= self.frustum_params.far)
+        mask = (proj_distance >= self.frustum_params.near) & (
+            proj_distance <= self.frustum_params.far
+        )
 
         tan_half_fov = np.tan(self.frustum_params.fov_y / 2.0)
         max_size_v = proj_distance * tan_half_fov

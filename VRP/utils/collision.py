@@ -1,21 +1,22 @@
-"""GPU-vectorized collision detection for trajectory safety checks."""
+"""Collision detection for trajectory safety checks."""
 
 from __future__ import annotations
 
-from typing import List, Sequence, Tuple, Union
+from collections.abc import Sequence
+from typing import Union
 
 import cupy as cp
 import numpy as np
 
-from .constants import ROBOT_RADIUS
 from shared.occupancy_grid import OccupancyGrid
+from VRP.core.constants import ROBOT_RADIUS
 
 ArrayLike2D = Union[cp.ndarray, np.ndarray]
 
 
 def _pad_trajectories_to_tensor(
     all_traj_positions: Sequence[ArrayLike2D],
-) -> Tuple[cp.ndarray, List[int]]:
+) -> tuple[cp.ndarray, list[int]]:
     """Pad ragged per-robot trajectories into a (R, T_max, 3) tensor.
 
     Each element of all_traj_positions is a (T_i, D) array (NumPy or
@@ -46,7 +47,7 @@ def _pad_trajectories_to_tensor(
 def find_trajectory_collisions(
     all_traj_positions: Sequence[ArrayLike2D],
     radius: float = ROBOT_RADIUS,
-) -> List[Tuple[int, int, int, float]]:
+) -> list[tuple[int, int, int, float]]:
     """Scan replay trajectories for sphere-based inter-robot collisions.
 
     Vectorized on GPU: pads all trajectories to equal length, stacks
@@ -104,7 +105,7 @@ def find_environment_collisions(
     """Count per-robot collisions with the occupancy grid.
 
     Flattens all robot positions into one batch, runs a single
-    vectorized ``is_free_world_batch`` check, then splits results
+    ``is_free_world_batch`` check, then splits results
     per robot.
 
     Args:
@@ -119,7 +120,8 @@ def find_environment_collisions(
         return [0] * len(all_traj_positions)
 
     all_xyz = cp.concatenate(
-        [cp.asarray(t)[:, :3] for t in all_traj_positions if len(t) > 0], axis=0,
+        [cp.asarray(t)[:, :3] for t in all_traj_positions if len(t) > 0],
+        axis=0,
     )
     free_mask = occupancy_grid.is_free_world_batch(all_xyz)
 
@@ -129,7 +131,7 @@ def find_environment_collisions(
         if length == 0:
             collision_counts.append(0)
             continue
-        robot_collisions = int(cp.sum(~free_mask[offset:offset + length]))
+        robot_collisions = int(cp.sum(~free_mask[offset : offset + length]))
         collision_counts.append(robot_collisions)
         offset += length
 

@@ -7,8 +7,8 @@ from __future__ import annotations
 import logging
 
 import cupy as cp
-import numpy as np
 import matplotlib.cm as _cm
+import numpy as np
 
 from .occupancy_grid import OccupancyGrid
 
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Grid inflation ────────────────────────────────────────────────────────────
+
 
 def inflate_grid(grid: cp.ndarray, inflation_voxels: int) -> cp.ndarray:
     """Morphological dilation of the obstacle grid by *inflation_voxels* voxels.
@@ -30,14 +31,15 @@ def inflate_grid(grid: cp.ndarray, inflation_voxels: int) -> cp.ndarray:
 
     r = inflation_voxels
     # Structuring element constructed on CPU: tiny array, negligible transfer.
-    coords = np.mgrid[-r:r+1, -r:r+1, -r:r+1]
-    se = (coords[0]**2 + coords[1]**2 + coords[2]**2) <= r**2
+    coords = np.mgrid[-r : r + 1, -r : r + 1, -r : r + 1]
+    se = (coords[0] ** 2 + coords[1] ** 2 + coords[2] ** 2) <= r**2
     se_gpu = cp.asarray(se)
 
     return gpu_dilation(grid, structure=se_gpu)
 
 
 # ── Grid down-sampling ───────────────────────────────────────────────────────
+
 
 def downsample_occupancy_grid(
     og: OccupancyGrid,
@@ -73,22 +75,22 @@ def downsample_occupancy_grid(
     Cy = fine_padded.shape[1] // factor
     Cz = fine_padded.shape[2] // factor
 
-    coarse = (
-        fine_padded
-        .reshape(Cx, factor, Cy, factor, Cz, factor)
-        .any(axis=(1, 3, 5))
-    )
+    coarse = fine_padded.reshape(Cx, factor, Cy, factor, Cz, factor).any(axis=(1, 3, 5))
 
     coarse_origin = fine_origin.copy()
     actual_res = fine_res * factor
     logger.info(
         "[downsample] Grid: %s -> %s  (factor=%d, coarse_res=%.2fm)",
-        fine_grid.shape, coarse.shape, factor, actual_res,
+        fine_grid.shape,
+        coarse.shape,
+        factor,
+        actual_res,
     )
     return OccupancyGrid(grid=coarse, origin=coarse_origin, resolution=actual_res)
 
 
 # ── ESDF colour mapping ─────────────────────────────────────────────────────
+
 
 def esdf_to_rgb(values: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
     """Map ESDF float values to (N, 3) RGB via the RdBu_r colourmap."""

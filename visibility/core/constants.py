@@ -23,7 +23,9 @@ EXPANSION_RADIUS = 0.5
 # Viewpoint sampling
 DEFAULT_MAX_DIR_NOISE_RAD = np.deg2rad(25.0)
 KNN_DIRECTION_K = 10
-GPU_NN_CHUNK_SIZE = 500 # chunk size to cap GPU memory usage during nearest-neighbor queries
+GPU_NN_CHUNK_SIZE = 500  # chunk size to cap GPU memory usage during nearest-neighbor queries
+# Fraction of frustum_far used as upper bound on sampling distance
+DEFAULT_MAX_DISTANCE_OFFSET = 0.95
 
 # Curvature-weighted sampling
 CURVATURE_KNN_K = 20
@@ -36,14 +38,14 @@ RESAMPLE_FRACTION = 0.25
 DEFAULT_K_COVERAGE = 4  # coverage-redundancy k (Glorieux 2020)
 
 # Optimal resampling (optimizing sampler)
-OPT_SAMPLER_POPSIZE = 40       # population size per generation
-OPT_SAMPLER_MAXITER = 40       # max generations per optimization run
+OPT_SAMPLER_POPSIZE = 40  # population size per generation
+OPT_SAMPLER_MAXITER = 40  # max generations per optimization run
 OPT_SAMPLER_TRAVEL_WEIGHT = 0.1  # weight of travel cost vs coverage in objective
 OPT_SAMPLER_TRAVEL_ROT_FRACTION = 0.1  # fraction of travel cost from rotation vs position
 
 # Epsilon-visibility estimation
-DELTA_DEFAULT = 0.1           # fallback sampling density when estimation fails
-DELTA_SAMPLE_SIZE = 1000      # max points sampled for delta estimation
+DELTA_DEFAULT = 0.1  # fallback sampling density when estimation fails
+DELTA_SAMPLE_SIZE = 1000  # max points sampled for delta estimation
 GAMMA_FALLBACK_DIVISOR = 4.0  # gamma = frustum_far / this when no front-facing points
 
 # Epsilon-visibility aggregation functions
@@ -87,6 +89,11 @@ GAMMA_AGG_FUNCS_CP = {
 
 GAMMA_PERCENTILE = {
     "median": 0.5,
-    "p10": 0.1, "p25": 0.25, "p30": 0.3, "p40": 0.4,
-    "p60": 0.6, "p75": 0.75, "p90": 0.9,
+    "p10": 0.1,
+    "p25": 0.25,
+    "p30": 0.3,
+    "p40": 0.4,
+    "p60": 0.6,
+    "p75": 0.75,
+    "p90": 0.9,
 }

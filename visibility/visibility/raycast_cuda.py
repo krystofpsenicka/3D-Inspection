@@ -1,32 +1,37 @@
 import logging
-import numpy as np
-import cupy as cp
-import torch
-import open3d as o3d
 import time
-from typing import Tuple
 
+import cupy as cp
+import numpy as np
+import open3d as o3d
+import torch
+
+from ..core.constants import NORM_EPS, RAYCAST_TOLERANCE
 from ..core.types import FrustumParams
 from .base_cuda import VisibilityQueryCuda
-from ..core.constants import NORM_EPS, RAYCAST_TOLERANCE
 
 logger = logging.getLogger(__name__)
 
 
 class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
-    """GPU-accelerated raycasting visibility using Triro (OptiX).
+    """Raycasting visibility using Triro (OptiX).
 
     Uses NVIDIA OptiX via Triro for hardware-accelerated ray-mesh intersection.
     Requires OptiX SDK >= 7.7 and triro installed.
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: cp.ndarray,
-                 normals: cp.ndarray, frustum_params: FrustumParams):
+    def __init__(
+        self,
+        mesh: o3d.geometry.TriangleMesh,
+        target_points: cp.ndarray,
+        normals: cp.ndarray,
+        frustum_params: FrustumParams,
+    ):
         super().__init__(target_points, normals, frustum_params)
 
         from triro.ray.ray_optix import RayMeshIntersector
 
-        # Open3D mesh is CPU — convert to torch CUDA tensors for Triro
+        # Open3D mesh is CPU  --  convert to torch CUDA tensors for Triro
         vertices = np.asarray(mesh.vertices, dtype=np.float32)
         triangles = np.asarray(mesh.triangles, dtype=np.int32)
 
@@ -36,8 +41,9 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         self.intersector = RayMeshIntersector(vertices=vertices_torch, faces=triangles_torch)
         logger.info("[RaycastingCuda] Initialized Triro OptiX RayMeshIntersector (GPU BVH)")
 
-    def compute_visibility(self, viewpoint_gpu: cp.ndarray,
-                           rotmat_gpu: cp.ndarray) -> Tuple[cp.ndarray, float]:
+    def compute_visibility(
+        self, viewpoint_gpu: cp.ndarray, rotmat_gpu: cp.ndarray
+    ) -> tuple[cp.ndarray, float]:
         """Compute visible points using OptiX GPU raycasting via Triro.
 
         Args:
@@ -66,13 +72,11 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         ray_dirs_gpu = vectors_gpu / (distances_gpu[:, cp.newaxis] + NORM_EPS)
 
         # CuPy -> torch (zero-copy)
-        origins_torch = torch.as_tensor(origins_gpu, device='cuda')
-        ray_dirs_torch = torch.as_tensor(ray_dirs_gpu, device='cuda')
+        origins_torch = torch.as_tensor(origins_gpu, device="cuda")
+        ray_dirs_torch = torch.as_tensor(ray_dirs_gpu, device="cuda")
 
         # Cast rays using Triro
-        hit, _, _, location, _ = self.intersector.intersects_closest(
-            origins_torch, ray_dirs_torch
-        )
+        hit, _, _, location, _ = self.intersector.intersects_closest(origins_torch, ray_dirs_torch)
 
         # Occlusion check on GPU: visible if no hit, or hit is beyond the target point
         hit_gpu = cp.from_dlpack(hit)
@@ -81,14 +85,14 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         is_visible = cp.ones(num_candidates, dtype=cp.bool_)
         if cp.any(hit_gpu):
             t_hit = cp.linalg.norm(location_gpu[hit_gpu] - origins_gpu[hit_gpu], axis=1)
-            is_visible[hit_gpu] = (t_hit >= distances_gpu[hit_gpu] - RAYCAST_TOLERANCE)
+            is_visible[hit_gpu] = t_hit >= distances_gpu[hit_gpu] - RAYCAST_TOLERANCE
 
         visible_indices = candidate_indices[is_visible]
 
         comp_time = time.perf_counter() - start
         return visible_indices, comp_time
 
-    def compute_visibility_batch(self, positions, rotmats) -> Tuple[cp.ndarray, float]:
+    def compute_visibility_batch(self, positions, rotmats) -> tuple[cp.ndarray, float]:
         """Batch raycasting: single CUDA frustum kernel + single OptiX call.
 
         Args:
@@ -121,8 +125,8 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
 
         # 4. Single OptiX call for ALL rays
         hit, _, _, location, _ = self.intersector.intersects_closest(
-            torch.as_tensor(origins, device='cuda'),
-            torch.as_tensor(ray_dirs, device='cuda'))
+            torch.as_tensor(origins, device="cuda"), torch.as_tensor(ray_dirs, device="cuda")
+        )
 
         # 5. Batch occlusion check
         hit_gpu = cp.from_dlpack(hit)
@@ -130,12 +134,16 @@ class RaycastingVisibilityQueryCuda(VisibilityQueryCuda):
         is_visible = cp.ones(len(vp_idx), dtype=cp.bool_)
         if cp.any(hit_gpu):
             t_hit = cp.linalg.norm(loc_gpu[hit_gpu] - origins[hit_gpu], axis=1)
-            is_visible[hit_gpu] = (t_hit >= distances[hit_gpu] - RAYCAST_TOLERANCE)
+            is_visible[hit_gpu] = t_hit >= distances[hit_gpu] - RAYCAST_TOLERANCE
 
         # 6. Scatter into V
         V[vp_idx[is_visible], pt_idx[is_visible]] = 1
 
         total_time = time.perf_counter() - start
-        logger.info("[RaycastingCuda] Batch visibility for %d VPs: %d rays, %.2fs",
-                    N, len(vp_idx), total_time)
+        logger.info(
+            "[RaycastingCuda] Batch visibility for %d VPs: %d rays, %.2fs",
+            N,
+            len(vp_idx),
+            total_time,
+        )
         return V, total_time

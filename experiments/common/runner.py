@@ -6,8 +6,9 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 import cupy as cp
 import numpy as np
@@ -20,14 +21,14 @@ logger = logging.getLogger(__name__)
 # Memory instrumentation (process-wide singletons)
 #
 # The previous implementation only logged CuPy's own pool, which is near-zero
-# whenever cuGraph/cuOpt have installed rmm_cupy_allocator — that routes every
+# whenever cuGraph/cuOpt have installed rmm_cupy_allocator  --  that routes every
 # CuPy allocation through RMM, so CuPy's pool metrics no longer reflect real
 # usage.  We now report all allocators side-by-side and wrap RMM's current MR
 # with StatisticsResourceAdaptor so we can see RMM's live/peak bytes directly.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_RMM_STATS_MR = None   # StatisticsResourceAdaptor, set by _install_memory_instrumentation
-_NVML_READY = False    # pynvml initialized?
+_RMM_STATS_MR = None  # StatisticsResourceAdaptor, set by _install_memory_instrumentation
+_NVML_READY = False  # pynvml initialized?
 _MY_PID = os.getpid()
 
 
@@ -38,12 +39,13 @@ def _ensure_rmm_stats_wrapped() -> None:
     device MR and silently discards any adaptor we previously installed.  We
     therefore check on every snapshot that the current MR is still our adaptor
     and rewrap if not.  Already-outstanding allocations keep their original MR
-    (that's fine — they'll be freed through it); any allocations made *after*
+    (that's fine  --  they'll be freed through it); any allocations made *after*
     the rewrap are counted.
     """
     global _RMM_STATS_MR
     try:
         import rmm
+
         current = rmm.mr.get_current_device_resource()
         if isinstance(current, rmm.mr.StatisticsResourceAdaptor):
             _RMM_STATS_MR = current
@@ -60,6 +62,7 @@ def _ensure_nvml_ready() -> None:
         return
     try:
         import pynvml
+
         pynvml.nvmlInit()
         _NVML_READY = True
     except Exception as e:
@@ -108,7 +111,7 @@ def _log_memory_snapshot(tag: str) -> None:
 
     Layout (per allocator, MB):
       nvml:  free / used (proc) / total
-      cupy:  used / total       (CuPy's own pool — ~0 when RMM owns CuPy)
+      cupy:  used / total       (CuPy's own pool  --  ~0 when RMM owns CuPy)
       rmm:   current / peak     (from StatisticsResourceAdaptor if installed)
       torch: alloc / reserved   (if torch is importable)
       host:  rss                (current Python process)
@@ -119,48 +122,52 @@ def _log_memory_snapshot(tag: str) -> None:
     parts: list[str] = []
     try:
         free_b, total_b = cp.cuda.Device().mem_info
-        parts.append(f"nvml-dev={free_b/1e6:.0f}F/{total_b/1e6:.0f}T")
+        parts.append(f"nvml-dev={free_b / 1e6:.0f}F/{total_b / 1e6:.0f}T")
     except Exception:
         pass
     if _NVML_READY:
         try:
             import pynvml
+
             h = pynvml.nvmlDeviceGetHandleByIndex(cp.cuda.Device().id)
             mine = 0
             for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(h):
                 if proc.pid == _MY_PID and proc.usedGpuMemory is not None:
                     mine = proc.usedGpuMemory
-            parts.append(f"nvml-proc={mine/1e6:.0f}")
+            parts.append(f"nvml-proc={mine / 1e6:.0f}")
         except Exception:
             pass
     try:
         pool = cp.get_default_memory_pool()
-        parts.append(f"cupy={pool.used_bytes()/1e6:.0f}U/{pool.total_bytes()/1e6:.0f}T")
+        parts.append(f"cupy={pool.used_bytes() / 1e6:.0f}U/{pool.total_bytes() / 1e6:.0f}T")
     except Exception:
         pass
     if _RMM_STATS_MR is not None:
         try:
             s = _RMM_STATS_MR.allocation_counts
-            parts.append(f"rmm={s.current_bytes/1e6:.0f}C/{s.peak_bytes/1e6:.0f}P")
+            parts.append(f"rmm={s.current_bytes / 1e6:.0f}C/{s.peak_bytes / 1e6:.0f}P")
         except Exception:
             pass
     try:
         import torch
+
         if torch.cuda.is_available():
             parts.append(
-                f"torch={torch.cuda.memory_allocated()/1e6:.0f}A/"
-                f"{torch.cuda.memory_reserved()/1e6:.0f}R"
+                f"torch={torch.cuda.memory_allocated() / 1e6:.0f}A/"
+                f"{torch.cuda.memory_reserved() / 1e6:.0f}R"
             )
     except ImportError:
         pass
     try:
         import psutil
+
         rss = psutil.Process().memory_info().rss
-        parts.append(f"rss={rss/1e6:.0f}")
+        parts.append(f"rss={rss / 1e6:.0f}")
     except ImportError:
         pass
     try:
         import rmm.allocators.cupy as _rac
+
         parts.append(f"alloc-rmm={cp.cuda.get_allocator() is _rac.rmm_cupy_allocator}")
     except Exception:
         pass
@@ -180,6 +187,7 @@ def dump_live_gpu_arrays(top_n: int = 30) -> None:
     attribute key if it is an attribute of an object).
     """
     import gc
+
     gc.collect()
     try:
         arrs = [o for o in gc.get_objects() if isinstance(o, cp.ndarray)]
@@ -205,7 +213,11 @@ def dump_live_gpu_arrays(top_n: int = 30) -> None:
             pass
         logger.info(
             "  #%d %.0f MB  shape=%s dtype=%s  via=%s",
-            i, a.nbytes / 1e6, tuple(a.shape), a.dtype, ",".join(owners) or "?",
+            i,
+            a.nbytes / 1e6,
+            tuple(a.shape),
+            a.dtype,
+            ",".join(owners) or "?",
         )
 
 
@@ -214,15 +226,15 @@ def free_gpu_memory(dump_arrays: bool = False) -> None:
 
     Three memory subsystems are reset:
 
-    1. CuPy pool — ``free_all_blocks()`` releases cached (freed) blocks to CUDA.
+    1. CuPy pool  --  ``free_all_blocks()`` releases cached (freed) blocks to CUDA.
        Only meaningful when CuPy is NOT routed through RMM.
-    2. RMM pool — ``rmm.reinitialize(pool_allocator=True, ...)`` replaces the
+    2. RMM pool  --  ``rmm.reinitialize(pool_allocator=True, ...)`` replaces the
        pool with a fresh one.  This only shrinks true live usage if all CuPy
        arrays / cuDF / cuGraph objects allocated through the old pool are dead;
        any surviving array keeps the old pool alive.  The Statistics adaptor is
        re-installed on top of the new MR so subsequent snapshots keep reporting
        RMM live/peak bytes.
-    3. PyTorch cache — ``empty_cache()`` releases reserved-but-idle blocks.
+    3. PyTorch cache  --  ``empty_cache()`` releases reserved-but-idle blocks.
 
     We log snapshots ``before-free`` (with the run's live RMM stats still intact)
     and ``after-free`` (fresh pool), so the in-run RMM usage is visible.  Set
@@ -230,6 +242,7 @@ def free_gpu_memory(dump_arrays: bool = False) -> None:
     which identifies objects pinning the old RMM pool.
     """
     import gc
+
     global _RMM_STATS_MR
     _log_memory_snapshot("before-free")
     if dump_arrays:
@@ -242,9 +255,10 @@ def free_gpu_memory(dump_arrays: bool = False) -> None:
         logger.debug("CuPy pool free failed: %s", e)
     try:
         import rmm
+
         rmm.reinitialize(
             pool_allocator=True,
-            initial_pool_size=2 ** 28,
+            initial_pool_size=2**28,
         )
         gc.collect()
         # Re-wrap the fresh MR with a statistics adaptor so metrics persist.
@@ -261,6 +275,7 @@ def free_gpu_memory(dump_arrays: bool = False) -> None:
         logger.debug("RMM reinitialize skipped: %s", e)
     try:
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     except ImportError:
@@ -320,7 +335,8 @@ class ExperimentRunner(ABC):
         self.name = name
         self.output_dir = output_dir or os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "results", name,
+            "results",
+            name,
         )
 
     @abstractmethod
@@ -334,8 +350,9 @@ class ExperimentRunner(ABC):
         parts.append(f"seed={seed}")
         return os.path.join(self.output_dir, "raw", "_".join(parts))
 
-    def run(self, param_grid: list[dict], seeds: list[int],
-            skip_existing: bool = True) -> list[dict]:
+    def run(
+        self, param_grid: list[dict], seeds: list[int], skip_existing: bool = True
+    ) -> list[dict]:
         """Run all param combos x seeds, saving results incrementally."""
         os.makedirs(os.path.join(self.output_dir, "raw"), exist_ok=True)
         os.makedirs(os.path.join(self.output_dir, "figures"), exist_ok=True)
@@ -351,12 +368,10 @@ class ExperimentRunner(ABC):
                 result_path = self._result_path(params, seed)
 
                 if skip_existing and os.path.exists(result_path + ".json"):
-                    logger.info("[%d/%d] SKIP (exists): %s seed=%d",
-                                completed, total, params, seed)
+                    logger.info("[%d/%d] SKIP (exists): %s seed=%d", completed, total, params, seed)
                     continue
 
-                logger.info("[%d/%d] Running: %s seed=%d",
-                            completed, total, params, seed)
+                logger.info("[%d/%d] Running: %s seed=%d", completed, total, params, seed)
 
                 set_seed(seed)
                 try:
@@ -374,8 +389,9 @@ class ExperimentRunner(ABC):
 
                 elapsed = time.perf_counter() - t_start
                 eta = elapsed / completed * (total - completed)
-                logger.info("  Done in %.1fs.  ETA: %.0fs remaining.",
-                            t.elapsed if 't' in dir() else 0, eta)
+                logger.info(
+                    "  Done in %.1fs.  ETA: %.0fs remaining.", t.elapsed if "t" in dir() else 0, eta
+                )
 
         logger.info("Experiment '%s' complete: %d runs.", self.name, len(all_results))
         return all_results

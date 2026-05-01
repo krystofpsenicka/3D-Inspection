@@ -1,37 +1,15 @@
-"""Tests for NPZ+JSON serialization of OccupancyGrid, SamplingOccupancyGrid, and ExecutionResult."""
+"""Tests for NPZ+JSON serialization of OccupancyGrid and ExecutionResult."""
+
 import cupy as cp
 import numpy as np
 import pytest
+
 from shared.occupancy_grid import OccupancyGrid
-from visibility.sampling.utils.sampling_occupancy_grid import SamplingOccupancyGrid
 from VRP.core.types import ExecutionResult
-from VRP.core.serialization import save_solution, load_solution
+from VRP.utils.serialization import load_solution, save_solution
 
 
 class TestOccupancyGridSerialization:
-    def test_npz_round_trip_all_fields(self, tmp_path):
-        """SamplingOccupancyGrid round-trips raw_grid, filled_raw_grid, mesh_scale."""
-        grid = cp.asarray(np.random.RandomState(42).random((8, 8, 8)) > 0.5)
-        raw = cp.asarray(np.random.RandomState(43).random((8, 8, 8)) > 0.5)
-        filled = cp.asarray(np.random.RandomState(44).random((8, 8, 8)) > 0.5)
-        og = SamplingOccupancyGrid(
-            grid=grid,
-            origin=cp.array([1.0, 2.0, 3.0]),
-            resolution=0.25,
-            raw_grid=raw,
-            filled_raw_grid=filled,
-            mesh_scale=0.123,
-        )
-        path = str(tmp_path / "og.pkl")
-        og.save(path)
-        loaded = SamplingOccupancyGrid.load(path)
-        assert cp.array_equal(loaded.grid, og.grid)
-        assert cp.allclose(loaded.origin, og.origin)
-        assert loaded.resolution == og.resolution
-        assert cp.array_equal(loaded.raw_grid, og.raw_grid)
-        assert cp.array_equal(loaded.filled_raw_grid, og.filled_raw_grid)
-        assert loaded.mesh_scale == og.mesh_scale
-
     def test_npz_base_og_round_trip(self, tmp_path):
         """Base OccupancyGrid saves and loads only grid/origin/resolution."""
         og = OccupancyGrid(
@@ -60,7 +38,10 @@ class TestExecutionResultSerialization:
         return ExecutionResult(
             all_traj_positions=positions,
             all_traj_velocities=velocities,
-            all_waypoints=[[[1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0]], [[4.0, 5.0, 6.0, 1.0, 0.0, 0.0, 0.0]]],
+            all_waypoints=[
+                [[1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0]],
+                [[4.0, 5.0, 6.0, 1.0, 0.0, 0.0, 0.0]],
+            ],
             initial_positions=[np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0])],
             fail_counts=[0, 1],
         )
@@ -88,8 +69,14 @@ class TestExecutionResultSerialization:
     def test_empty_robot(self, tmp_path):
         """Robot with 0 trajectory steps."""
         result = ExecutionResult(
-            all_traj_positions=[np.zeros((0, 8), dtype=np.float32), np.zeros((1, 8), dtype=np.float32)],
-            all_traj_velocities=[np.zeros((0, 8), dtype=np.float32), np.zeros((1, 8), dtype=np.float32)],
+            all_traj_positions=[
+                np.zeros((0, 8), dtype=np.float32),
+                np.zeros((1, 8), dtype=np.float32),
+            ],
+            all_traj_velocities=[
+                np.zeros((0, 8), dtype=np.float32),
+                np.zeros((1, 8), dtype=np.float32),
+            ],
             all_waypoints=[[], [[0, 0, 0, 1, 0, 0, 0]]],
             initial_positions=[np.zeros(3), np.ones(3)],
             fail_counts=[0, 0],

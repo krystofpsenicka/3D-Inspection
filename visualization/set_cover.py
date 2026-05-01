@@ -3,13 +3,14 @@
 import logging
 
 import numpy as np
-import PIL.Image
 import open3d as o3d
+import PIL.Image
 
 from visibility.core.types import FrustumParams, OptimizationResult
+
+from ._helpers import generate_tab20_colors, show_geometries
 from .frustum_utils import create_viewpoint_geometry
 from .model import ModelVisualizer
-from ._helpers import generate_tab20_colors, show_geometries
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,12 @@ class SetCoverVisualizer:
     frustum_params : Camera frustum geometry.
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh,
-                 target_points: np.ndarray,
-                 frustum_params: FrustumParams):
+    def __init__(
+        self,
+        mesh: o3d.geometry.TriangleMesh,
+        target_points: np.ndarray,
+        frustum_params: FrustumParams,
+    ):
         self.mesh = mesh
         self.target_points = target_points
         self.frustum_params = frustum_params
@@ -47,8 +51,7 @@ class SetCoverVisualizer:
 
         if len(uncovered_indices) > 0:
             uncovered_pcd = o3d.geometry.PointCloud()
-            uncovered_pcd.points = o3d.utility.Vector3dVector(
-                self.target_points[uncovered_indices])
+            uncovered_pcd.points = o3d.utility.Vector3dVector(self.target_points[uncovered_indices])
             uncovered_pcd.paint_uniform_color([1.0, 0.0, 0.0])
             geometries.append(uncovered_pcd)
 
@@ -60,13 +63,11 @@ class SetCoverVisualizer:
             rot = rotations_np[i]
             vis = np.where(vis_map_np[i])[0]
 
-            geometries += create_viewpoint_geometry(
-                pos, rot, self.frustum_params, color)
+            geometries += create_viewpoint_geometry(pos, rot, self.frustum_params, color)
 
             if len(vis) > 0:
                 visible_pcd = o3d.geometry.PointCloud()
-                visible_pcd.points = o3d.utility.Vector3dVector(
-                    self.target_points[vis])
+                visible_pcd.points = o3d.utility.Vector3dVector(self.target_points[vis])
                 visible_pcd.paint_uniform_color(color)
                 geometries.append(visible_pcd)
 
@@ -74,8 +75,7 @@ class SetCoverVisualizer:
 
     # ------------------------------------------------------------------
 
-    def visualize_solution(self, result: OptimizationResult,
-                           title: str = "Viewpoint Solution"):
+    def visualize_solution(self, result: OptimizationResult, title: str = "Viewpoint Solution"):
         """Visualize the complete solution interactively."""
         logger.info("Visualizing solution: %s", title)
         logger.info("Total viewpoints: %d", result.num_viewpoints)
@@ -88,8 +88,7 @@ class SetCoverVisualizer:
 
     # ------------------------------------------------------------------
 
-    def save_animation(self, result: OptimizationResult,
-                       filename: str, frames: int = 200):
+    def save_animation(self, result: OptimizationResult, filename: str, frames: int = 200):
         """Save a GIF animation of the solution by orbiting the camera."""
         logger.info("Generating animation: %s", filename)
 
@@ -126,7 +125,7 @@ class SetCoverVisualizer:
         vis.destroy_window()
 
         if image_frames:
-            image_frames[0].save(filename, save_all=True,
-                                 append_images=image_frames[1:],
-                                 duration=50, loop=0)
+            image_frames[0].save(
+                filename, save_all=True, append_images=image_frames[1:], duration=50, loop=0
+            )
             logger.info("  - Saved GIF to %s", filename)

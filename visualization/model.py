@@ -20,10 +20,13 @@ class ModelVisualizer:
         factor.
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh,
-                 target_points: np.ndarray | None = None,
-                 normals: np.ndarray | None = None,
-                 scale: float | None = None):
+    def __init__(
+        self,
+        mesh: o3d.geometry.TriangleMesh,
+        target_points: np.ndarray | None = None,
+        normals: np.ndarray | None = None,
+        scale: float | None = None,
+    ):
         self.mesh = mesh
         self.target_points = target_points
         self.normals = normals
@@ -42,15 +45,15 @@ class ModelVisualizer:
         mesh_vis.compute_vertex_normals()
         return mesh_vis
 
-    def create_wireframe_geometry(
-            self, color: tuple = (0.7, 0.7, 0.7)) -> o3d.geometry.LineSet:
+    def create_wireframe_geometry(self, color: tuple = (0.7, 0.7, 0.7)) -> o3d.geometry.LineSet:
         """Return a wireframe LineSet from the mesh."""
         wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.mesh)
         wireframe.paint_uniform_color(list(color))
         return wireframe
 
     def create_points_geometry(
-            self, color: tuple = (1.0, 0.0, 0.0)) -> o3d.geometry.PointCloud | None:
+        self, color: tuple = (1.0, 0.0, 0.0)
+    ) -> o3d.geometry.PointCloud | None:
         """Return a coloured PointCloud of target points, or None."""
         if self.target_points is None:
             return None
@@ -62,8 +65,7 @@ class ModelVisualizer:
         pcd.paint_uniform_color(list(color))
         return pcd
 
-    def create_normals_geometry(
-            self, normal_scale: float = 0.05) -> o3d.geometry.LineSet | None:
+    def create_normals_geometry(self, normal_scale: float = 0.05) -> o3d.geometry.LineSet | None:
         """Return a LineSet of normal vectors, or None."""
         if self.target_points is None or self.normals is None:
             return None
@@ -89,8 +91,13 @@ class ModelVisualizer:
     # Display
     # ------------------------------------------------------------------
 
-    def visualize(self, show_mesh: bool = True, show_points: bool = True,
-                  show_normals: bool = True, normal_scale: float = 0.05):
+    def visualize(
+        self,
+        show_mesh: bool = True,
+        show_points: bool = True,
+        show_normals: bool = True,
+        normal_scale: float = 0.05,
+    ):
         """Show any combination of mesh, point cloud, and normals."""
         geometries = []
 
@@ -111,5 +118,4 @@ class ModelVisualizer:
             logger.warning("[ModelVisualizer] Nothing to show.")
             return
 
-        o3d.visualization.draw_geometries(
-            geometries, window_name="Target Points and Normals")
+        o3d.visualization.draw_geometries(geometries, window_name="Target Points and Normals")

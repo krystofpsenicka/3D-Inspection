@@ -1,5 +1,5 @@
 """
-VRP Planner – 3D Occupancy Grid
+VRP Planner - 3D Occupancy Grid
 ================================
 
 Re-exports the shared ``OccupancyGrid`` and grid utilities,
@@ -9,12 +9,10 @@ plus VRP-specific helpers (mesh world bounds, VRP grid builder).
 from __future__ import annotations
 
 import logging
-import os
-from typing import Optional, Tuple
 
 import numpy as np
 
-from .constants import (
+from VRP.core.constants import (
     INFLATION_VOXELS,
     MESH_PATH,
     MESH_POSE,
@@ -26,20 +24,17 @@ from .constants import (
 logger = logging.getLogger(__name__)
 
 # ── Re-export core types from shared ──────────────────────────────────────────
-from shared.occupancy_grid import OccupancyGrid
-from shared.grid_utils import inflate_grid, downsample_occupancy_grid
 from shared.grid_builder_utils import (
     build_occupancy_grid as _shared_build_occupancy_grid,
-    compute_grid_bounds,
-    voxelize_mesh,
 )
+from shared.occupancy_grid import OccupancyGrid
 
 
 def get_mesh_world_bounds(
     mesh_path: str = MESH_PATH,
     mesh_target_length: float = MESH_TARGET_LENGTH,
     mesh_pose: list = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(bounds_min, bounds_max)`` of the environment mesh in world frame.
 
     Applies the same uniform scale and pose that ``build_occupancy_grid``
@@ -64,7 +59,7 @@ def build_occupancy_grid(
     resolution: float = VOXEL_RESOLUTION,
     inflation_voxels: int = INFLATION_VOXELS,
     padding: float = 1.0,
-    extra_free_points: Optional[np.ndarray] = None,
+    extra_free_points: np.ndarray | None = None,
     fill_interior: bool = True,
     mesh_target_length: float = MESH_TARGET_LENGTH,
     mesh_pose: list = None,
@@ -103,14 +98,19 @@ def build_occupancy_grid(
 
     logger.info(
         "[build_occupancy_grid] Building grid from %s (res=%sm, inflation=%svox) …",
-        mesh_path, resolution, inflation_voxels,
+        mesh_path,
+        resolution,
+        inflation_voxels,
     )
 
     from shared.mesh_loader import load_and_transform_mesh
+
     mesh = load_and_transform_mesh(mesh_path, mesh_target_length, mesh_pose)
 
     # Margin for extra free points: at least 3 voxels or ceil(robot_radius / resolution)
-    extra_margin = max(3, int(np.ceil(ROBOT_RADIUS / resolution))) if extra_free_points is not None else 0
+    extra_margin = (
+        max(3, int(np.ceil(ROBOT_RADIUS / resolution))) if extra_free_points is not None else 0
+    )
 
     return _shared_build_occupancy_grid(
         mesh=mesh,

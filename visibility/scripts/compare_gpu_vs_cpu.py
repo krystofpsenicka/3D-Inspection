@@ -6,32 +6,33 @@ Compares:
   - Visibility: CPU Epsilon vs GPU Epsilon, CPU Raycast vs GPU Raycast (OptiX)
   - Optimization: CPU Greedy vs GPU Greedy
 """
+
+import sys
+import time
+
 import cupy as cp
 import numpy as np
 import open3d as o3d
-import os
-import sys
-import time
-from typing import List, Tuple
 
-from visibility.core.types import FrustumParams
-from shared.types import Side
-from visibility.sampling import WeightedViewpointSampler
 from shared.surface_sampler import SurfacePointSampler
+from shared.types import Side
+from visibility.core.types import FrustumParams
+from visibility.sampling import WeightedViewpointSampler
 
-# CPU methods
-from visibility.visibility.raycast import RaycastingVisibilityQuery
+# Set-cover optimizers
+from visibility.set_cover import GreedySetCover, GreedySetCoverCuda
 from visibility.visibility.epsilon import EpsilonVisibilityQuery
 
 # GPU methods
 from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
 
-# Set-cover optimizers
-from visibility.set_cover import GreedySetCover, GreedySetCoverCuda
+# CPU methods
+from visibility.visibility.raycast import RaycastingVisibilityQuery
 
 # Optionally import GPU raycast (requires Triro/OptiX)
 try:
     from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
+
     HAS_TRIRO = True
 except ImportError:
     HAS_TRIRO = False
@@ -45,8 +46,8 @@ NUM_TARGET_POINTS = 100000
 NUM_CANDIDATE_VPs = 1500
 TARGET_COVERAGE = 0.90
 MAX_VIEWPOINTS = 100
-NUM_WARMUP_VPS = 5      # warm up GPU before timing
-NUM_TIMED_VPS = 50       # viewpoints to time per-query benchmark
+NUM_WARMUP_VPS = 5  # warm up GPU before timing
+NUM_TIMED_VPS = 50  # viewpoints to time per-query benchmark
 
 
 def load_scene(mesh_path=None):
@@ -61,7 +62,10 @@ def load_scene(mesh_path=None):
 
     surface_sampler = SurfacePointSampler()
     target_points, normals = surface_sampler.sample(
-        mesh, NUM_TARGET_POINTS, normal_radius=0.1, tangent_plane_k=10,
+        mesh,
+        NUM_TARGET_POINTS,
+        normal_radius=0.1,
+        tangent_plane_k=10,
     )
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7)
@@ -86,13 +90,16 @@ def benchmark_single_visibility(query, positions, rotmats, label, is_gpu=False):
     std_time = np.std(times)
     avg_visible = total_visible / len(times)
 
-    print(f"  [{label}] Per-viewpoint: {avg_time*1000:.2f} ± {std_time*1000:.2f} ms "
-          f"(avg {avg_visible:.0f} visible points)")
+    print(
+        f"  [{label}] Per-viewpoint: {avg_time * 1000:.2f} ± {std_time * 1000:.2f} ms "
+        f"(avg {avg_visible:.0f} visible points)"
+    )
     return avg_time, std_time
 
 
-def benchmark_frustum_culling(query_cpu, query_gpu, positions_cpu, rotmats_cpu,
-                              positions_gpu, rotmats_gpu):
+def benchmark_frustum_culling(
+    query_cpu, query_gpu, positions_cpu, rotmats_cpu, positions_gpu, rotmats_gpu
+):
     """Compare frustum culling strategies."""
     print("\n" + "=" * 70)
     print("FRUSTUM CULLING BENCHMARK")
@@ -102,26 +109,29 @@ def benchmark_frustum_culling(query_cpu, query_gpu, positions_cpu, rotmats_cpu,
     times_cpu = []
     for i in range(NUM_TIMED_VPS):
         t0 = time.perf_counter()
-        idx = query_cpu.points_in_frustum_with_kdtree(positions_cpu[i], rotmats_cpu[i])
+        query_cpu.points_in_frustum_with_kdtree(positions_cpu[i], rotmats_cpu[i])
         times_cpu.append(time.perf_counter() - t0)
-    print(f"  CPU KDTree:        {np.mean(times_cpu)*1000:.2f} ± {np.std(times_cpu)*1000:.2f} ms")
+    print(
+        f"  CPU KDTree:        {np.mean(times_cpu) * 1000:.2f} ± {np.std(times_cpu) * 1000:.2f} ms"
+    )
 
-    # GPU brute-force — warm up
+    # GPU brute-force  --  warm up
     for i in range(3):
         query_gpu.points_in_frustum_gpu(positions_gpu[i], rotmats_gpu[i])
     times_gpu = []
     for i in range(NUM_TIMED_VPS):
         t0 = time.perf_counter()
-        idx = query_gpu.points_in_frustum_gpu(positions_gpu[i], rotmats_gpu[i])
+        query_gpu.points_in_frustum_gpu(positions_gpu[i], rotmats_gpu[i])
         times_gpu.append(time.perf_counter() - t0)
-    print(f"  GPU Brute-force:   {np.mean(times_gpu)*1000:.2f} ± {np.std(times_gpu)*1000:.2f} ms")
+    print(
+        f"  GPU Brute-force:   {np.mean(times_gpu) * 1000:.2f} ± {np.std(times_gpu) * 1000:.2f} ms"
+    )
 
     speedup = np.mean(times_cpu) / np.mean(times_gpu)
     print(f"  Speedup: {speedup:.1f}x")
 
 
-def benchmark_visibility_methods(queries, positions_cpu, rotmats_cpu,
-                                 positions_gpu, rotmats_gpu):
+def benchmark_visibility_methods(queries, positions_cpu, rotmats_cpu, positions_gpu, rotmats_gpu):
     """Benchmark all visibility methods."""
     print("\n" + "=" * 70)
     print("VISIBILITY COMPUTATION BENCHMARK")
@@ -131,10 +141,12 @@ def benchmark_visibility_methods(queries, positions_cpu, rotmats_cpu,
     for label, query, is_gpu in queries:
         if is_gpu:
             avg_t, std_t = benchmark_single_visibility(
-                query, positions_gpu, rotmats_gpu, label, is_gpu=True)
+                query, positions_gpu, rotmats_gpu, label, is_gpu=True
+            )
         else:
             avg_t, std_t = benchmark_single_visibility(
-                query, positions_cpu, rotmats_cpu, label, is_gpu=False)
+                query, positions_cpu, rotmats_cpu, label, is_gpu=False
+            )
         results[label] = avg_t
 
     # Print speedups
@@ -163,9 +175,11 @@ def benchmark_optimization(optimizer_configs, num_points):
             max_viewpoints=MAX_VIEWPOINTS,
         )
 
-        print(f"  [{label}] {result.num_viewpoints} VPs, "
-              f"coverage={result.total_coverage*100:.1f}%, "
-              f"opt_time={result.optimization_time:.2f}s")
+        print(
+            f"  [{label}] {result.num_viewpoints} VPs, "
+            f"coverage={result.total_coverage * 100:.1f}%, "
+            f"opt_time={result.optimization_time:.2f}s"
+        )
 
 
 def main():
@@ -175,11 +189,15 @@ def main():
 
     mesh, target_points, normals, frustum_params = load_scene(mesh_path)
 
-    print(f"\nScene: {len(target_points)} target points, "
-          f"mesh with {len(np.asarray(mesh.triangles))} triangles")
+    print(
+        f"\nScene: {len(target_points)} target points, "
+        f"mesh with {len(np.asarray(mesh.triangles))} triangles"
+    )
 
     # Generate candidate viewpoints (GPU arrays from sampler)
-    sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    sampler = WeightedViewpointSampler(
+        mesh, target_points, normals, frustum_params.far, collision_radius=0.5
+    )
     pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side=Side.OUTSIDE)
 
     # Transfer to CPU for CPU benchmarks
@@ -194,35 +212,34 @@ def main():
     # CPU
     t0 = time.perf_counter()
     q_raycast_cpu = RaycastingVisibilityQuery(mesh, target_points, normals, frustum_params)
-    print(f"  CPU Raycast init: {time.perf_counter()-t0:.2f}s")
+    print(f"  CPU Raycast init: {time.perf_counter() - t0:.2f}s")
 
     t0 = time.perf_counter()
     q_epsilon_cpu = EpsilonVisibilityQuery(target_points, normals, frustum_params)
-    print(f"  CPU Epsilon init: {time.perf_counter()-t0:.2f}s")
+    print(f"  CPU Epsilon init: {time.perf_counter() - t0:.2f}s")
 
     # GPU Epsilon
     t0 = time.perf_counter()
     q_epsilon_gpu = EpsilonVisibilityQueryCuda(
-        target_points, normals, frustum_params,
+        target_points,
+        normals,
+        frustum_params,
     )
-    print(f"  GPU Epsilon init: {time.perf_counter()-t0:.2f}s")
+    print(f"  GPU Epsilon init: {time.perf_counter() - t0:.2f}s")
 
     # GPU Raycast (if Triro available)
     q_raycast_gpu = None
     if HAS_TRIRO:
         t0 = time.perf_counter()
-        q_raycast_gpu = RaycastingVisibilityQueryCuda(
-            mesh, target_points, normals, frustum_params
-        )
-        print(f"  GPU Raycast (OptiX) init: {time.perf_counter()-t0:.2f}s")
+        q_raycast_gpu = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
+        print(f"  GPU Raycast (OptiX) init: {time.perf_counter() - t0:.2f}s")
 
     # =====================================================================
     # Benchmarks
     # =====================================================================
 
     # 1. Frustum culling
-    benchmark_frustum_culling(q_epsilon_cpu, q_epsilon_gpu,
-                              positions, rotmats, pos_gpu, rot_gpu)
+    benchmark_frustum_culling(q_epsilon_cpu, q_epsilon_gpu, positions, rotmats, pos_gpu, rot_gpu)
 
     # 2. Visibility computation
     queries = [
@@ -236,25 +253,38 @@ def main():
     benchmark_visibility_methods(queries, positions, rotmats, pos_gpu, rot_gpu)
 
     # 3. Optimization benchmark
-    subset_pos = positions[:min(500, len(positions))]
-    subset_rot = rotmats[:min(500, len(rotmats))]
+    subset_pos = positions[: min(500, len(positions))]
+    subset_rot = rotmats[: min(500, len(rotmats))]
     num_points = len(target_points)
 
     V_eps_cpu, _ = q_epsilon_cpu.compute_visibility_batch(subset_pos, subset_rot)
     V_eps_gpu, _ = q_epsilon_gpu.compute_visibility_batch(
-        cp.asarray(subset_pos), cp.asarray(subset_rot))
+        cp.asarray(subset_pos), cp.asarray(subset_rot)
+    )
     V_rc_cpu, _ = q_raycast_cpu.compute_visibility_batch(subset_pos, subset_rot)
 
     opt_configs = [
         ("CPU Epsilon + CPU Greedy", GreedySetCover(num_points, subset_pos, subset_rot, V_eps_cpu)),
-        ("GPU Epsilon + GPU Greedy", GreedySetCoverCuda(num_points, cp.asarray(subset_pos), cp.asarray(subset_rot), V_eps_gpu)),
+        (
+            "GPU Epsilon + GPU Greedy",
+            GreedySetCoverCuda(
+                num_points, cp.asarray(subset_pos), cp.asarray(subset_rot), V_eps_gpu
+            ),
+        ),
         ("CPU Raycast + CPU Greedy", GreedySetCover(num_points, subset_pos, subset_rot, V_rc_cpu)),
     ]
     if q_raycast_gpu is not None:
         V_rc_gpu, _ = q_raycast_gpu.compute_visibility_batch(
-            cp.asarray(subset_pos), cp.asarray(subset_rot))
-        opt_configs.append(("GPU Raycast + GPU Greedy",
-                            GreedySetCoverCuda(num_points, cp.asarray(subset_pos), cp.asarray(subset_rot), V_rc_gpu)))
+            cp.asarray(subset_pos), cp.asarray(subset_rot)
+        )
+        opt_configs.append(
+            (
+                "GPU Raycast + GPU Greedy",
+                GreedySetCoverCuda(
+                    num_points, cp.asarray(subset_pos), cp.asarray(subset_rot), V_rc_gpu
+                ),
+            )
+        )
     benchmark_optimization(opt_configs, num_points)
 
     print("\n" + "=" * 70)

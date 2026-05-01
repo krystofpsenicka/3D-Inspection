@@ -1,21 +1,9 @@
-"""Collision-free distance matrix computation via cuGraph.
+"""Collision-free distance matrix via cuGraph SSSP.
 
-Computes the N x N pairwise shortest-path distance matrix between
-waypoints on the inflated occupancy grid.  Graph construction is
-GPU-vectorized via CuPy; shortest paths are computed with cuGraph's
-Dijkstra inside a one-shot subprocess.
-
-The subprocess is required because cuGraph/cuDF retain internal RMM
-``DeviceBuffer`` objects after ``del G, gdf`` that keep the whole RMM
-pool pinned.  Each in-process call therefore leaks ~7 GB of GPU memory
-that no amount of ``gc.collect()`` or ``rmm.reinitialize()`` can reclaim
-in-process.  Running in a fresh subprocess tears down the CUDA context
-on exit, guaranteeing full release.
-
-References:
-    Davidson, A., Baxter, S., Garland, M. & Owens, J.D. (2014).
-        Work-Efficient Parallel GPU Methods for Single-Source Shortest
-        Paths. IPDPS.
+The cuGraph Dijkstra runs in a one-shot subprocess because in-process
+calls leak RMM ``DeviceBuffer`` allocations (~7 GB) that no amount of
+``gc.collect`` or ``rmm.reinitialize`` reclaims; tearing down the CUDA
+context on subprocess exit is the only reliable release.
 """
 
 from __future__ import annotations
@@ -47,6 +35,7 @@ def _build_cugraph_distance_matrix(
         (N, N) float32 CuPy distance matrix in metres.
     """
     import gc as _gc
+
     import cudf
     import cugraph
 
@@ -58,7 +47,7 @@ def _build_cugraph_distance_matrix(
     N = len(waypoints_xyz)
     logger.info("[DistMatrix] Grid shape: %s, %d waypoints", grid.shape, N)
 
-    # ── GPU-vectorized graph construction ────────────────────────────
+    # ── graph construction ────────────────────────────
     free_ijk_gpu = cp.argwhere(~grid)  # (F, 3) int64
     F = len(free_ijk_gpu)
     logger.info("[DistMatrix] Free voxels: %d", F)
@@ -78,9 +67,12 @@ def _build_cugraph_distance_matrix(
     for oi in range(26):
         nbr = free_ijk_gpu + OFFSETS_26[oi]  # (F, 3) broadcast
         valid = (
-            (nbr[:, 0] >= 0) & (nbr[:, 0] < Nx)
-            & (nbr[:, 1] >= 0) & (nbr[:, 1] < Ny)
-            & (nbr[:, 2] >= 0) & (nbr[:, 2] < Nz)
+            (nbr[:, 0] >= 0)
+            & (nbr[:, 0] < Nx)
+            & (nbr[:, 1] >= 0)
+            & (nbr[:, 1] < Ny)
+            & (nbr[:, 2] >= 0)
+            & (nbr[:, 2] < Nz)
         )
         nbr_v = nbr[valid]
         # Check neighbors are free
@@ -111,25 +103,22 @@ def _build_cugraph_distance_matrix(
     wt_arr = cp.concatenate(wt_all)
 
     # Build cuGraph graph directly from CuPy arrays
-    gdf = cudf.DataFrame({
-        "src": cudf.core.column.as_column(src_arr),
-        "dst": cudf.core.column.as_column(dst_arr),
-        "weight": cudf.core.column.as_column(wt_arr),
-    })
+    gdf = cudf.DataFrame(
+        {
+            "src": cudf.core.column.as_column(src_arr),
+            "dst": cudf.core.column.as_column(dst_arr),
+            "weight": cudf.core.column.as_column(wt_arr),
+        }
+    )
     G = cugraph.Graph()
     G.from_cudf_edgelist(gdf, source="src", destination="dst", edge_attr="weight")
-    logger.info("[DistMatrix] Graph: %d nodes, %d edges",
-                G.number_of_nodes(), G.number_of_edges())
+    logger.info("[DistMatrix] Graph: %d nodes, %d edges", G.number_of_nodes(), G.number_of_edges())
 
-    # ── Waypoint node IDs (vectorized) ──────────────────────────────
+    # ── Waypoint node IDs  ──────────────────────────────
     wp_gpu = waypoints_xyz.astype(cp.float64)
     origin_gpu = cp.asarray(origin, dtype=cp.float64)
     wp_ijk_gpu = cp.floor((wp_gpu - origin_gpu) / resolution).astype(cp.int64)
-    wp_flat_gpu = (
-        wp_ijk_gpu[:, 0] * (Ny * Nz)
-        + wp_ijk_gpu[:, 1] * Nz
-        + wp_ijk_gpu[:, 2]
-    )
+    wp_flat_gpu = wp_ijk_gpu[:, 0] * (Ny * Nz) + wp_ijk_gpu[:, 1] * Nz + wp_ijk_gpu[:, 2]
     wp_node_ids_gpu = flat_lookup[wp_flat_gpu]  # (N,) int32, GPU
 
     # ── Validate waypoints are in free space ───────────────────────
@@ -181,6 +170,7 @@ def _dijkstra_subprocess_worker(
     them (and so the subprocess gets a fresh cuGraph/cuDF initialisation).
     """
     import cupy as _cp
+
     from shared.occupancy_grid import OccupancyGrid
 
     og = OccupancyGrid(
@@ -230,7 +220,10 @@ def compute_distance_matrix(
     with concurrent.futures.ProcessPoolExecutor(max_workers=1, mp_context=ctx) as pool:
         future = pool.submit(
             _dijkstra_subprocess_worker,
-            grid_np, origin_np, resolution, waypoints_np,
+            grid_np,
+            origin_np,
+            resolution,
+            waypoints_np,
         )
         matrix_np = future.result()
 

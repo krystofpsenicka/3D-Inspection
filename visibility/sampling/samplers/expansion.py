@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Tuple
 
 import cupy as cp
 
 from ...core.constants import DEFAULT_K_COVERAGE
+from ...visibility.base_cuda import VisibilityQueryCuda
 from .base import ProbabilisticSampler
 from .optimizing import OptimizingSampler
-from ...visibility.base_cuda import VisibilityQueryCuda
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +25,13 @@ class ExpansionSampler(ABC):
     """Base for expansion/refinement samplers used by ExpansionIterativeSetCover."""
 
     @abstractmethod
-    def refine(self, position: cp.ndarray, rotation: cp.ndarray,
-               visible_indices: cp.ndarray,
-               uncovered_mask: cp.ndarray
-               ) -> Tuple[cp.ndarray, cp.ndarray, cp.ndarray]:
+    def refine(
+        self,
+        position: cp.ndarray,
+        rotation: cp.ndarray,
+        visible_indices: cp.ndarray,
+        uncovered_mask: cp.ndarray,
+    ) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray]:
         """Refine a viewpoint by searching for a better one nearby.
 
         A refined viewpoint is only returned when its marginal gain on the
@@ -42,11 +44,11 @@ class ExpansionSampler(ABC):
             position:        (3,) CuPy array.
             rotation:        (3, 3) CuPy rotation matrix.
             visible_indices: (K,) CuPy int64 array of visible point indices.
-            uncovered_mask:  (M,) CuPy bool array — True for points still
+            uncovered_mask:  (M,) CuPy bool array  --  True for points still
                              uncovered at this iteration.
 
         Returns:
-            (position, rotation, visible_indices) — the refined viewpoint,
+            (position, rotation, visible_indices)  --  the refined viewpoint,
             or the originals if no strict improvement was found.
         """
 
@@ -54,9 +56,13 @@ class ExpansionSampler(ABC):
 class ProbabilisticExpansionSampler(ExpansionSampler):
     """Adapter that wraps a ProbabilisticSampler for expansion refinement."""
 
-    def __init__(self, sampler: ProbabilisticSampler,
-                 visibility_query: VisibilityQueryCuda,
-                 n_samples: int = 20, radius: float = 0.5):
+    def __init__(
+        self,
+        sampler: ProbabilisticSampler,
+        visibility_query: VisibilityQueryCuda,
+        n_samples: int = 20,
+        radius: float = 0.5,
+    ):
         self.sampler = sampler
         self.query = visibility_query
         self.n_samples = n_samples
@@ -90,9 +96,9 @@ class ProbabilisticExpansionSampler(ExpansionSampler):
 class OptimizingExpansionSampler(ExpansionSampler):
     """Adapter that wraps an OptimizingSampler for expansion refinement."""
 
-    def __init__(self, sampler: OptimizingSampler,
-                 visibility_query: VisibilityQueryCuda,
-                 radius: float = 0.5):
+    def __init__(
+        self, sampler: OptimizingSampler, visibility_query: VisibilityQueryCuda, radius: float = 0.5
+    ):
         self.sampler = sampler
         self.query = visibility_query
         self.radius = radius
@@ -102,9 +108,7 @@ class OptimizingExpansionSampler(ExpansionSampler):
         try:
             # Drive the inner optimizer's deficit so it rewards ONLY currently
             # uncovered points (deficit = k for uncovered, 0 for covered).
-            coverage_count_gpu = cp.where(
-                uncovered_mask, 0, DEFAULT_K_COVERAGE
-            ).astype(cp.int32)
+            coverage_count_gpu = cp.where(uncovered_mask, 0, DEFAULT_K_COVERAGE).astype(cp.int32)
 
             result_pos, result_rot, _ = self.sampler.sample_optimized(
                 n_rounds=1,
@@ -117,8 +121,7 @@ class OptimizingExpansionSampler(ExpansionSampler):
         if len(result_pos) == 0:
             return position, rotation, visible_indices
 
-        V, _ = self.query.compute_visibility_batch(
-            result_pos[:1], result_rot[:1])
+        V, _ = self.query.compute_visibility_batch(result_pos[:1], result_rot[:1])
         refined_vis = cp.where(V[0].astype(cp.bool_))[0]
 
         refined_gain = int(uncovered_mask[refined_vis].sum())

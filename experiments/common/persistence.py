@@ -11,7 +11,7 @@ import numpy as np
 
 def _to_serializable(v: Any) -> Any:
     """Convert a value to JSON-serializable form."""
-    if hasattr(v, 'get'):  # CuPy array
+    if hasattr(v, "get"):  # CuPy array
         return v.get().tolist()
     if isinstance(v, np.ndarray):
         return v.tolist()
@@ -32,7 +32,7 @@ def save_run_result(result: dict, path: str) -> None:
     arrays = {}
     scalars = {}
     for k, v in result.items():
-        if hasattr(v, 'get'):  # CuPy
+        if hasattr(v, "get"):  # CuPy
             arrays[k] = v.get()
         elif isinstance(v, np.ndarray):
             arrays[k] = v

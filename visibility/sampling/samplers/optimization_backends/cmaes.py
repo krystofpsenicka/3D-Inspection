@@ -4,7 +4,6 @@ import logging
 
 import cupy as cp
 import torch
-
 from evotorch import Problem
 from evotorch.algorithms import CMAES
 
@@ -36,8 +35,9 @@ class _EvoTorchObjective(Problem):
 class CMAESBackend(OptimizationBackend):
     """CMA-ES optimization via EvoTorch."""
 
-    def optimize(self, objective_fn, n_dims, popsize, maxiter,
-                 verbose=False, center_init=None) -> cp.ndarray:
+    def optimize(
+        self, objective_fn, n_dims, popsize, maxiter, verbose=False, center_init=None
+    ) -> cp.ndarray:
         """Run CMA-ES in [0,1]^n_dims.
 
         Args:
@@ -46,11 +46,11 @@ class CMAESBackend(OptimizationBackend):
             popsize:      population size.
             maxiter:      max generations.
             verbose:      log per-generation progress.
-            center_init:  optional ``(D,)`` CuPy array — initial centre of the
+            center_init:  optional ``(D,)`` CuPy array  --  initial centre of the
                           search distribution in [0,1]^D.
 
         Returns:
-            (D,) CuPy array — best solution found.
+            (D,) CuPy array  --  best solution found.
         """
         problem = _EvoTorchObjective(objective_fn, n_dims, popsize)
         cmaes_kwargs = dict(stdev_init=1.0 / 3.0, popsize=popsize)
@@ -63,8 +63,7 @@ class CMAESBackend(OptimizationBackend):
             if verbose and (gen_i + 1) % 5 == 0:
                 try:
                     best_val = float(searcher.status["pop_best_eval"])
-                    logger.info("  CMA-ES gen %d: best_eval=%.4f",
-                                gen_i + 1, best_val)
+                    logger.info("  CMA-ES gen %d: best_eval=%.4f", gen_i + 1, best_val)
                 except (KeyError, TypeError):
                     pass
 

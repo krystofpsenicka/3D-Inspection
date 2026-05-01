@@ -12,10 +12,10 @@ from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
-# Named constants — chosen to avoid overlap with RdBu_r (red=inside, blue=free).
+# Named constants  --  chosen to avoid overlap with RdBu_r (red=inside, blue=free).
 MESH_COLOR = (0.6, 0.6, 0.6)
-OCCUPIED_COLOR = (1.0, 0.7, 0.0)    # yellow-orange — distinct from RdBu_r red
-INFLATED_COLOR = (0.0, 0.7, 0.3)    # green — distinct from RdBu_r blue
+OCCUPIED_COLOR = (1.0, 0.7, 0.0)  # yellow-orange — distinct from RdBu_r red
+INFLATED_COLOR = (0.0, 0.7, 0.3)  # green — distinct from RdBu_r blue
 COORD_FRAME_SIZE = 2.0
 
 
@@ -30,8 +30,13 @@ class EsdfVisualizer:
     scaled_mesh : Optional trimesh mesh (already scaled/posed) for overlays.
     """
 
-    def __init__(self, occupancy_grid: OccupancyGrid, raw_grid: np.ndarray,
-                 esdf: np.ndarray, scaled_mesh: o3d.geometry.TriangleMesh = None):
+    def __init__(
+        self,
+        occupancy_grid: OccupancyGrid,
+        raw_grid: np.ndarray,
+        esdf: np.ndarray,
+        scaled_mesh: o3d.geometry.TriangleMesh = None,
+    ):
         self.og = occupancy_grid
         self.raw = raw_grid
         self.esdf = esdf
@@ -41,11 +46,14 @@ class EsdfVisualizer:
     # 3-D
     # ------------------------------------------------------------------
 
-    def visualize_3d(self, esdf_band: float = 2.0,
-                     show_occupied: bool = False,
-                     show_inflated: bool = False,
-                     show_mesh: bool = True,
-                     max_points: int = 300_000):
+    def visualize_3d(
+        self,
+        esdf_band: float = 2.0,
+        show_occupied: bool = False,
+        show_inflated: bool = False,
+        show_mesh: bool = True,
+        max_points: int = 300_000,
+    ):
         geometries: list = []
 
         # 1. Ship mesh (grey)
@@ -54,8 +62,10 @@ class EsdfVisualizer:
                 self.scaled_mesh.compute_vertex_normals()
                 self.scaled_mesh.paint_uniform_color(list(MESH_COLOR))
                 geometries.append(self.scaled_mesh)
-                print(f"Mesh: {len(self.scaled_mesh.vertices):,} verts, "
-                      f"{len(self.scaled_mesh.faces):,} faces")
+                print(
+                    f"Mesh: {len(self.scaled_mesh.vertices):,} verts, "
+                    f"{len(self.scaled_mesh.faces):,} faces"
+                )
             except Exception as e:
                 print(f"Could not load mesh: {e}")
 
@@ -66,8 +76,7 @@ class EsdfVisualizer:
             if len(ijk) > max_points:
                 rng = np.random.RandomState(42)
                 ijk = ijk[rng.choice(len(ijk), max_points, replace=False)]
-            centres = (self.og.origin
-                       + (ijk.astype(np.float64) + 0.5) * self.og.resolution)
+            centres = self.og.origin + (ijk.astype(np.float64) + 0.5) * self.og.resolution
             values = self.esdf[ijk[:, 0], ijk[:, 1], ijk[:, 2]]
             colors = esdf_to_rgb(values, vmin=-esdf_band, vmax=esdf_band * 0.5)
 
@@ -85,8 +94,7 @@ class EsdfVisualizer:
             if len(occ_ijk) > max_points:
                 rng = np.random.RandomState(42)
                 occ_ijk = occ_ijk[rng.choice(len(occ_ijk), max_points, replace=False)]
-            pts = (self.og.origin
-                   + (occ_ijk.astype(np.float64) + 0.5) * self.og.resolution)
+            pts = self.og.origin + (occ_ijk.astype(np.float64) + 0.5) * self.og.resolution
             pcd2 = o3d.geometry.PointCloud()
             pcd2.points = o3d.utility.Vector3dVector(pts)
             pcd2.paint_uniform_color(list(OCCUPIED_COLOR))
@@ -99,10 +107,8 @@ class EsdfVisualizer:
             shell_ijk = np.argwhere(shell)
             if len(shell_ijk) > max_points:
                 rng = np.random.RandomState(99)
-                shell_ijk = shell_ijk[rng.choice(len(shell_ijk), max_points,
-                                                  replace=False)]
-            pts = (self.og.origin
-                   + (shell_ijk.astype(np.float64) + 0.5) * self.og.resolution)
+                shell_ijk = shell_ijk[rng.choice(len(shell_ijk), max_points, replace=False)]
+            pts = self.og.origin + (shell_ijk.astype(np.float64) + 0.5) * self.og.resolution
             pcd3 = o3d.geometry.PointCloud()
             pcd3.points = o3d.utility.Vector3dVector(pts)
             pcd3.paint_uniform_color(list(INFLATED_COLOR))
@@ -110,8 +116,7 @@ class EsdfVisualizer:
             print(f"Inflation shell      : {len(shell_ijk):,} points")
 
         # 5. Coordinate frame
-        geometries.append(
-            o3d.geometry.TriangleMesh.create_coordinate_frame(size=COORD_FRAME_SIZE))
+        geometries.append(o3d.geometry.TriangleMesh.create_coordinate_frame(size=COORD_FRAME_SIZE))
 
         print()
         print("Opening Open3D viewer ...")
@@ -123,16 +128,20 @@ class EsdfVisualizer:
             print("  Green points         = inflation shell")
         print("  Controls: left-drag = rotate | scroll = zoom | middle-drag = pan")
 
-        o3d.visualization.draw_geometries(
-            geometries, window_name="ESDF 3D", width=1600, height=900)
+        o3d.visualization.draw_geometries(geometries, window_name="ESDF 3D", width=1600, height=900)
 
     # ------------------------------------------------------------------
     # 2-D matplotlib slice
     # ------------------------------------------------------------------
 
-    def visualize_2d(self, axis: int = 2, slice_pos: float = 1.5,
-                     vmin: float = -3.0, vmax: float = 1.0,
-                     show_mesh: bool = True):
+    def visualize_2d(
+        self,
+        axis: int = 2,
+        slice_pos: float = 1.5,
+        vmin: float = -3.0,
+        vmax: float = 1.0,
+        show_mesh: bool = True,
+    ):
         """Show a 2-D ESDF + occupancy slice in matplotlib."""
         import matplotlib.pyplot as plt
 
@@ -162,28 +171,46 @@ class EsdfVisualizer:
             x_origin, y_origin = self.og.origin[0], self.og.origin[1]
             nx, ny = self.raw.shape[0], self.raw.shape[1]
 
-        extent = [x_origin, x_origin + nx * self.og.resolution,
-                  y_origin, y_origin + ny * self.og.resolution]
+        extent = [
+            x_origin,
+            x_origin + nx * self.og.resolution,
+            y_origin,
+            y_origin + ny * self.og.resolution,
+        ]
 
         fig, axes = plt.subplots(1, 2, figsize=(18, 7))
 
         ax1 = axes[0]
-        im = ax1.imshow(esdf_slice, origin="lower", extent=extent,
-                        cmap="RdBu_r", vmin=vmin, vmax=vmax, aspect="equal")
-        ax1.contour(esdf_slice, levels=[0.0], colors="white", linewidths=1.5,
-                    origin="lower", extent=extent)
+        im = ax1.imshow(
+            esdf_slice,
+            origin="lower",
+            extent=extent,
+            cmap="RdBu_r",
+            vmin=vmin,
+            vmax=vmax,
+            aspect="equal",
+        )
+        ax1.contour(
+            esdf_slice, levels=[0.0], colors="white", linewidths=1.5, origin="lower", extent=extent
+        )
         plt.colorbar(im, ax=ax1, label="ESDF (m) — +ve inside obstacle")
         ax1.set_xlabel(xlabel)
         ax1.set_ylabel(ylabel)
         ax1.set_title(f"ESDF slice at {axis_names[ax]}={actual_pos:.2f}m")
 
         ax2 = axes[1]
-        ax2.imshow(occ_slice.astype(float), origin="lower", extent=extent,
-                   cmap="Greys", vmin=0, vmax=1, aspect="equal")
+        ax2.imshow(
+            occ_slice.astype(float),
+            origin="lower",
+            extent=extent,
+            cmap="Greys",
+            vmin=0,
+            vmax=1,
+            aspect="equal",
+        )
         ax2.set_xlabel(xlabel)
         ax2.set_ylabel(ylabel)
-        ax2.set_title(
-            f"Raw occupancy (pre-inflation) at {axis_names[ax]}={actual_pos:.2f}m")
+        ax2.set_title(f"Raw occupancy (pre-inflation) at {axis_names[ax]}={actual_pos:.2f}m")
 
         if show_mesh and self.scaled_mesh is not None:
             try:
@@ -191,8 +218,9 @@ class EsdfVisualizer:
                 plane_normal = [0.0, 0.0, 0.0]
                 plane_origin[ax] = actual_pos
                 plane_normal[ax] = 1.0
-                cross = self.scaled_mesh.section(plane_origin=plane_origin,
-                                                 plane_normal=plane_normal)
+                cross = self.scaled_mesh.section(
+                    plane_origin=plane_origin, plane_normal=plane_normal
+                )
                 if cross is not None:
                     for entity in cross.entities:
                         pts = cross.vertices[entity.points]

@@ -1,4 +1,4 @@
-"""Tests for visibility/sampling/ — focused on non-obvious math and algorithmic correctness."""
+"""Tests for visibility/sampling/  --  focused on non-obvious math and algorithmic correctness."""
 
 import numpy as np
 import pytest
@@ -10,7 +10,7 @@ from visibility.sampling.utils.direction import apply_angular_noise, knn_centroi
 
 
 class TestComputeLocalCurvature:
-    """KNN + arccos + mean angular deviation — non-trivial math."""
+    """KNN + arccos + mean angular deviation  --  non-trivial math."""
 
     def test_flat_surface_zero_curvature(self):
         """100 points on a plane with uniform normals -> curvature ~ 0."""
@@ -21,7 +21,9 @@ class TestComputeLocalCurvature:
 
         curv = compute_local_curvature(pts, pts, normals, k=10)
         assert curv.shape == (100,)
-        assert float(curv.max()) < 0.05, f"Flat surface curvature should be ~0, got max={float(curv.max())}"
+        assert float(curv.max()) < 0.05, (
+            f"Flat surface curvature should be ~0, got max={float(curv.max())}"
+        )
 
     def test_curved_surface_nonzero_curvature(self):
         """Points on a hemisphere with radial normals -> curvature >> 0."""
@@ -79,11 +81,18 @@ class TestKnnCentroidDirection:
         query = cp.array([[10.0, 0.0, 0.0]], dtype=cp.float32)
         # Target points
         rng = np.random.RandomState(42)
-        targets = np.vstack([
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-             [0.0, 1.0, 0.0], [0.0, -1.0, 0.0]],
-            rng.randn(10, 3).astype(np.float32) * 0.5,  # small cluster near origin
-        ])
+        targets = np.vstack(
+            [
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [-1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, -1.0, 0.0],
+                ],
+                rng.randn(10, 3).astype(np.float32) * 0.5,  # small cluster near origin
+            ]
+        )
         targets = cp.asarray(targets, dtype=cp.float32)
 
         dirs = knn_centroid_direction(query, targets, k=5)

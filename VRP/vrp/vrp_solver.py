@@ -1,11 +1,11 @@
-"""VRP solver entry point — combined-objective MIP.
+"""VRP solver entry point  --  combined-objective MIP.
 
 ``solve_vrp()`` builds a nearest-neighbour warm-start
 and solves the VRP with a blended makespan/total-distance objective.
 
 Two MIP backends are available:
-- ``MIPSolverGPU`` — cuOpt MILP solver (GPU).
-- ``MIPSolverCPU`` — PuLP + HiGHS solver (CPU).
+- ``MIPSolverGPU``  --  cuOpt MILP solver (GPU).
+- ``MIPSolverCPU``  --  PuLP + HiGHS solver (CPU).
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 # ─── Unified solver entry-point ──────────────────────────────────────────────
+
 
 def solve_vrp(
     dist_matrix: cp.ndarray,
@@ -60,7 +61,9 @@ def solve_vrp(
     from .mip_solver_gpu import MIPSolverGPU
 
     warm_start_routes = _nearest_neighbor_warmstart(
-        dist_matrix, num_vehicles, depots,
+        dist_matrix,
+        num_vehicles,
+        depots,
     )
     logger.info("[solve_vrp] Nearest-neighbour warm-start ready.")
 
@@ -76,18 +79,16 @@ def solve_vrp(
         )
 
     result = solver.solve(
-        dist_matrix, num_vehicles, depots,
+        dist_matrix,
+        num_vehicles,
+        depots,
         alpha=alpha,
         warm_start_routes=warm_start_routes,
     )
 
     if result.status != "success":
-        raise RuntimeError(
-            f"[solve_vrp] {backend} solver failed: {result.status}"
-        )
+        raise RuntimeError(f"[solve_vrp] {backend} solver failed: {result.status}")
 
     result.alpha = alpha
-    result.objective_value = (
-        alpha * result.makespan + (1 - alpha) * result.total_cost
-    )
+    result.objective_value = alpha * result.makespan + (1 - alpha) * result.total_cost
     return result

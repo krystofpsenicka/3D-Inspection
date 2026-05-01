@@ -15,8 +15,8 @@ def create_frustum_lineset(
 
     Parameters
     ----------
-    viewpoint : (3,) array — camera position.
-    rotation : (3, 3) rotation matrix — columns are [forward, right, up].
+    viewpoint : (3,) array  --  camera position.
+    rotation : (3, 3) rotation matrix  --  columns are [forward, right, up].
     params : FrustumParams defining FOV, near/far planes.
     """
     half_angle_rad = params.fov_y / 2.0
@@ -38,8 +38,14 @@ def create_frustum_lineset(
     ]
 
     lines = [
-        [1, 2], [2, 3], [3, 4], [4, 1],
-        [0, 1], [0, 2], [0, 3], [0, 4],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [4, 1],
+        [0, 1],
+        [0, 2],
+        [0, 3],
+        [0, 4],
     ]
 
     line_set = o3d.geometry.LineSet()
@@ -61,7 +67,7 @@ def create_viewpoint_geometry(
     Parameters
     ----------
     position : (3,) camera position.
-    rotation : (3, 3) rotation matrix — columns are [forward, right, up].
+    rotation : (3, 3) rotation matrix  --  columns are [forward, right, up].
     frustum_params : Camera frustum geometry.
     color : RGB colour for all three primitives.
     sphere_radius : Radius of the viewpoint marker sphere.

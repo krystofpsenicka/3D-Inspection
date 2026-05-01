@@ -1,5 +1,5 @@
 """
-VRP Planner – MAPF Planner (Priority-Based Sequential Planning)
+VRP Planner - MAPF Planner (Priority-Based Sequential Planning)
 
 Builds per-vehicle trajectories that are **collision-free by construction**.
 Robots are planned one at a time in priority order (longest route first).
@@ -44,13 +44,13 @@ Li, Z. et al. (2025). GPU-accelerated Conflict-based Search for
     GPU-parallel frontier expansion for multi-agent pathfinding
     (GATSA algorithm).
 
-Design note — why not Conflict-Based Search (CBS)?
+Design note  --  why not Conflict-Based Search (CBS)?
 ---------------------------------------------------
 CBS (Sharon et al., 2015) is an optimal MAPF solver: it searches a
 conflict tree where each node represents a set of inter-agent
 constraints, splitting on the first detected collision and re-planning
 only the affected agent.  This guarantees the shortest-makespan
-solution but at significant computational cost — CBS is exponential in
+solution but at significant computational cost  --  CBS is exponential in
 the number of conflicts, and each conflict-tree node triggers a full
 single-agent A* re-plan.
 
@@ -85,7 +85,7 @@ In this application the priority-based approach is preferred because:
 
 CBS would become worthwhile at 15-30+ robots or in highly constrained
 environments (narrow corridors, bottlenecks) where priority ordering
-causes significant cascading delays.  At the current scale — a small
+causes significant cascading delays.  At the current scale  --  a small
 fleet in an open ship hull - the gain is not worth the complexity.
 
 Sharon, G. et al. (2015). Conflict-Based Search for Optimal
@@ -98,10 +98,12 @@ import itertools
 import logging
 import math
 import random
-from typing import List, Optional
 
 import cupy as cp
 import numpy as np
+
+from shared.grid_utils import downsample_occupancy_grid
+from shared.occupancy_grid import OccupancyGrid
 
 from ..core.constants import (
     ROBOT_RADIUS,
@@ -114,11 +116,9 @@ from ..core.constants import (
 )
 from ..core.types import ExecutionResult
 from ..vrp._helpers import per_vehicle_costs as _per_vehicle_costs
-from shared.grid_utils import downsample_occupancy_grid
-from shared.occupancy_grid import OccupancyGrid
+from .orientation import apply_heading_orientation
 from .reservation_table import ReservationTable
 from .route_planner import plan_robot_route_st
-from .orientation import apply_heading_orientation
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +164,7 @@ def _per_leg_travel_times(wp_schedule, dt):
 
 # ─── Executor ────────────────────────────────────────────────────────────────
 
+
 class MultiAgentPathPlanner:
     """Priority-Based Sequential Planner from Space-Time A* paths.
 
@@ -177,7 +178,7 @@ class MultiAgentPathPlanner:
 
     def __init__(
         self,
-        start_positions: List[cp.ndarray] | List[np.ndarray],
+        start_positions: list[cp.ndarray] | list[np.ndarray],
         og: OccupancyGrid | None = None,
     ):
         self.num_robots = len(start_positions)
@@ -186,9 +187,9 @@ class MultiAgentPathPlanner:
 
     def _plan_sequential(
         self,
-        routes: List[List[int]],
+        routes: list[list[int]],
         waypoint_positions: cp.ndarray,
-        priority_order: List[int],
+        priority_order: list[int],
         coarse_og: OccupancyGrid,
         max_time_steps: int,
         collision_radius_vox: float,
@@ -205,28 +206,27 @@ class MultiAgentPathPlanner:
 
         num_robots = self.num_robots
         reservation = ReservationTable(
-            coarse_og.shape, max_time_steps, collision_radius_vox,
+            coarse_og.shape,
+            max_time_steps,
+            collision_radius_vox,
         )
 
-        robot_world_paths: List[Optional[cp.ndarray]] = [None] * num_robots
-        robot_coarse_times: List[Optional[cp.ndarray]] = [None] * num_robots
-        robot_waypoint_schedules: List[Optional[list]] = [None] * num_robots
-        per_robot_stats: List[PlanningStats] = [
-            PlanningStats() for _ in range(num_robots)
-        ]
+        robot_world_paths: list[cp.ndarray | None] = [None] * num_robots
+        robot_coarse_times: list[cp.ndarray | None] = [None] * num_robots
+        robot_waypoint_schedules: list[list | None] = [None] * num_robots
+        per_robot_stats: list[PlanningStats] = [PlanningStats() for _ in range(num_robots)]
 
-        for priority, robot_idx in enumerate(priority_order):
+        for _priority, robot_idx in enumerate(priority_order):
             route = routes[robot_idx]
-            world_positions, coarse_time_steps, waypoint_schedule, stats = (
-                plan_robot_route_st(
-                    coarse_og,
-                    reservation, route,
-                    waypoint_positions,
-                    dwell_s=dwell_seconds,
-                    dt=SPACE_TIME_DT,
-                    fine_occupancy_grid=self.og,
-                    robot_radius=ROBOT_RADIUS,
-                )
+            world_positions, coarse_time_steps, waypoint_schedule, stats = plan_robot_route_st(
+                coarse_og,
+                reservation,
+                route,
+                waypoint_positions,
+                dwell_s=dwell_seconds,
+                dt=SPACE_TIME_DT,
+                fine_occupancy_grid=self.og,
+                robot_radius=ROBOT_RADIUS,
             )
             robot_world_paths[robot_idx] = world_positions
             robot_coarse_times[robot_idx] = coarse_time_steps
@@ -234,26 +234,32 @@ class MultiAgentPathPlanner:
             per_robot_stats[robot_idx] = stats
 
         # Per-vehicle travel times
-        last_steps = cp.array([
-            float(robot_coarse_times[i][-1])
-            if robot_coarse_times[i] is not None and len(robot_coarse_times[i]) > 0
-            else 0.0
-            for i in range(num_robots)
-        ])
-        per_vehicle_seconds = (last_steps * SPACE_TIME_DT).tolist()
+        last_steps = cp.array(
+            [
+                float(robot_coarse_times[i][-1])
+                if robot_coarse_times[i] is not None and len(robot_coarse_times[i]) > 0
+                else 0.0
+                for i in range(num_robots)
+            ]
+        )
+        (last_steps * SPACE_TIME_DT).tolist()
         makespan_seconds = float(last_steps.max() * SPACE_TIME_DT) if num_robots > 0 else 0.0
         total_travel_seconds = float(last_steps.sum() * SPACE_TIME_DT)
 
         return (
-            robot_world_paths, robot_coarse_times, robot_waypoint_schedules,
-            makespan_seconds, total_travel_seconds, per_robot_stats,
+            robot_world_paths,
+            robot_coarse_times,
+            robot_waypoint_schedules,
+            makespan_seconds,
+            total_travel_seconds,
+            per_robot_stats,
         )
 
     # ──────────────────────────────────────────────────────────────────
 
     def execute(
         self,
-        routes: List[List[int]],
+        routes: list[list[int]],
         waypoint_positions: cp.ndarray,
         waypoint_rotmats: cp.ndarray,
         home_indices: set,
@@ -290,24 +296,28 @@ class MultiAgentPathPlanner:
         # ── 1. Coarse grid + reservation table ────────────────────────
         if self.og is not None:
             coarse_og = downsample_occupancy_grid(
-                self.og, coarse_res=SPACE_TIME_RESOLUTION,
+                self.og,
+                coarse_res=SPACE_TIME_RESOLUTION,
             )
         else:
-            logger.warning("No occupancy grid; collision avoidance with "
-                           "static obstacles is disabled.")
+            logger.warning(
+                "No occupancy grid; collision avoidance with static obstacles is disabled."
+            )
             coarse_og = OccupancyGrid(
                 grid=cp.zeros((10, 10, 10), dtype=cp.bool_),
                 origin=cp.zeros(3, dtype=cp.float64),
                 resolution=SPACE_TIME_RESOLUTION,
             )
 
-        max_time_steps = max(
-            1, int(math.ceil(SPACE_TIME_MAX_HORIZON_S / SPACE_TIME_DT))
-        )
+        max_time_steps = max(1, int(math.ceil(SPACE_TIME_MAX_HORIZON_S / SPACE_TIME_DT)))
         collision_radius_vox = ROBOT_RADIUS / coarse_og.resolution + SPLINE_SAFETY_VOXELS
 
-        logger.info("[MultiAgentPathPlanner] Coarse grid %s  T=%d  collision_radius_vox=%.2f",
-                    coarse_og.shape, max_time_steps, collision_radius_vox)
+        logger.info(
+            "[MultiAgentPathPlanner] Coarse grid %s  T=%d  collision_radius_vox=%.2f",
+            coarse_og.shape,
+            max_time_steps,
+            collision_radius_vox,
+        )
 
         # ── 2. Estimate route costs for priority ordering ────────────
         # Routes are [home, c1, ..., ck, home]; strip depots for helper
@@ -315,23 +325,26 @@ class MultiAgentPathPlanner:
         depot_indices = [route[0] for route in routes]
         route_costs = _per_vehicle_costs(customer_routes, dist_matrix, depot_indices)
 
-        default_order = sorted(
-            range(num_robots), key=lambda i: -route_costs[i]
+        default_order = sorted(range(num_robots), key=lambda i: -route_costs[i])
+        logger.info(
+            "[MultiAgentPathPlanner] Default priority (longest first): %s  costs=%s",
+            default_order,
+            [f"{route_costs[i]:.1f}" for i in default_order],
         )
-        logger.info("[MultiAgentPathPlanner] Default priority (longest first): %s  "
-                    "costs=%s",
-                    default_order,
-                    [f"{route_costs[i]:.1f}" for i in default_order])
 
         def _combined_objective(makespan: float, total_time: float) -> float:
             return alpha * makespan + (1 - alpha) * total_time
 
         # ── 3. Try priority orderings, keep best ─────────────────────
-        def _run_trial(order: List[int]) -> tuple:
+        def _run_trial(order: list[int]) -> tuple:
             result = self._plan_sequential(
-                routes, waypoint_positions,
-                order, coarse_og,
-                max_time_steps, collision_radius_vox, dwell_seconds,
+                routes,
+                waypoint_positions,
+                order,
+                coarse_og,
+                max_time_steps,
+                collision_radius_vox,
+                dwell_seconds,
             )
             makespan = result[3]
             total_time = result[4]
@@ -364,16 +377,22 @@ class MultiAgentPathPlanner:
             logger.info(
                 "[MultiAgentPathPlanner] Exhaustive search (%d orderings)  "
                 "best order: %s  objective=%.1f  makespan=%.1f s",
-                total_perms, best_order, best_objective, best_result[3],
+                total_perms,
+                best_order,
+                best_objective,
+                best_result[3],
             )
         else:
             # ── Non-exhaustive: deterministic + unique random ────────
             best_result, best_objective = _run_trial(default_order)
             best_order = default_order
             best_stats = best_result[5]
-            logger.info("[MultiAgentPathPlanner] Default order (longest-first) "
-                        "objective: %.1f  makespan: %.1f s",
-                        best_objective, best_result[3])
+            logger.info(
+                "[MultiAgentPathPlanner] Default order (longest-first) "
+                "objective: %.1f  makespan: %.1f s",
+                best_objective,
+                best_result[3],
+            )
 
             tried_orderings: set = {tuple(default_order)}
             trials_used = 1
@@ -381,101 +400,116 @@ class MultiAgentPathPlanner:
             if n_priority_trials > trials_used:
                 reverse_order = list(reversed(default_order))
                 trial_result, trial_objective = _run_trial(reverse_order)
-                logger.info("[MultiAgentPathPlanner] Shortest-first order "
-                            "objective: %.1f  makespan: %.1f s",
-                            trial_objective, trial_result[3])
+                logger.info(
+                    "[MultiAgentPathPlanner] Shortest-first order "
+                    "objective: %.1f  makespan: %.1f s",
+                    trial_objective,
+                    trial_result[3],
+                )
                 _update_best(reverse_order, trial_result, trial_objective)
                 tried_orderings.add(tuple(reverse_order))
                 trials_used += 1
 
             if n_priority_trials > trials_used:
-                conflict_scores = [
-                    s.wait_steps + s.astar_failures * 100
-                    for s in best_stats
-                ]
+                conflict_scores = [s.wait_steps + s.astar_failures * 100 for s in best_stats]
                 conflict_order = sorted(
-                    range(num_robots), key=lambda i: -conflict_scores[i],
+                    range(num_robots),
+                    key=lambda i: -conflict_scores[i],
                 )
                 if tuple(conflict_order) not in tried_orderings:
                     trial_result, trial_objective = _run_trial(conflict_order)
-                    logger.info("[MultiAgentPathPlanner] Most conflicted order %s "
-                                "objective: %.1f  makespan: %.1f s",
-                                conflict_order, trial_objective, trial_result[3])
+                    logger.info(
+                        "[MultiAgentPathPlanner] Most conflicted order %s "
+                        "objective: %.1f  makespan: %.1f s",
+                        conflict_order,
+                        trial_objective,
+                        trial_result[3],
+                    )
                     _update_best(conflict_order, trial_result, trial_objective)
                     tried_orderings.add(tuple(conflict_order))
                 trials_used += 1
 
             if n_priority_trials > trials_used:
-                conflict_scores = [
-                    s.wait_steps + s.astar_failures * 100
-                    for s in best_stats
-                ]
+                conflict_scores = [s.wait_steps + s.astar_failures * 100 for s in best_stats]
                 least_conflict_order = sorted(
-                    range(num_robots), key=lambda i: conflict_scores[i],
+                    range(num_robots),
+                    key=lambda i: conflict_scores[i],
                 )
                 if tuple(least_conflict_order) not in tried_orderings:
                     trial_result, trial_objective = _run_trial(
                         least_conflict_order,
                     )
-                    logger.info("[MultiAgentPathPlanner] Least conflicted order %s "
-                                "objective: %.1f  makespan: %.1f s",
-                                least_conflict_order, trial_objective,
-                                trial_result[3])
-                    _update_best(least_conflict_order, trial_result,
-                                 trial_objective)
+                    logger.info(
+                        "[MultiAgentPathPlanner] Least conflicted order %s "
+                        "objective: %.1f  makespan: %.1f s",
+                        least_conflict_order,
+                        trial_objective,
+                        trial_result[3],
+                    )
+                    _update_best(least_conflict_order, trial_result, trial_objective)
                     tried_orderings.add(tuple(least_conflict_order))
                 trials_used += 1
 
             # ── Unique random orderings via oversampling ──────
             remaining = n_priority_trials - trials_used
             if remaining > 0:
-                tried_indices = {
-                    _perm_to_index(list(t)) for t in tried_orderings
-                }
+                tried_indices = {_perm_to_index(list(t)) for t in tried_orderings}
                 candidates = random.sample(
-                    range(total_perms), remaining + len(tried_indices),
+                    range(total_perms),
+                    remaining + len(tried_indices),
                 )
-                random_indices = [
-                    c for c in candidates if c not in tried_indices
-                ][:remaining]
-                random_orderings = [
-                    _index_to_perm(idx, num_robots)
-                    for idx in random_indices
-                ]
+                random_indices = [c for c in candidates if c not in tried_indices][:remaining]
+                random_orderings = [_index_to_perm(idx, num_robots) for idx in random_indices]
                 for trial_num, random_order in enumerate(
-                    random_orderings, start=trials_used + 1,
+                    random_orderings,
+                    start=trials_used + 1,
                 ):
                     trial_result, trial_objective = _run_trial(random_order)
                     logger.info(
                         "[MultiAgentPathPlanner] Random trial %d order %s "
                         "objective: %.1f  makespan: %.1f s",
-                        trial_num, random_order,
-                        trial_objective, trial_result[3],
+                        trial_num,
+                        random_order,
+                        trial_objective,
+                        trial_result[3],
                     )
                     _update_best(random_order, trial_result, trial_objective)
 
-            logger.info("[MultiAgentPathPlanner] Best priority order: %s  "
-                        "objective=%.1f  makespan=%.1f s  (%d trials)",
-                        best_order, best_objective, best_result[3],
-                        n_priority_trials)
+            logger.info(
+                "[MultiAgentPathPlanner] Best priority order: %s  "
+                "objective=%.1f  makespan=%.1f s  (%d trials)",
+                best_order,
+                best_objective,
+                best_result[3],
+                n_priority_trials,
+            )
 
-        (robot_world_paths, robot_coarse_times, robot_waypoint_schedules,
-         _, _, _per_robot_stats) = best_result
+        (
+            robot_world_paths,
+            robot_coarse_times,
+            robot_waypoint_schedules,
+            _,
+            _,
+            _per_robot_stats,
+        ) = best_result
 
         for robot_idx in best_order:
             world_positions = robot_world_paths[robot_idx]
             coarse_times = robot_coarse_times[robot_idx]
             if world_positions is not None and len(world_positions) > 0:
-                logger.info("  Robot %d: %d coarse samples, t=[%d..%d] "
-                            "(%.1f s)",
-                            robot_idx, len(world_positions),
-                            int(coarse_times[0]), int(coarse_times[-1]),
-                            float(coarse_times[-1]) * SPACE_TIME_DT)
+                logger.info(
+                    "  Robot %d: %d coarse samples, t=[%d..%d] (%.1f s)",
+                    robot_idx,
+                    len(world_positions),
+                    int(coarse_times[0]),
+                    int(coarse_times[-1]),
+                    float(coarse_times[-1]) * SPACE_TIME_DT,
+                )
 
         # ── 4. Densify to replay resolution and assign orientation ────
         # All computation stays on GPU; per-robot CuPy arrays
-        all_trajectories_gpu: List[cp.ndarray] = []
-        all_velocities_gpu: List[cp.ndarray] = []
+        all_trajectories_gpu: list[cp.ndarray] = []
+        all_velocities_gpu: list[cp.ndarray] = []
         fail_counts = [0] * num_robots
 
         for robot_idx in range(num_robots):
@@ -513,15 +547,18 @@ class MultiAgentPathPlanner:
                 num_dense_steps = max(2, int(math.ceil(duration / TRAJ_DT)))
                 dense_time_samples = cp.linspace(t_start, t_end, num_dense_steps)
                 unique_times, unique_indices = cp.unique(
-                    time_seconds, return_index=True,
+                    time_seconds,
+                    return_index=True,
                 )
                 unique_indices = cp.sort(unique_indices)
                 unique_times = time_seconds[unique_indices]
                 unique_positions = world_positions_gpu[unique_indices]
-                interpolated_positions = cp.column_stack([
-                    cp.interp(dense_time_samples, unique_times, unique_positions[:, d])
-                    for d in range(3)
-                ])
+                interpolated_positions = cp.column_stack(
+                    [
+                        cp.interp(dense_time_samples, unique_times, unique_positions[:, d])
+                        for d in range(3)
+                    ]
+                )
                 trajectory = cp.zeros((num_dense_steps, 6), dtype=cp.float64)
                 trajectory[:, :3] = interpolated_positions
 
@@ -542,6 +579,7 @@ class MultiAgentPathPlanner:
 
         # ── 5. Build per-robot waypoint list (pos + quaternion) ────────
         from scipy.spatial.transform import Rotation
+
         waypoint_positions_np = cp.asnumpy(waypoint_positions)
         waypoint_rotmats_np = cp.asnumpy(waypoint_rotmats)
         all_waypoints = []
@@ -551,8 +589,12 @@ class MultiAgentPathPlanner:
                 pos = waypoint_positions_np[node].tolist()
                 quat_xyzw = Rotation.from_matrix(waypoint_rotmats_np[node]).as_quat()
                 # Isaac Sim expects [qw, qx, qy, qz]
-                quat_wxyz = [float(quat_xyzw[3]), float(quat_xyzw[0]),
-                             float(quat_xyzw[1]), float(quat_xyzw[2])]
+                quat_wxyz = [
+                    float(quat_xyzw[3]),
+                    float(quat_xyzw[0]),
+                    float(quat_xyzw[1]),
+                    float(quat_xyzw[2]),
+                ]
                 route_wps.append(pos + quat_wxyz)
             all_waypoints.append(route_wps)
 
@@ -565,14 +607,17 @@ class MultiAgentPathPlanner:
 
             if self.og is not None:
                 env_collision_counts = find_environment_collisions(
-                    all_trajectories_gpu, self.og,
+                    all_trajectories_gpu,
+                    self.og,
                 )
                 for robot_idx, count in enumerate(env_collision_counts):
                     if count > 0:
                         logger.warning(
                             "[MultiAgentPathPlanner] Robot %d: %d / %d trajectory "
                             "steps collide with fine OG.",
-                            robot_idx, count, len(all_trajectories_gpu[robot_idx]),
+                            robot_idx,
+                            count,
+                            len(all_trajectories_gpu[robot_idx]),
                         )
 
             inter_robot_collisions = find_trajectory_collisions(
@@ -585,8 +630,8 @@ class MultiAgentPathPlanner:
                 )
 
         # ── 7. Transfer to CPU for ExecutionResult ────────────────────
-        all_trajectory_positions: List[np.ndarray] = []
-        all_trajectory_velocities: List[np.ndarray] = []
+        all_trajectory_positions: list[np.ndarray] = []
+        all_trajectory_velocities: list[np.ndarray] = []
         for robot_idx in range(num_robots):
             traj_np = cp.asnumpy(all_trajectories_gpu[robot_idx])
             vel_np = cp.asnumpy(all_velocities_gpu[robot_idx])
@@ -596,16 +641,17 @@ class MultiAgentPathPlanner:
         actual_per_vehicle_times = [
             len(all_trajectories_gpu[i]) * TRAJ_DT for i in range(num_robots)
         ]
-        actual_makespan = (
-            max(actual_per_vehicle_times) if actual_per_vehicle_times else 0.0
+        actual_makespan = max(actual_per_vehicle_times) if actual_per_vehicle_times else 0.0
+        logger.info(
+            "[MultiAgentPathPlanner] Actual makespan: %.1f s  per_vehicle: %s",
+            actual_makespan,
+            [f"{t:.1f}" for t in actual_per_vehicle_times],
         )
-        logger.info("[MultiAgentPathPlanner] Actual makespan: %.1f s  per_vehicle: %s",
-                    actual_makespan,
-                    [f"{t:.1f}" for t in actual_per_vehicle_times])
 
         actual_per_leg_times = [
             _per_leg_travel_times(
-                robot_waypoint_schedules[i] or [], SPACE_TIME_DT,
+                robot_waypoint_schedules[i] or [],
+                SPACE_TIME_DT,
             )
             for i in range(num_robots)
         ]

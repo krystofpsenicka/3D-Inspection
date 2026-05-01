@@ -1,21 +1,14 @@
 """Dense 4D (T, Nx, Ny, Nz) reservation table on GPU.
 
-Following Silver (2005), the reservation table records which
-space-time cells are occupied by previously planned robots, allowing
-subsequent robots to avoid collisions by construction.
-
-The table uses spherical inflation: each committed trajectory sample is
-expanded by a ball of the given collision radius (in voxel units).
-
-References:
-    Silver, D. (2005). Cooperative Pathfinding. AIIDE.
+Records committed-robot occupancy in space-time so later-priority
+robots can avoid it. Each committed sample is dilated by the
+collision radius (voxel units).
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from typing import Tuple
 
 import cupy as cp
 
@@ -34,14 +27,15 @@ class ReservationTable:
 
     def __init__(
         self,
-        grid_shape: Tuple[int, int, int],
+        grid_shape: tuple[int, int, int],
         max_time_steps: int,
         robot_collision_radius: float,
     ):
         self.Nx, self.Ny, self.Nz = grid_shape
         self.T = max_time_steps
         self._data = cp.zeros(
-            (self.T, self.Nx, self.Ny, self.Nz), dtype=cp.uint8,
+            (self.T, self.Nx, self.Ny, self.Nz),
+            dtype=cp.uint8,
         )
         self._radius = float(robot_collision_radius)
         self._radius_ceil = int(math.ceil(self._radius))
@@ -52,9 +46,9 @@ class ReservationTable:
         if r == 0:
             self._ball_offsets = cp.array([[0, 0, 0]], dtype=cp.int32)
         else:
-            coords = cp.mgrid[-r:r + 1, -r:r + 1, -r:r + 1]
+            coords = cp.mgrid[-r : r + 1, -r : r + 1, -r : r + 1]
             dist_sq = (coords[0] ** 2 + coords[1] ** 2 + coords[2] ** 2).astype(cp.float32)
-            mask = dist_sq <= self._radius ** 2
+            mask = dist_sq <= self._radius**2
             self._ball_offsets = cp.stack(cp.where(mask), axis=1).astype(cp.int32) - r
 
     def is_reserved(self, x: int, y: int, z: int, t: int) -> bool:
@@ -64,7 +58,9 @@ class ReservationTable:
         return bool(self._data[t, x, y, z])
 
     def is_reserved_batch(
-        self, positions_ijk: cp.ndarray, time_steps: cp.ndarray,
+        self,
+        positions_ijk: cp.ndarray,
+        time_steps: cp.ndarray,
     ) -> cp.ndarray:
         """Vectorized batch query. Returns (K,) bool CuPy array."""
         t = time_steps.astype(cp.intp)
@@ -72,10 +68,14 @@ class ReservationTable:
         y = positions_ijk[:, 1].astype(cp.intp)
         z = positions_ijk[:, 2].astype(cp.intp)
         valid = (
-            (t >= 0) & (t < self.T)
-            & (x >= 0) & (x < self.Nx)
-            & (y >= 0) & (y < self.Ny)
-            & (z >= 0) & (z < self.Nz)
+            (t >= 0)
+            & (t < self.T)
+            & (x >= 0)
+            & (x < self.Nx)
+            & (y >= 0)
+            & (y < self.Ny)
+            & (z >= 0)
+            & (z < self.Nz)
         )
         result = cp.zeros(len(t), dtype=cp.bool_)
         if valid.any():
@@ -115,10 +115,14 @@ class ReservationTable:
 
         # Bounds check
         valid = (
-            (flat_pos[:, 0] >= 0) & (flat_pos[:, 0] < self.Nx)
-            & (flat_pos[:, 1] >= 0) & (flat_pos[:, 1] < self.Ny)
-            & (flat_pos[:, 2] >= 0) & (flat_pos[:, 2] < self.Nz)
-            & (flat_t >= 0) & (flat_t < self.T)
+            (flat_pos[:, 0] >= 0)
+            & (flat_pos[:, 0] < self.Nx)
+            & (flat_pos[:, 1] >= 0)
+            & (flat_pos[:, 1] < self.Ny)
+            & (flat_pos[:, 2] >= 0)
+            & (flat_pos[:, 2] < self.Nz)
+            & (flat_t >= 0)
+            & (flat_t < self.T)
         )
         if not valid.any():
             return

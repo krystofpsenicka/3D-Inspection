@@ -3,10 +3,10 @@
 Maps a strategy name to sampled candidate viewpoints.  Used by e01, e02, e13.
 
 Strategy names:
-  weighted            — SDF² uniform, all N from base sampler
-  weighted_curvature  — SDF² + curvature bias, all N from base sampler
-  targeted_X          — X% targeted toward uncovered, (100-X)% weighted base
-  cmaes_X             — X% CMA-ES optimised, (100-X)% weighted base
+  weighted             --  SDF² uniform, all N from base sampler
+  weighted_curvature   --  SDF² + curvature bias, all N from base sampler
+  targeted_X           --  X% targeted toward uncovered, (100-X)% weighted base
+  cmaes_X              --  X% CMA-ES optimised, (100-X)% weighted base
 """
 
 from __future__ import annotations
@@ -49,11 +49,11 @@ def sample_strategy(
     Returns:
         (pos_gpu, rot_gpu, n_base, n_iterative, base_sampler_name,
          n_warmstart_fallbacks)
-          pos_gpu / rot_gpu       — CuPy arrays of actual candidates generated.
-          n_base                  — candidates from the base (weighted) sampler.
-          n_iterative             — candidates from the targeted/CMA-ES phase.
-          base_sampler_name       — "weighted" for hybrid strategies, else strategy.
-          n_warmstart_fallbacks   — CMA-ES rounds that fell back to warm-start
+          pos_gpu / rot_gpu        --  CuPy arrays of actual candidates generated.
+          n_base                   --  candidates from the base (weighted) sampler.
+          n_iterative              --  candidates from the targeted/CMA-ES phase.
+          base_sampler_name        --  "weighted" for hybrid strategies, else strategy.
+          n_warmstart_fallbacks    --  CMA-ES rounds that fell back to warm-start
                                     centre (0 for non-CMA-ES strategies).
     """
     og = ctx.build_sampling_og()
@@ -61,17 +61,17 @@ def sample_strategy(
 
     # ── One-shot strategies ───────────────────────────────────────────────
     if strategy in ("weighted", "weighted_curvature"):
-        curvature = (strategy == "weighted_curvature")
+        curvature = strategy == "weighted_curvature"
         pos_gpu, rot_gpu = sampler.sample(
-            cp.arange(len(target_points)), num_candidates,
-            side=Side.OUTSIDE, curvature_weighting=curvature,
+            cp.arange(len(target_points)),
+            num_candidates,
+            side=Side.OUTSIDE,
+            curvature_weighting=curvature,
         )
         return pos_gpu, rot_gpu, num_candidates, 0, strategy, 0
 
     # ── Hybrid strategies: parse percentage ──────────────────────────────
-    if strategy.startswith("targeted_"):
-        pct = int(strategy.split("_")[1])
-    elif strategy.startswith("cmaes_"):
+    if strategy.startswith("targeted_") or strategy.startswith("cmaes_"):
         pct = int(strategy.split("_")[1])
     else:
         raise ValueError(f"Unknown strategy: {strategy!r}")
@@ -83,8 +83,10 @@ def sample_strategy(
     # ── Base (weighted) phase ─────────────────────────────────────────────
     if n_base > 0:
         pos_gpu, rot_gpu = sampler.sample(
-            cp.arange(len(target_points)), n_base,
-            side=Side.OUTSIDE, curvature_weighting=False,
+            cp.arange(len(target_points)),
+            n_base,
+            side=Side.OUTSIDE,
+            curvature_weighting=False,
         )
         V_init, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
         coverage_count = V_init.astype(cp.int32).sum(axis=0)
@@ -99,8 +101,10 @@ def sample_strategy(
     if n_iterative > 0 and len(uncovered) > 0:
         if strategy.startswith("targeted_"):
             t_pos, t_rot = sampler.sample(
-                uncovered, n_iterative,
-                side=Side.OUTSIDE, curvature_weighting=False,
+                uncovered,
+                n_iterative,
+                side=Side.OUTSIDE,
+                curvature_weighting=False,
                 k_coverage=k_coverage,
                 coverage_count_gpu=coverage_count,
                 visibility_query=vis_query,
@@ -111,7 +115,8 @@ def sample_strategy(
                 rot_gpu = cp.concatenate([rot_gpu, t_rot]) if len(rot_gpu) > 0 else t_rot
 
         elif strategy.startswith("cmaes_"):
-            from visibility.sampling import OptimizingSampler, CMAESBackend
+            from visibility.sampling import CMAESBackend, OptimizingSampler
+
             opt_sampler = OptimizingSampler(
                 mesh=ctx._o3d_mesh,
                 target_points=target_points,
@@ -129,7 +134,9 @@ def sample_strategy(
             if maxiter is not None:
                 cmaes_kw["maxiter"] = maxiter
             opt_pos, opt_rot, n_warmstart_fallbacks = opt_sampler.sample_optimized(
-                n_iterative, coverage_count, vis_query,
+                n_iterative,
+                coverage_count,
+                vis_query,
                 existing_pos_gpu=pos_gpu if len(pos_gpu) > 0 else None,
                 existing_rot_gpu=rot_gpu if len(rot_gpu) > 0 else None,
                 k_coverage=k_coverage,

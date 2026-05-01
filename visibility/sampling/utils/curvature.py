@@ -1,12 +1,12 @@
-"""GPU-accelerated local curvature approximation using a fused CUDA kernel."""
+"""Local curvature approximation using a fused CUDA kernel."""
 
-import numpy as np
 import cupy as cp
+import numpy as np
 
 from ...core.constants import CUDA_BLOCK_SIZE, CURVATURE_KNN_K
 
-
-_KNN_CURVATURE_KERNEL = cp.RawKernel(r'''
+_KNN_CURVATURE_KERNEL = cp.RawKernel(
+    r"""
 #define MAX_K 512
 
 __device__ void heap_sift_down(float* dist, int* indices, int heap_size, int node) {
@@ -116,11 +116,12 @@ void knn_curvature(
 
     curvature[query_idx] = total_angle / (float)num_neighbors;
 }
-''', 'knn_curvature')
+""",
+    "knn_curvature",
+)
 
 
-def compute_local_curvature(query_gpu, targets_gpu, normals_gpu,
-                            k=CURVATURE_KNN_K):
+def compute_local_curvature(query_gpu, targets_gpu, normals_gpu, k=CURVATURE_KNN_K):
     """Curvature proxy: mean angular deviation of KNN normals from local mean.
 
     For each query point, find K nearest points in targets, then measure
@@ -128,13 +129,13 @@ def compute_local_curvature(query_gpu, targets_gpu, normals_gpu,
     normal.  High deviation = high curvature / geometric complexity.
 
     Args:
-        query_gpu:   (N, 3) CuPy array — positions to evaluate curvature.
-        targets_gpu: (M, 3) CuPy array — surface points.
-        normals_gpu: (M, 3) CuPy array — surface normals.
+        query_gpu:   (N, 3) CuPy array  --  positions to evaluate curvature.
+        targets_gpu: (M, 3) CuPy array  --  surface points.
+        normals_gpu: (M, 3) CuPy array  --  surface normals.
         k:           number of nearest neighbours.
 
     Returns:
-        (N,) CuPy float32 array — curvature proxy values.
+        (N,) CuPy float32 array  --  curvature proxy values.
     """
     num_queries = len(query_gpu)
     num_targets = len(targets_gpu)
@@ -151,9 +152,17 @@ def compute_local_curvature(query_gpu, targets_gpu, normals_gpu,
     shared_mem = CUDA_BLOCK_SIZE * 3 * 4  # bytes
 
     _KNN_CURVATURE_KERNEL(
-        grid, block,
-        (query_gpu, targets_gpu, normals_gpu, curvature,
-         np.int32(num_queries), np.int32(num_targets), np.int32(num_neighbors)),
+        grid,
+        block,
+        (
+            query_gpu,
+            targets_gpu,
+            normals_gpu,
+            curvature,
+            np.int32(num_queries),
+            np.int32(num_targets),
+            np.int32(num_neighbors),
+        ),
         shared_mem=shared_mem,
     )
     return curvature

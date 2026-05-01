@@ -1,42 +1,33 @@
-"""Single-robot route planning via Space-Time A* on GPU.
+"""Single-robot route planning via Space-Time A*.
 
-Plans one robot through its full VRP route using GPU-accelerated
-Space-Time A* (see ``space_time_search.py``). For each leg the robot
-navigates between waypoints, with OMPL smoothing applied
-to the resulting coarse path.
-
-After all legs, the trajectory is committed to the reservation table
-so later robots (in priority order) avoid it.
-
-References:
-    Silver, D. (2005). Cooperative Pathfinding. AIIDE.
-    Zhou, Y. & Zeng, J. (2015). Massively Parallel A* Search on a GPU. AAAI.
+Walks one robot through its VRP route leg-by-leg via the search in
+``space_time_search.py``, smooths each leg with OMPL, then commits the
+trajectory to the reservation table so later robots avoid it.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from typing import List, Optional, Tuple
 
 import cupy as cp
-import numpy as np
 
-from ..core.types import PlanningStats
+from shared.occupancy_grid import OccupancyGrid
+
 from ..core.constants import (
     AUV_CRUISE_SPEED,
+    GPU_SEARCH_MAX_ITERATIONS,
     OMPL_SIMPLIFY_MAX_TIME,
     ROBOT_RADIUS,
     SPACE_TIME_DT,
     SPACE_TIME_DWELL_S,
     SPACE_TIME_MIN_LEG_STEPS,
     SPACE_TIME_SAFETY_FACTOR,
-    GPU_SEARCH_MAX_ITERATIONS,
 )
+from ..core.types import PlanningStats
+from .path_smoother import arc_length_resample, simplify_path_ompl
 from .reservation_table import ReservationTable
 from .space_time_search import space_time_astar_gpu
-from .path_smoother import arc_length_resample, simplify_path_ompl
-from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +35,14 @@ logger = logging.getLogger(__name__)
 def plan_robot_route_st(
     coarse_og: OccupancyGrid,
     reservation: ReservationTable,
-    route: List[int],
+    route: list[int],
     waypoint_positions: cp.ndarray,
     dwell_s: float = SPACE_TIME_DWELL_S,
     dt: float = SPACE_TIME_DT,
     fine_occupancy_grid: OccupancyGrid = None,
     robot_radius: float = ROBOT_RADIUS,
     cruise_speed: float = AUV_CRUISE_SPEED,
-) -> Tuple[cp.ndarray, cp.ndarray, list, PlanningStats]:
+) -> tuple[cp.ndarray, cp.ndarray, list, PlanningStats]:
     """Plan one robot through its full VRP route using GPU Space-Time A*.
 
     Each leg is planned with a single A* call using a local time budget
@@ -95,7 +86,7 @@ def plan_robot_route_st(
         straight_line_total += dist
 
         if cp.array_equal(s_ijk, g_ijk):
-            # Same coarse voxel — no A* needed, but still navigate to g_xyz
+            # Same coarse voxel  --  no A* needed, but still navigate to g_xyz
             # and record orientation.
 
             if not coarse_positions:
@@ -108,7 +99,7 @@ def plan_robot_route_st(
             last_world = world_positions[-1][-1:]  # (1, 3) world
             g_world = g_xyz.reshape(1, 3)
 
-            # Short linear interpolation from last_world → g_xyz
+            # Short linear interpolation from last_world -> g_xyz
             sub_dist = float(cp.linalg.norm(g_world - last_world))
             n_interp = max(1, int(math.ceil(sub_dist / (cruise_speed * dt))))
             if n_interp > 1:
@@ -116,7 +107,9 @@ def plan_robot_route_st(
                 interp_world = last_world + alphas * (g_world - last_world)
                 interp_ijk = cp.tile(g_ijk.reshape(1, 3), (n_interp, 1))
                 interp_t = cp.arange(
-                    t_cursor + 1, t_cursor + n_interp + 1, dtype=cp.intp,
+                    t_cursor + 1,
+                    t_cursor + n_interp + 1,
+                    dtype=cp.intp,
                 )
                 coarse_positions.append(interp_ijk)
                 world_positions.append(interp_world)
@@ -127,7 +120,9 @@ def plan_robot_route_st(
             dwell_ijk = cp.tile(g_ijk.reshape(1, 3), (hold_steps, 1))
             dwell_world = cp.tile(g_world, (hold_steps, 1))
             dwell_t = cp.arange(
-                t_cursor + 1, t_cursor + hold_steps + 1, dtype=cp.intp,
+                t_cursor + 1,
+                t_cursor + hold_steps + 1,
+                dtype=cp.intp,
             )
             coarse_positions.append(dwell_ijk)
             world_positions.append(dwell_world)
@@ -138,18 +133,28 @@ def plan_robot_route_st(
             continue
 
         # Local time budget for this leg
-        t_leg = max(SPACE_TIME_MIN_LEG_STEPS,
-                    int(math.ceil(dist / cruise_speed / dt)) * SPACE_TIME_SAFETY_FACTOR)
+        t_leg = max(
+            SPACE_TIME_MIN_LEG_STEPS,
+            int(math.ceil(dist / cruise_speed / dt)) * SPACE_TIME_SAFETY_FACTOR,
+        )
 
         result = space_time_astar_gpu(
-            coarse_og, s_ijk, g_ijk, t_cursor, reservation,
+            coarse_og,
+            s_ijk,
+            g_ijk,
+            t_cursor,
+            reservation,
             max_time_steps=t_leg,
         )
 
         if result is None:
             stats.astar_retries += 1
             result = space_time_astar_gpu(
-                coarse_og, s_ijk, g_ijk, t_cursor, reservation,
+                coarse_og,
+                s_ijk,
+                g_ijk,
+                t_cursor,
+                reservation,
                 max_time_steps=t_leg * 2,
                 max_iterations=2 * GPU_SEARCH_MAX_ITERATIONS,
             )
@@ -158,7 +163,9 @@ def plan_robot_route_st(
             stats.astar_failures += 1
             logger.warning(
                 "[route_planner] ST-A* failed leg %d->%d (t=%d).",
-                prev_node, curr_node, t_cursor,
+                prev_node,
+                curr_node,
+                t_cursor,
             )
             # Dwell at last position if possible
             if coarse_positions:
@@ -167,7 +174,9 @@ def plan_robot_route_st(
                 dwell_ijk = cp.tile(last, (hold_steps, 1))
                 dwell_world = cp.tile(last_world, (hold_steps, 1))
                 dwell_t = cp.arange(
-                    t_cursor + 1, t_cursor + hold_steps + 1, dtype=cp.intp,
+                    t_cursor + 1,
+                    t_cursor + hold_steps + 1,
+                    dtype=cp.intp,
                 )
                 coarse_positions.append(dwell_ijk)
                 world_positions.append(dwell_world)
@@ -190,7 +199,9 @@ def plan_robot_route_st(
 
         if fine_occupancy_grid is not None and len(planned_ijk) >= 3:
             smoothed_world = simplify_path_ompl(
-                final_world, fine_occupancy_grid, robot_radius,
+                final_world,
+                fine_occupancy_grid,
+                robot_radius,
                 max_time=OMPL_SIMPLIFY_MAX_TIME,
                 reservation=reservation,
                 time_steps=planned_t,
@@ -208,11 +219,20 @@ def plan_robot_route_st(
                 if not bool(conflict):
                     final_ijk = resampled_ijk
                     final_world = resampled_world
-                    logger.info("[route_planner] leg %d->%d OMPL smoothed: %d->%d wpts",
-                                prev_node, curr_node, len(planned_ijk), len(smoothed_world))
+                    logger.info(
+                        "[route_planner] leg %d->%d OMPL smoothed: %d->%d wpts",
+                        prev_node,
+                        curr_node,
+                        len(planned_ijk),
+                        len(smoothed_world),
+                    )
                 else:
-                    logger.info("[route_planner] leg %d->%d OMPL path has reservation "
-                                "conflict, using A* path.", prev_node, curr_node)
+                    logger.info(
+                        "[route_planner] leg %d->%d OMPL path has reservation "
+                        "conflict, using A* path.",
+                        prev_node,
+                        curr_node,
+                    )
 
         coarse_positions.append(final_ijk)
         world_positions.append(final_world)
@@ -230,8 +250,7 @@ def plan_robot_route_st(
         wp_schedule.append((t_dwell_start, int(t_cursor), curr_node))
 
     if not coarse_positions:
-        return (cp.empty((0, 3), dtype=cp.float64),
-                cp.empty((0,), dtype=cp.intp), [], stats)
+        return (cp.empty((0, 3), dtype=cp.float64), cp.empty((0,), dtype=cp.intp), [], stats)
 
     all_ijk = cp.concatenate(coarse_positions, axis=0)
     all_t = cp.concatenate(coarse_times, axis=0)
@@ -249,8 +268,9 @@ def plan_robot_route_st(
 
     if len(world_xyz) >= 2:
         actual_dist = float(cp.sum(cp.linalg.norm(cp.diff(world_xyz, axis=0), axis=1)))
-        stats.detour_ratio = (actual_dist / straight_line_total
-                              if straight_line_total > 1e-9 else 1.0)
+        stats.detour_ratio = (
+            actual_dist / straight_line_total if straight_line_total > 1e-9 else 1.0
+        )
         diffs_norm = cp.linalg.norm(cp.diff(world_xyz, axis=0), axis=1)
         stats.wait_steps = int(cp.sum(diffs_norm < 1e-6))
 

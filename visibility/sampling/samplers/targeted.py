@@ -3,17 +3,20 @@
 import logging
 
 import cupy as cp
-from typing import Tuple
+
+from shared.types import Side
 
 from ...core.constants import (
-    NORM_EPS, DEFAULT_MAX_DIR_NOISE_RAD,
+    DEFAULT_K_COVERAGE,
+    DEFAULT_MAX_DIR_NOISE_RAD,
+    DEFAULT_MAX_DISTANCE_OFFSET,
+    NORM_EPS,
     PROXIMITY_KNN_FRACTION,
-    TARGETED_PROXIMITY_SIGMA_FACTOR, DEFAULT_K_COVERAGE,
+    TARGETED_PROXIMITY_SIGMA_FACTOR,
 )
-from shared.types import Side
-from .weighted import WeightedViewpointSampler
 from ...visibility.base import VisibilityQueryBase
 from ..utils.proximity import compute_knn_proximity_weights
+from .weighted import WeightedViewpointSampler
 
 logger = logging.getLogger(__name__)
 
@@ -25,53 +28,79 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
     targeted sampling with configurable batch size per iteration.
     """
 
-    def sample(self, uncovered_indices: cp.ndarray, num_candidates: int,
-                        side: Side = Side.OUTSIDE,
-                        min_distance: float | None = None,
-                        max_distance_offset: float = 0.95,
-                        max_dir_noise_rad: float = DEFAULT_MAX_DIR_NOISE_RAD,
-                        curvature_weighting: bool = False,
-                        visibility_query: VisibilityQueryBase = None,
-                        k_coverage: int = DEFAULT_K_COVERAGE,
-                        coverage_count_gpu: cp.ndarray | None = None,
-                        samples_per_iteration: int | None = None,
-                        curvature_knn_k: int | None = None,
-                        position_weight: float | None = None,
-                        ) -> Tuple[cp.ndarray, cp.ndarray]:
+    def sample(
+        self,
+        uncovered_indices: cp.ndarray,
+        num_candidates: int,
+        side: Side = Side.OUTSIDE,
+        min_distance: float | None = None,
+        max_distance_offset: float = DEFAULT_MAX_DISTANCE_OFFSET,
+        max_dir_noise_rad: float = DEFAULT_MAX_DIR_NOISE_RAD,
+        curvature_weighting: bool = False,
+        visibility_query: VisibilityQueryBase = None,
+        k_coverage: int = DEFAULT_K_COVERAGE,
+        coverage_count_gpu: cp.ndarray | None = None,
+        samples_per_iteration: int | None = None,
+        curvature_knn_k: int | None = None,
+        position_weight: float | None = None,
+    ) -> tuple[cp.ndarray, cp.ndarray]:
         """Sample candidates biased toward uncovered surface regions.
 
         Returns:
-            (positions_gpu, rotmats_gpu) — CuPy arrays (N,3) and (N,3,3) on GPU.
+            (positions_gpu, rotmats_gpu)  --  CuPy arrays (N,3) and (N,3,3) on GPU.
         """
         # Default to iterative mode with 1 sample per iteration when visibility_query is provided
         if samples_per_iteration is None:
             samples_per_iteration = 1 if visibility_query is not None else num_candidates
 
         return self._sample_targeted_iterative(
-            uncovered_indices, num_candidates, side, min_distance,
-            max_distance_offset, max_dir_noise_rad, curvature_weighting,
-            visibility_query, k_coverage, coverage_count_gpu,
-            samples_per_iteration, curvature_knn_k, position_weight)
+            uncovered_indices,
+            num_candidates,
+            side,
+            min_distance,
+            max_distance_offset,
+            max_dir_noise_rad,
+            curvature_weighting,
+            visibility_query,
+            k_coverage,
+            coverage_count_gpu,
+            samples_per_iteration,
+            curvature_knn_k,
+            position_weight,
+        )
 
-    def _sample_targeted_iterative(self, uncovered_indices: cp.ndarray, num_candidates: int,
-                                   side: Side, min_distance: float | None, max_distance_offset: float,
-                                   max_dir_noise_rad: float, curvature_weighting: bool,
-                                   visibility_query, k_coverage: int,
-                                   coverage_count_gpu, samples_per_iteration: int,
-                                   curvature_knn_k: int | None = None,
-                                   position_weight: float | None = None):
+    def _sample_targeted_iterative(
+        self,
+        uncovered_indices: cp.ndarray,
+        num_candidates: int,
+        side: Side,
+        min_distance: float | None,
+        max_distance_offset: float,
+        max_dir_noise_rad: float,
+        curvature_weighting: bool,
+        visibility_query,
+        k_coverage: int,
+        coverage_count_gpu,
+        samples_per_iteration: int,
+        curvature_knn_k: int | None = None,
+        position_weight: float | None = None,
+    ):
         """Sample viewpoints in batches, optionally updating coverage after each."""
         centers_gpu, base_weights_gpu, coarse_res = self.get_feasible_sampling_data(
-            side, min_distance, max_distance_offset, curvature_weighting,
-            curvature_knn_k=curvature_knn_k, position_weight=position_weight)
+            side,
+            min_distance,
+            max_distance_offset,
+            curvature_weighting,
+            curvature_knn_k=curvature_knn_k,
+            position_weight=position_weight,
+        )
         if int(len(centers_gpu)) == 0:
             return cp.empty((0, 3), dtype=cp.float32), cp.empty((0, 3, 3), dtype=cp.float32)
 
         # Initialize coverage tracking only when visibility_query is provided
         if visibility_query is not None:
             if coverage_count_gpu is None:
-                coverage_count_gpu = cp.full(
-                    self.num_points, k_coverage, dtype=cp.int32)
+                coverage_count_gpu = cp.full(self.num_points, k_coverage, dtype=cp.int32)
                 coverage_count_gpu[uncovered_indices] = 0
 
         all_pos_list = []
@@ -83,9 +112,11 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             if visibility_query is not None:
                 under_k_mask = coverage_count_gpu < k_coverage
                 if not cp.any(under_k_mask):
-                    logger.info("[TargetedSampler] All points k=%d-covered "
-                                "after %d candidates.", k_coverage,
-                                num_candidates - remaining)
+                    logger.info(
+                        "[TargetedSampler] All points k=%d-covered after %d candidates.",
+                        k_coverage,
+                        num_candidates - remaining,
+                    )
                     break
                 under_k_indices = cp.where(under_k_mask)[0]
                 uncovered_pts_gpu = self.target_points[under_k_indices]
@@ -96,27 +127,32 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
             # high-deficit points contribute more to proximity and direction.
             if coverage_count_gpu is not None and k_coverage > 1:
                 idx = under_k_indices if visibility_query is not None else uncovered_indices
-                deficit_per_pt = cp.maximum(
-                    k_coverage - coverage_count_gpu[idx], 0).astype(cp.int32)
+                deficit_per_pt = cp.maximum(k_coverage - coverage_count_gpu[idx], 0).astype(
+                    cp.int32
+                )
                 prox_dir_targets = cp.repeat(uncovered_pts_gpu, deficit_per_pt.tolist(), axis=0)
             else:
                 prox_dir_targets = uncovered_pts_gpu
 
             sigma = TARGETED_PROXIMITY_SIGMA_FACTOR * coarse_res
-            prox_w = self._compute_uncovered_proximity_weights(
-                centers_gpu, prox_dir_targets, sigma)
+            prox_w = self._compute_uncovered_proximity_weights(centers_gpu, prox_dir_targets, sigma)
 
             blended = base_weights_gpu * prox_w
             blended_sum = float(blended.sum())
             if blended_sum < NORM_EPS:
-                logger.warning("[TargetedSampler] All blended weights zero "
-                               "at candidate %d.", num_candidates - remaining)
+                logger.warning(
+                    "[TargetedSampler] All blended weights zero at candidate %d.",
+                    num_candidates - remaining,
+                )
                 break
             blended = blended / blended_sum
 
             n_this = min(samples_per_iteration, remaining)
             batch_pos_gpu, batch_rot_gpu = self._sample_from_free_space(
-                centers_gpu, blended, coarse_res, n_this,
+                centers_gpu,
+                blended,
+                coarse_res,
+                n_this,
                 max_dir_noise_rad=max_dir_noise_rad,
                 direction_targets_gpu=prox_dir_targets,
                 curvature_weighting=curvature_weighting,
@@ -130,8 +166,7 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
 
             # Only update coverage if another iteration follows
             if visibility_query is not None and remaining > 0:
-                V_batch, _ = visibility_query.compute_visibility_batch(
-                    batch_pos_gpu, batch_rot_gpu)
+                V_batch, _ = visibility_query.compute_visibility_batch(batch_pos_gpu, batch_rot_gpu)
                 coverage_count_gpu += V_batch.astype(cp.int32).sum(axis=0)
 
         if not all_pos_list:
@@ -142,19 +177,30 @@ class TargetedViewpointSampler(WeightedViewpointSampler):
 
         if visibility_query is not None:
             n_remaining = int((coverage_count_gpu < k_coverage).sum())
-            logger.info("[TargetedSampler] Iterative (k=%d): generated %d/%d "
-                        "candidates, %d points remain under-covered.",
-                        k_coverage, len(positions_gpu), num_candidates,
-                        n_remaining)
+            logger.info(
+                "[TargetedSampler] Iterative (k=%d): generated %d/%d "
+                "candidates, %d points remain under-covered.",
+                k_coverage,
+                len(positions_gpu),
+                num_candidates,
+                n_remaining,
+            )
         else:
-            logger.info("[TargetedSampler] Batch: generated %d/%d candidates.",
-                        len(positions_gpu), num_candidates)
+            logger.info(
+                "[TargetedSampler] Batch: generated %d/%d candidates.",
+                len(positions_gpu),
+                num_candidates,
+            )
 
         return positions_gpu, rotmats_gpu
 
-    def _compute_uncovered_proximity_weights(self, feasible_gpu: cp.ndarray,
-                                             uncovered_gpu: cp.ndarray, sigma: float,
-                                             k_fraction=PROXIMITY_KNN_FRACTION):
+    def _compute_uncovered_proximity_weights(
+        self,
+        feasible_gpu: cp.ndarray,
+        uncovered_gpu: cp.ndarray,
+        sigma: float,
+        k_fraction=PROXIMITY_KNN_FRACTION,
+    ):
         """KNN proximity weighting toward uncovered surface regions."""
         k = max(1, int(k_fraction * self.num_points))
         return compute_knn_proximity_weights(feasible_gpu, uncovered_gpu, k, sigma)

@@ -6,13 +6,12 @@ Occupancy Grid
 the VRP planner and the visibility/sampling pipeline.
 
 All grid data lives on GPU. Conversion to CPU happens only at I/O
-boundaries (save/load, subprocess serialization, OMPL).
+boundaries (save/load, OMPL).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
 
 import cupy as cp
 import numpy as np
@@ -40,9 +39,7 @@ class OccupancyGrid:
 
     def world_to_voxel(self, world_xyz: cp.ndarray) -> cp.ndarray:
         """Convert world-frame ``(..., 3)`` coords -> integer voxel indices."""
-        return cp.floor(
-            (world_xyz - self.origin) / self.resolution
-        ).astype(cp.int32)
+        return cp.floor((world_xyz - self.origin) / self.resolution).astype(cp.int32)
 
     def voxel_to_world(self, voxel_ijk: cp.ndarray) -> cp.ndarray:
         """Convert integer voxel indices ``(..., 3)`` -> world-frame."""
@@ -50,9 +47,7 @@ class OccupancyGrid:
 
     def is_valid_voxel(self, ijk: cp.ndarray) -> bool:
         """Return True if ``ijk`` is inside the grid bounds."""
-        return bool(
-            cp.all(ijk >= 0) and cp.all(ijk < cp.array(self.grid.shape))
-        )
+        return bool(cp.all(ijk >= 0) and cp.all(ijk < cp.array(self.grid.shape)))
 
     def is_free_world(self, world_xyz: cp.ndarray) -> bool:
         """Return True if the world-frame point is in a free voxel."""
@@ -88,7 +83,7 @@ class OccupancyGrid:
         return self.voxel_to_world(ijk)
 
     @property
-    def shape(self) -> Tuple[int, int, int]:
+    def shape(self) -> tuple[int, int, int]:
         return tuple(self.grid.shape)  # type: ignore[return-value]
 
     @property
@@ -104,6 +99,7 @@ class OccupancyGrid:
     def save(self, path: str) -> None:
         """Save the grid to NPZ (arrays) + JSON (metadata)."""
         import json
+
         base = path.rsplit(".", 1)[0] if "." in path else path
         np.savez_compressed(base + ".npz", grid=cp.asnumpy(self.grid))
         meta = {
@@ -117,6 +113,7 @@ class OccupancyGrid:
     def load(cls, path: str) -> OccupancyGrid:
         import json
         import os
+
         base = path.rsplit(".", 1)[0] if "." in path else path
         npz_path = base + ".npz"
         json_path = base + ".json"

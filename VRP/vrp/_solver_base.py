@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 import cupy as cp
 
@@ -20,5 +19,5 @@ class VRPSolverBase(ABC):
         num_vehicles: int,
         depots: list[int],
         alpha: float = 1.0,
-        warm_start_routes: Optional[list[list[int]]] = None,
+        warm_start_routes: list[list[int]] | None = None,
     ) -> VRPResult: ...

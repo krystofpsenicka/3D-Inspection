@@ -1,16 +1,17 @@
-"""GPU-accelerated KNN proximity weighting using a fused CUDA kernel."""
+"""KNN proximity weighting using a fused CUDA kernel."""
 
 import logging
 
-import numpy as np
 import cupy as cp
+import numpy as np
 
 from ...core.constants import CUDA_BLOCK_SIZE
 
 logger = logging.getLogger(__name__)
 
 
-_KNN_PROXIMITY_KERNEL = cp.RawKernel(r'''
+_KNN_PROXIMITY_KERNEL = cp.RawKernel(
+    r"""
 #define MAX_K 512
 
 __device__ void heap_sift_down(float* dist, int heap_size, int node) {
@@ -89,7 +90,9 @@ void knn_proximity(
     }
     weights[query_idx] = total;
 }
-''', 'knn_proximity')
+""",
+    "knn_proximity",
+)
 
 
 def compute_knn_proximity_weights(queries_gpu, targets_gpu, k, sigma):
@@ -99,20 +102,21 @@ def compute_knn_proximity_weights(queries_gpu, targets_gpu, k, sigma):
     sum(exp(-dist * inv_sigma)) as a proximity score.
 
     Args:
-        queries_gpu: (N, 3) CuPy array — query positions.
-        targets_gpu: (M, 3) CuPy array — target positions.
+        queries_gpu: (N, 3) CuPy array  --  query positions.
+        targets_gpu: (M, 3) CuPy array  --  target positions.
         k:           number of nearest neighbours.
         sigma:       length scale for exponential decay.
 
     Returns:
-        (N,) CuPy float32 array — proximity weights (higher = closer to targets).
+        (N,) CuPy float32 array  --  proximity weights (higher = closer to targets).
     """
     num_queries = len(queries_gpu)
     num_targets = len(targets_gpu)
     num_neighbors = min(k, num_targets, 512)
     if num_neighbors < k:
-        logger.warning("Clamped k from %d to %d (num_targets=%d, MAX_K=512)",
-                       k, num_neighbors, num_targets)
+        logger.warning(
+            "Clamped k from %d to %d (num_targets=%d, MAX_K=512)", k, num_neighbors, num_targets
+        )
 
     # Ensure input arrays are contiguous for pointer arithmetic in kernel
     queries_gpu = cp.ascontiguousarray(queries_gpu, dtype=cp.float32)
@@ -126,10 +130,17 @@ def compute_knn_proximity_weights(queries_gpu, targets_gpu, k, sigma):
     inv_sigma = np.float32(1.0 / sigma)
 
     _KNN_PROXIMITY_KERNEL(
-        grid, block,
-        (queries_gpu, targets_gpu, weights,
-         np.int32(num_queries), np.int32(num_targets),
-         np.int32(num_neighbors), inv_sigma),
+        grid,
+        block,
+        (
+            queries_gpu,
+            targets_gpu,
+            weights,
+            np.int32(num_queries),
+            np.int32(num_targets),
+            np.int32(num_neighbors),
+            inv_sigma,
+        ),
         shared_mem=shared_mem,
     )
     return weights

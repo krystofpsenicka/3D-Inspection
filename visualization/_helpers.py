@@ -1,7 +1,7 @@
 """Shared visualization utilities."""
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import open3d as o3d
 
 
@@ -26,10 +26,15 @@ def generate_tab20_colors(n: int) -> list[tuple]:
     return colors
 
 
-def show_geometries(geometries: list, window_name: str = "Open3D",
-                    width: int = 1920, height: int = 1080,
-                    point_size: float = 4.0, line_width: float = 2.0,
-                    mesh_show_back_face: bool = True):
+def show_geometries(
+    geometries: list,
+    window_name: str = "Open3D",
+    width: int = 1920,
+    height: int = 1080,
+    point_size: float = 4.0,
+    line_width: float = 2.0,
+    mesh_show_back_face: bool = True,
+):
     """Display a list of Open3D geometries with standard render options."""
     vis = o3d.visualization.Visualizer()
     vis.create_window(window_name=window_name, width=width, height=height)

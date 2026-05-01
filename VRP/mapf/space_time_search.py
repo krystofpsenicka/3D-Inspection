@@ -1,40 +1,24 @@
-"""GPU-accelerated Space-Time A* for multi-robot collision avoidance.
+"""Space-Time A* for priority-based multi-robot pathfinding.
 
-Implements priority-based sequential planning (Silver, 2005) where robots
-are planned one at a time in priority order, each using A* on a 4D
-space-time grid to avoid both static obstacles and previously committed
-trajectories via a reservation table.
-
-The A* search uses GPU-parallel frontier expansion following Zhou & Zeng
-(2015), which expands multiple near-optimal nodes from the open list
-simultaneously and processes their neighbors in parallel on GPU. The
-heuristic-guided threshold selection (expanding nodes with f < f_min +
-delta) preserves A*'s search efficiency while enabling massive GPU
-parallelism, as demonstrated by the GATSA algorithm in Li et al. (2025).
-
-References:
-    Silver, D. (2005). Cooperative Pathfinding. AIIDE.
-    Erdmann, M. & Lozano-Perez, T. (1987). On Multiple Moving Objects.
-        Algorithmica.
-    Zhou, Y. & Zeng, J. (2015). Massively Parallel A* Search on a GPU.
-        AAAI.
-    Li, Z. et al. (2025). GPU-accelerated Conflict-based Search for
-        Multi-agent Embodied Intelligence. Machine Intelligence Research.
+Each robot's A* uses a frontier-expansion variant on the 4D space-time
+grid; static obstacles plus previously committed trajectories are
+honoured via a reservation table. Algorithm details and citations live
+in the Bachelor thesis.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
 
 import cupy as cp
 
+from shared.occupancy_grid import OccupancyGrid
+
 from ..core.constants import (
+    GPU_SEARCH_MAX_ITERATIONS,
     OFFSETS_27,
     WEIGHTS_27,
-    GPU_SEARCH_MAX_ITERATIONS,
 )
-from shared.occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +35,7 @@ def space_time_astar_gpu(
     max_time_steps: int = 0,
     max_iterations: int = GPU_SEARCH_MAX_ITERATIONS,
     f_threshold_delta: float = 2.0,
-) -> Optional[Tuple[cp.ndarray, cp.ndarray]]:
+) -> tuple[cp.ndarray, cp.ndarray] | None:
     """GPU parallel A* on a 4D space-time grid with local time allocation.
 
     Uses heuristic-guided parallel frontier expansion (Zhou & Zeng, 2015):
@@ -60,7 +44,7 @@ def space_time_astar_gpu(
     parallelism while preserving the A* heuristic's search efficiency.
 
     All 27 neighbors (26-connected + wait) are expanded in a single
-    vectorized broadcast operation.
+    broadcast operation.
 
     The search allocates ``g_cost`` only for ``max_time_steps`` local
     time steps (not the full reservation horizon), starting at internal
@@ -105,12 +89,12 @@ def space_time_astar_gpu(
     xx = cp.arange(Nx, dtype=cp.float32) - gx
     yy = cp.arange(Ny, dtype=cp.float32) - gy
     zz = cp.arange(Nz, dtype=cp.float32) - gz
-    spatial_h = cp.sqrt(
-        xx[:, None, None] ** 2 + yy[None, :, None] ** 2 + zz[None, None, :] ** 2
-    ) * resolution
+    spatial_h = (
+        cp.sqrt(xx[:, None, None] ** 2 + yy[None, :, None] ** 2 + zz[None, None, :] ** 2)
+        * resolution
+    )
     chebyshev_h = cp.maximum(
-        cp.abs(xx[:, None, None]),
-        cp.maximum(cp.abs(yy[None, :, None]), cp.abs(zz[None, None, :]))
+        cp.abs(xx[:, None, None]), cp.maximum(cp.abs(yy[None, :, None]), cp.abs(zz[None, None, :]))
     )
     h_grid = spatial_h + chebyshev_h * time_step_cost  # (Nx, Ny, Nz)
 
@@ -129,7 +113,18 @@ def space_time_astar_gpu(
         best_t = int(cp.argmin(goal_costs))
         if goal_costs[best_t] < cp.inf:
             return _reconstruct_path(
-                pred, t_offset, best_t, gx, gy, gz, sx, sy, sz, Nx, Ny, Nz,
+                pred,
+                t_offset,
+                best_t,
+                gx,
+                gy,
+                gz,
+                sx,
+                sy,
+                sz,
+                Nx,
+                Ny,
+                Nz,
             )
 
         if len(frontier) == 0:
@@ -147,8 +142,8 @@ def space_time_astar_gpu(
         if not expand_mask.any():
             break
 
-        expand_idx = frontier[expand_mask]   # (E, 4)
-        remaining = frontier[~expand_mask]   # cells not expanded yet
+        expand_idx = frontier[expand_mask]  # (E, 4)
+        remaining = frontier[~expand_mask]  # cells not expanded yet
 
         E = len(expand_idx)
         et = expand_idx[:, 0]
@@ -157,27 +152,32 @@ def space_time_astar_gpu(
         ez = expand_idx[:, 3]
         cur_g = g_cost[et, ex, ey, ez]  # (E,)
 
-        # All 27 neighbors of all E cells in one vectorized operation
-        nt = (et + 1)[:, None].astype(cp.int32)       # (E, 1)
-        spatial = expand_idx[:, 1:4]                    # (E, 3)
+        # All 27 neighbors of all E cells in one operation
+        nt = (et + 1)[:, None].astype(cp.int32)  # (E, 1)
+        spatial = expand_idx[:, 1:4]  # (E, 3)
         nbr_pos = spatial[:, None, :] + OFFSETS_27[None, :, :]  # (E, 27, 3)
 
         # Flatten to (E*27,)
-        flat_pos = nbr_pos.reshape(-1, 3)               # (E*27, 3)
+        flat_pos = nbr_pos.reshape(-1, 3)  # (E*27, 3)
         flat_t = cp.broadcast_to(nt, (E, 27)).reshape(-1)  # (E*27,)
         flat_w = cp.broadcast_to(WEIGHTS_27[None, :], (E, 27)).reshape(-1)
         flat_parent = cp.broadcast_to(
-            cp.arange(E, dtype=cp.int32)[:, None], (E, 27),
+            cp.arange(E, dtype=cp.int32)[:, None],
+            (E, 27),
         ).reshape(-1)
 
         nx, ny, nz = flat_pos[:, 0], flat_pos[:, 1], flat_pos[:, 2]
 
         # Bounds + time check
         valid = (
-            (flat_t >= 0) & (flat_t < T_local)
-            & (nx >= 0) & (nx < Nx)
-            & (ny >= 0) & (ny < Ny)
-            & (nz >= 0) & (nz < Nz)
+            (flat_t >= 0)
+            & (flat_t < T_local)
+            & (nx >= 0)
+            & (nx < Nx)
+            & (ny >= 0)
+            & (ny < Ny)
+            & (nz >= 0)
+            & (nz < Nz)
         )
         if not valid.any():
             frontier = remaining
@@ -238,7 +238,9 @@ def space_time_astar_gpu(
         winners = sort_order[first_mask]
 
         # Write g-cost and predecessor only for the best candidate per cell
-        g_cost[vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]] = new_g_imp[winners]
+        g_cost[vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]] = new_g_imp[
+            winners
+        ]
 
         src_flat = (
             et[vp_imp[winners]] * (Nx * Ny * Nz)
@@ -248,31 +250,61 @@ def space_time_astar_gpu(
         )
         pred[vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]] = src_flat
 
-        # Winners are already deduplicated — use directly as new frontier
-        new_cells = cp.stack([vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]], axis=1)
-        frontier = cp.concatenate([remaining, new_cells], axis=0) if len(remaining) > 0 else new_cells
+        # Winners are already deduplicated  --  use directly as new frontier
+        new_cells = cp.stack(
+            [vt_imp[winners], nx_imp[winners], ny_imp[winners], nz_imp[winners]], axis=1
+        )
+        frontier = (
+            cp.concatenate([remaining, new_cells], axis=0) if len(remaining) > 0 else new_cells
+        )
 
     # Final goal check
     goal_costs = g_cost[:, gx, gy, gz]
     best_t = int(cp.argmin(goal_costs))
     if goal_costs[best_t] < cp.inf:
         return _reconstruct_path(
-            pred, t_offset, best_t, gx, gy, gz, sx, sy, sz, Nx, Ny, Nz,
+            pred,
+            t_offset,
+            best_t,
+            gx,
+            gy,
+            gz,
+            sx,
+            sy,
+            sz,
+            Nx,
+            Ny,
+            Nz,
         )
 
-    logger.warning("[ST-A*-GPU] No path found (start=(%d,%d,%d) goal=(%d,%d,%d) "
-                   "t_offset=%d, %d iterations).",
-                   sx, sy, sz, gx, gy, gz, t_offset, iteration + 1)
+    logger.warning(
+        "[ST-A*-GPU] No path found (start=(%d,%d,%d) goal=(%d,%d,%d) t_offset=%d, %d iterations).",
+        sx,
+        sy,
+        sz,
+        gx,
+        gy,
+        gz,
+        t_offset,
+        iteration + 1,
+    )
     return None
 
 
 def _reconstruct_path(
     pred: cp.ndarray,
     t_offset: int,
-    t_goal_local: int, gx: int, gy: int, gz: int,
-    sx: int, sy: int, sz: int,
-    Nx: int, Ny: int, Nz: int,
-) -> Tuple[cp.ndarray, cp.ndarray]:
+    t_goal_local: int,
+    gx: int,
+    gy: int,
+    gz: int,
+    sx: int,
+    sy: int,
+    sz: int,
+    Nx: int,
+    Ny: int,
+    Nz: int,
+) -> tuple[cp.ndarray, cp.ndarray]:
     """Backtrack through predecessor grid to reconstruct path.
 
     Returns absolute time steps (local + t_offset).
@@ -300,6 +332,6 @@ def _reconstruct_path(
     path.reverse()
     path_arr = cp.array(path, dtype=cp.intp)
     return (
-        path_arr[:, :3],              # (M, 3) ijk
-        path_arr[:, 3] + t_offset,    # (M,) absolute time steps
+        path_arr[:, :3],  # (M, 3) ijk
+        path_arr[:, 3] + t_offset,  # (M,) absolute time steps
     )

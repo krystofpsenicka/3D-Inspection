@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Tuple
 
 import cupy as cp
 import numpy as np
 
 from shared.geometry import directions_rolls_to_rotmats, rotmats_to_directions_rolls
+from shared.types import Side
 
 from ...core.constants import (
-    OPT_SAMPLER_POPSIZE, OPT_SAMPLER_MAXITER, OPT_SAMPLER_TRAVEL_WEIGHT,
-    OPT_SAMPLER_TRAVEL_ROT_FRACTION, DEFAULT_K_COVERAGE,
+    DEFAULT_K_COVERAGE,
+    DEFAULT_MAX_DISTANCE_OFFSET,
+    OPT_SAMPLER_MAXITER,
+    OPT_SAMPLER_POPSIZE,
+    OPT_SAMPLER_TRAVEL_ROT_FRACTION,
+    OPT_SAMPLER_TRAVEL_WEIGHT,
 )
-from shared.types import Side
 from ...visibility.base_cuda import VisibilityQueryCuda
-from .base import ViewpointSamplerBase, ProbabilisticSampler
+from .base import ProbabilisticSampler, ViewpointSamplerBase
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +29,15 @@ class OptimizationBackend(ABC):
     """Abstract backend for black-box optimisation in [0,1]^D."""
 
     @abstractmethod
-    def optimize(self, objective_fn: callable, n_dims: int, popsize: int,
-                 maxiter: int, verbose: bool = False,
-                 center_init: cp.ndarray | None = None) -> cp.ndarray:
+    def optimize(
+        self,
+        objective_fn: callable,
+        n_dims: int,
+        popsize: int,
+        maxiter: int,
+        verbose: bool = False,
+        center_init: cp.ndarray | None = None,
+    ) -> cp.ndarray:
         """Search [0,1]^n_dims.
 
         Args:
@@ -37,16 +46,16 @@ class OptimizationBackend(ABC):
             popsize:      population size per generation.
             maxiter:      maximum generations.
             verbose:      log per-generation progress.
-            center_init:  optional ``(D,)`` CuPy array — initial centre of the
+            center_init:  optional ``(D,)`` CuPy array  --  initial centre of the
                           search distribution in [0,1]^D.
 
         Returns:
-            ``(D,)`` CuPy array — best solution found in [0,1]^D.
+            ``(D,)`` CuPy array  --  best solution found in [0,1]^D.
         """
 
 
 class OptimizingSampler(ViewpointSamplerBase):
-    """Iterative viewpoint optimisation with injected optimization 
+    """Iterative viewpoint optimisation with injected optimization
     backend.
 
     Each round uses the backend to search 6-D pose space
@@ -54,8 +63,13 @@ class OptimizingSampler(ViewpointSamplerBase):
     covering under-covered surface points, then updates coverage.
     """
 
-    def __init__(self, *args, backend: OptimizationBackend,
-                 random_sampler: ProbabilisticSampler | None =None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        backend: OptimizationBackend,
+        random_sampler: ProbabilisticSampler | None = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.backend = backend
         self.random_sampler = random_sampler
@@ -65,23 +79,22 @@ class OptimizingSampler(ViewpointSamplerBase):
     def _is_free(self, positions_gpu):
         """Check OG collision for (N, 3) world positions on GPU."""
         og = self._occupancy_grid
-        ijk = cp.floor(
-            (positions_gpu - og.origin) / og.resolution
-        ).astype(cp.int32)
+        ijk = cp.floor((positions_gpu - og.origin) / og.resolution).astype(cp.int32)
 
         shape = cp.array(og.grid.shape, dtype=cp.int32)
         in_bounds = (
-            (ijk[:, 0] >= 0) & (ijk[:, 0] < shape[0]) &
-            (ijk[:, 1] >= 0) & (ijk[:, 1] < shape[1]) &
-            (ijk[:, 2] >= 0) & (ijk[:, 2] < shape[2])
+            (ijk[:, 0] >= 0)
+            & (ijk[:, 0] < shape[0])
+            & (ijk[:, 1] >= 0)
+            & (ijk[:, 1] < shape[1])
+            & (ijk[:, 2] >= 0)
+            & (ijk[:, 2] < shape[2])
         )
 
         result = cp.zeros(len(positions_gpu), dtype=cp.bool_)
         if cp.any(in_bounds):
             valid_ijk = ijk[in_bounds]
-            result[in_bounds] = ~og.grid[
-                valid_ijk[:, 0], valid_ijk[:, 1], valid_ijk[:, 2]
-            ]
+            result[in_bounds] = ~og.grid[valid_ijk[:, 0], valid_ijk[:, 1], valid_ijk[:, 2]]
         return result
 
     def sample_optimized(
@@ -98,7 +111,7 @@ class OptimizingSampler(ViewpointSamplerBase):
         popsize: int = OPT_SAMPLER_POPSIZE,
         maxiter: int = OPT_SAMPLER_MAXITER,
         verbose: bool = False,
-    ) -> Tuple[cp.ndarray, cp.ndarray, int]:
+    ) -> tuple[cp.ndarray, cp.ndarray, int]:
         """Find optimal viewpoints via iterative optimisation.
 
         Each round runs the backend in 6-D pose space to find the viewpoint
@@ -106,7 +119,7 @@ class OptimizingSampler(ViewpointSamplerBase):
         from existing viewpoints.
 
         Returns:
-            ``(positions_gpu, rotmats_gpu, n_warmstart_fallbacks)`` — CuPy
+            ``(positions_gpu, rotmats_gpu, n_warmstart_fallbacks)``  --  CuPy
             ``(K, 3)`` and ``(K, 3, 3)``, and a count of rounds in which the
             backend returned an infeasible position and we fell back to the
             warm-start centre.
@@ -114,34 +127,34 @@ class OptimizingSampler(ViewpointSamplerBase):
         n_warmstart_fallbacks = 0
         # Feasible bounds
         centers_gpu, _, coarse_res = self.get_feasible_sampling_data(
-            side, None, 0.95, False)
+            side, None, DEFAULT_MAX_DISTANCE_OFFSET, False
+        )
         half_res = coarse_res / 2.0
         bounds_lo_gpu = cp.min(centers_gpu, axis=0) - half_res
         bounds_hi_gpu = cp.max(centers_gpu, axis=0) + half_res
 
         # Apply sphere restriction if active (intersect bounding box)
         if self._sphere_center is not None:
-            bounds_lo_gpu = cp.maximum(
-                bounds_lo_gpu, self._sphere_center - self._sphere_radius)
-            bounds_hi_gpu = cp.minimum(
-                bounds_hi_gpu, self._sphere_center + self._sphere_radius)
+            bounds_lo_gpu = cp.maximum(bounds_lo_gpu, self._sphere_center - self._sphere_radius)
+            bounds_hi_gpu = cp.minimum(bounds_hi_gpu, self._sphere_center + self._sphere_radius)
 
         spatial_diag = float(cp.sqrt(cp.sum((bounds_hi_gpu - bounds_lo_gpu) ** 2)))
 
         # 6-D bounds: [x, y, z, theta, phi, roll]
-        lo_gpu = cp.concatenate([
-            bounds_lo_gpu,
-            cp.array([0.0, 0.0, -cp.pi], dtype=cp.float32)
-        ]).astype(cp.float32)
-        hi_gpu = cp.concatenate([
-            bounds_hi_gpu,
-            cp.array([cp.pi, 2 * cp.pi, cp.pi], dtype=cp.float32)
-        ]).astype(cp.float32)
+        lo_gpu = cp.concatenate(
+            [bounds_lo_gpu, cp.array([0.0, 0.0, -cp.pi], dtype=cp.float32)]
+        ).astype(cp.float32)
+        hi_gpu = cp.concatenate(
+            [bounds_hi_gpu, cp.array([cp.pi, 2 * cp.pi, cp.pi], dtype=cp.float32)]
+        ).astype(cp.float32)
         ranges_gpu = (hi_gpu - lo_gpu).astype(cp.float32)
 
-        logger.info("[OptimizingSampler] Feasible bounds lo=%s hi=%s (coarse_res=%.3f)",
-                    cp.asnumpy(lo_gpu[:3]).round(2),
-                    cp.asnumpy(hi_gpu[:3]).round(2), coarse_res)
+        logger.info(
+            "[OptimizingSampler] Feasible bounds lo=%s hi=%s (coarse_res=%.3f)",
+            cp.asnumpy(lo_gpu[:3]).round(2),
+            cp.asnumpy(hi_gpu[:3]).round(2),
+            coarse_res,
+        )
 
         # Pre-allocate GPU arrays
         max_total = (0 if existing_pos_gpu is None else len(existing_pos_gpu)) + n_rounds
@@ -165,15 +178,23 @@ class OptimizingSampler(ViewpointSamplerBase):
             frac_k_covered = 1.0 - n_under_k / visibility_query.num_points
 
             if frac_k_covered >= target_coverage:
-                logger.info("[OptimizingSampler] k=%d coverage %.1f%% >= target -- "
-                            "done after %d rounds.",
-                            k_coverage, frac_k_covered * 100, round_i)
+                logger.info(
+                    "[OptimizingSampler] k=%d coverage %.1f%% >= target -- done after %d rounds.",
+                    k_coverage,
+                    frac_k_covered * 100,
+                    round_i,
+                )
                 break
 
-            logger.info("[OptimizingSampler %d/%d] k=%d coverage=%.1f%%, "
-                        "%d under-covered -- running backend...",
-                        round_i + 1, n_rounds, k_coverage,
-                        frac_k_covered * 100, n_under_k)
+            logger.info(
+                "[OptimizingSampler %d/%d] k=%d coverage=%.1f%%, "
+                "%d under-covered -- running backend...",
+                round_i + 1,
+                n_rounds,
+                k_coverage,
+                frac_k_covered * 100,
+                n_under_k,
+            )
 
             # Per-round state
             deficit_gpu = cp.maximum(k_coverage - coverage_count_gpu, 0).astype(cp.float32)
@@ -189,20 +210,33 @@ class OptimizingSampler(ViewpointSamplerBase):
 
             # Build objective for this round (shared by warm-start and optimizer)
             objective_fn = self._make_objective(
-                lo_gpu, ranges_gpu, deficit_gpu, deficit_total,
-                visibility_query, avg_pos_gpu, avg_rotmat_gpu,
-                spatial_diag, travel_weight)
+                lo_gpu,
+                ranges_gpu,
+                deficit_gpu,
+                deficit_total,
+                visibility_query,
+                avg_pos_gpu,
+                avg_rotmat_gpu,
+                spatial_diag,
+                travel_weight,
+            )
 
             # Generate warm-start center_init from random sampler
             center_init_norm = self._generate_warm_start(
-                coverage_count_gpu, k_coverage, lo_gpu, ranges_gpu,
-                side, popsize, objective_fn)
+                coverage_count_gpu, k_coverage, lo_gpu, ranges_gpu, side, popsize, objective_fn
+            )
 
             best_pos, best_rot, score, used_fallback = self._optimize_one(
-                lo_gpu, ranges_gpu, deficit_gpu,
-                visibility_query, objective_fn,
-                popsize, maxiter, verbose,
-                center_init_norm=center_init_norm)
+                lo_gpu,
+                ranges_gpu,
+                deficit_gpu,
+                visibility_query,
+                objective_fn,
+                popsize,
+                maxiter,
+                verbose,
+                center_init_norm=center_init_norm,
+            )
             if used_fallback:
                 n_warmstart_fallbacks += 1
 
@@ -212,7 +246,8 @@ class OptimizingSampler(ViewpointSamplerBase):
 
             # Update coverage from the newly found viewpoint
             V_single, _ = visibility_query.compute_visibility_batch(
-                best_pos[cp.newaxis], best_rot[cp.newaxis])
+                best_pos[cp.newaxis], best_rot[cp.newaxis]
+            )
             visible_mask = V_single[0].astype(cp.bool_)
             coverage_count_gpu[visible_mask] += 1
 
@@ -223,20 +258,26 @@ class OptimizingSampler(ViewpointSamplerBase):
             all_rot[n_all] = best_rot
             n_all += 1
 
-            logger.info("[OptimizingSampler %d/%d] Found VP covering %d under-k pts.",
-                        round_i + 1, n_rounds, score)
+            logger.info(
+                "[OptimizingSampler %d/%d] Found VP covering %d under-k pts.",
+                round_i + 1,
+                n_rounds,
+                score,
+            )
 
         if n_new == 0:
-            return (cp.empty((0, 3), dtype=cp.float32),
-                    cp.empty((0, 3, 3), dtype=cp.float32),
-                    n_warmstart_fallbacks)
+            return (
+                cp.empty((0, 3), dtype=cp.float32),
+                cp.empty((0, 3, 3), dtype=cp.float32),
+                n_warmstart_fallbacks,
+            )
 
         return new_pos[:n_new], new_rot[:n_new], n_warmstart_fallbacks
 
     # ── Warm-start generation ──────────────────────────────────────────────
 
     def _viewpoints_to_norm6d(self, pos_gpu, rot_gpu, lo_gpu, ranges_gpu):
-        """Convert (N,3) positions + (N,3,3) rotmats → (N,6) in [0,1]^6.
+        """Convert (N,3) positions + (N,3,3) rotmats -> (N,6) in [0,1]^6.
 
         The 6-D parameterisation is ``[x, y, z, theta, phi, roll]`` where
         theta/phi are spherical coordinates of the viewing direction and
@@ -253,9 +294,9 @@ class OptimizingSampler(ViewpointSamplerBase):
         real[:, 5] = rolls
         return cp.clip((real - lo_gpu) / ranges_gpu, 0.0, 1.0)
 
-    def _generate_warm_start(self, coverage_count_gpu, k_coverage,
-                             lo_gpu, ranges_gpu, side, popsize,
-                             objective_fn):
+    def _generate_warm_start(
+        self, coverage_count_gpu, k_coverage, lo_gpu, ranges_gpu, side, popsize, objective_fn
+    ):
         """Generate a warm-start ``center_init`` using the random sampler.
 
         Generates candidates, converts to [0,1]^6, evaluates with the actual
@@ -271,11 +312,15 @@ class OptimizingSampler(ViewpointSamplerBase):
 
         # Generate candidates via the random sampler
         from .targeted import TargetedViewpointSampler
+
         if isinstance(self.random_sampler, TargetedViewpointSampler):
             ws_pos, ws_rot = self.random_sampler.sample(
-                under_k_indices, n_ws, side=side,
+                under_k_indices,
+                n_ws,
+                side=side,
                 k_coverage=k_coverage,
-                coverage_count_gpu=coverage_count_gpu)
+                coverage_count_gpu=coverage_count_gpu,
+            )
         else:
             ws_pos, ws_rot = self.random_sampler.sample(n_ws, side=side)
 
@@ -289,22 +334,34 @@ class OptimizingSampler(ViewpointSamplerBase):
         # Pick the best valid candidate (score < penalty threshold)
         valid_mask = scores < 1e5
         if not cp.any(valid_mask):
-            logger.warning("  Warm-start: all %d candidates in occupied space",
-                           len(ws_pos))
+            logger.warning("  Warm-start: all %d candidates in occupied space", len(ws_pos))
             return None
 
         valid_idx = cp.where(valid_mask)[0]
         best_idx = valid_idx[int(cp.argmin(scores[valid_idx]))]
         center = ws_norm[best_idx]
-        logger.info("  Warm-start: best score=%.4f from %d/%d valid candidates",
-                    float(scores[best_idx]), int(valid_mask.sum()), len(ws_pos))
+        logger.info(
+            "  Warm-start: best score=%.4f from %d/%d valid candidates",
+            float(scores[best_idx]),
+            int(valid_mask.sum()),
+            len(ws_pos),
+        )
         return center
 
     # ── Objective function factory ───────────────────────────────────────
 
-    def _make_objective(self, lo_gpu, ranges_gpu, deficit_gpu, deficit_total,
-                        visibility_query, avg_pos_gpu, avg_rotmat_gpu,
-                        spatial_diag, travel_weight):
+    def _make_objective(
+        self,
+        lo_gpu,
+        ranges_gpu,
+        deficit_gpu,
+        deficit_total,
+        visibility_query,
+        avg_pos_gpu,
+        avg_rotmat_gpu,
+        spatial_diag,
+        travel_weight,
+    ):
         """Create the objective closure for one optimisation round.
 
         Returns a callable ``(pop, 6) CuPy -> (pop,) CuPy`` (scores to minimise).
@@ -321,11 +378,14 @@ class OptimizingSampler(ViewpointSamplerBase):
             roll = real[:, 5]
 
             # Spherical -> direction
-            directions = cp.stack([
-                cp.sin(theta) * cp.cos(phi),
-                cp.sin(theta) * cp.sin(phi),
-                cp.cos(theta),
-            ], axis=1).astype(cp.float32)
+            directions = cp.stack(
+                [
+                    cp.sin(theta) * cp.cos(phi),
+                    cp.sin(theta) * cp.sin(phi),
+                    cp.cos(theta),
+                ],
+                axis=1,
+            ).astype(cp.float32)
 
             # Free-space check
             free_mask = is_free_fn(positions)
@@ -344,9 +404,8 @@ class OptimizingSampler(ViewpointSamplerBase):
             # Build rotation matrices
             free_rotmats = directions_rolls_to_rotmats(free_dirs, free_rolls)
 
-            # Batch visibility — returns (n_free, M) visibility matrix
-            V_gpu, _ = visibility_query.compute_visibility_batch(
-                free_pos, free_rotmats)
+            # Batch visibility  --  returns (n_free, M) visibility matrix
+            V_gpu, _ = visibility_query.compute_visibility_batch(free_pos, free_rotmats)
 
             # Deficit-weighted coverage: points needing more covers contribute more
             weighted_coverage = V_gpu.astype(cp.float32) @ deficit_gpu
@@ -355,15 +414,13 @@ class OptimizingSampler(ViewpointSamplerBase):
             # Travel cost
             travel_cost = cp.zeros(len(free_idx), dtype=cp.float32)
             if avg_pos_gpu is not None and travel_weight > 0:
-                pos_dist = cp.linalg.norm(
-                    free_pos - avg_pos_gpu, axis=1) / max(spatial_diag, 1e-6)
+                pos_dist = cp.linalg.norm(free_pos - avg_pos_gpu, axis=1) / max(spatial_diag, 1e-6)
 
                 angle_dist = cp.zeros(len(free_idx), dtype=cp.float32)
                 if avg_rotmat_gpu is not None:
                     R_rel = cp.matmul(free_rotmats, avg_rotmat_gpu.T)
                     traces = R_rel[:, 0, 0] + R_rel[:, 1, 1] + R_rel[:, 2, 2]
-                    angle_dist = cp.arccos(cp.clip(
-                        (traces - 1) / 2, -1, 1)) / cp.float32(np.pi)
+                    angle_dist = cp.arccos(cp.clip((traces - 1) / 2, -1, 1)) / cp.float32(np.pi)
 
                 rot_frac = OPT_SAMPLER_TRAVEL_ROT_FRACTION
                 travel_cost = (1.0 - rot_frac) * pos_dist + rot_frac * angle_dist
@@ -375,19 +432,31 @@ class OptimizingSampler(ViewpointSamplerBase):
 
     # ── Single-round optimization ────────────────────────────────────────
 
-    def _optimize_one(self, lo_gpu, ranges_gpu, deficit_gpu,
-                      visibility_query, objective_fn,
-                      popsize, maxiter, verbose,
-                      center_init_norm=None):
+    def _optimize_one(
+        self,
+        lo_gpu,
+        ranges_gpu,
+        deficit_gpu,
+        visibility_query,
+        objective_fn,
+        popsize,
+        maxiter,
+        verbose,
+        center_init_norm=None,
+    ):
         """Run one round of backend optimization.
 
         Returns ``(best_pos_gpu, best_rotmat_gpu, score, used_fallback)``.
         """
         # Run backend
         best_norm = self.backend.optimize(
-            objective_fn, n_dims=6, popsize=popsize,
-            maxiter=maxiter, verbose=verbose,
-            center_init=center_init_norm)
+            objective_fn,
+            n_dims=6,
+            popsize=popsize,
+            maxiter=maxiter,
+            verbose=verbose,
+            center_init=center_init_norm,
+        )
         best_norm = cp.clip(best_norm, 0.0, 1.0)
 
         # If the backend converged into occupied space, fall back to the
@@ -395,10 +464,8 @@ class OptimizingSampler(ViewpointSamplerBase):
         # prevents a single bad CMA-ES run from aborting sample_optimized.
         best_pos_check = (best_norm * ranges_gpu + lo_gpu)[:3]
         used_fallback = False
-        if (not bool(self._is_free(best_pos_check[cp.newaxis])[0])
-                and center_init_norm is not None):
-            logger.warning(
-                "  Backend returned infeasible pos; falling back to warm-start")
+        if not bool(self._is_free(best_pos_check[cp.newaxis])[0]) and center_init_norm is not None:
+            logger.warning("  Backend returned infeasible pos; falling back to warm-start")
             best_norm = cp.clip(center_init_norm, 0.0, 1.0)
             used_fallback = True
 
@@ -410,18 +477,20 @@ class OptimizingSampler(ViewpointSamplerBase):
         phi_val = best_real[4]
         roll_val = best_real[5]
 
-        best_dir = cp.stack([
-            cp.sin(theta_val) * cp.cos(phi_val),
-            cp.sin(theta_val) * cp.sin(phi_val),
-            cp.cos(theta_val),
-        ]).astype(cp.float32)
+        best_dir = cp.stack(
+            [
+                cp.sin(theta_val) * cp.cos(phi_val),
+                cp.sin(theta_val) * cp.sin(phi_val),
+                cp.cos(theta_val),
+            ]
+        ).astype(cp.float32)
 
-        best_rotmat_gpu = directions_rolls_to_rotmats(
-            best_dir[cp.newaxis], roll_val[cp.newaxis])[0]
+        best_rotmat_gpu = directions_rolls_to_rotmats(best_dir[cp.newaxis], roll_val[cp.newaxis])[0]
 
         # Recompute deficit-weighted score for best viewpoint
         V_best, _ = visibility_query.compute_visibility_batch(
-            best_pos_gpu[cp.newaxis], best_rotmat_gpu[cp.newaxis])
+            best_pos_gpu[cp.newaxis], best_rotmat_gpu[cp.newaxis]
+        )
         visible_mask = V_best[0].astype(cp.bool_)
         best_score = int((deficit_gpu[visible_mask]).sum())
 

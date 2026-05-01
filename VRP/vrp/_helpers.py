@@ -10,7 +10,7 @@ def per_vehicle_costs(
     dist_matrix: cp.ndarray,
     depots: list[int],
 ) -> list[float]:
-    """Return per-vehicle travel distances (GPU-vectorized).
+    """Return per-vehicle travel distances .
 
     Each vehicle's cost is the sum of arc costs along
     depot -> route[0] -> ... -> route[-1] -> depot.

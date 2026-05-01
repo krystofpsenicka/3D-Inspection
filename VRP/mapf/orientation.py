@@ -10,7 +10,6 @@ Trajectory layout: [x, y, z, yaw, cam_pitch, cam_roll]
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 import cupy as cp
 
@@ -19,18 +18,18 @@ def apply_heading_orientation(
     traj: cp.ndarray,
     t_dense: cp.ndarray,
     dt: float,
-    wp_schedule_s: Optional[cp.ndarray] = None,
-    waypoint_rotmats: Optional[cp.ndarray] = None,
+    wp_schedule_s: cp.ndarray | None = None,
+    waypoint_rotmats: cp.ndarray | None = None,
 ) -> cp.ndarray:
     """Set yaw and camera pitch on a dense trajectory.
 
     Args:
-        traj: (N, 6) CuPy — dense trajectory samples.
-        t_dense: (N,) CuPy — dense time grid.
+        traj: (N, 6) CuPy  --  dense trajectory samples.
+        t_dense: (N,) CuPy  --  dense time grid.
         dt: replay time step (seconds).
-        wp_schedule_s: (n_wp, 3) CuPy — columns [t_dwell_start, t_dwell_end,
+        wp_schedule_s: (n_wp, 3) CuPy  --  columns [t_dwell_start, t_dwell_end,
             node_idx].  ``None`` disables waypoint-based orientation.
-        waypoint_rotmats: (M, 3, 3) CuPy — rotation matrices for all
+        waypoint_rotmats: (M, 3, 3) CuPy  --  rotation matrices for all
             VRP nodes (column 0 = forward direction).
 
     Returns:
@@ -70,7 +69,7 @@ def apply_heading_orientation(
     # searchsorted gives bin b for each t:
     #   b=0: before first dwell
     #   b=2i+1: inside dwell i  (odd)
-    #   b=2i+2: transition i→i+1  (even, >0), or post-last for i=n_wp-1
+    #   b=2i+2: transition i->i+1  (even, >0), or post-last for i=n_wp-1
     boundaries = cp.empty(2 * n_wp, dtype=cp.float64)
     boundaries[0::2] = wp_t_ds
     boundaries[1::2] = wp_t_de
@@ -79,13 +78,13 @@ def apply_heading_orientation(
 
     is_odd = (bins % 2) == 1
 
-    # ── Dwell segments (odd bins: b = 2i+1 → wp index i) ────────────
+    # ── Dwell segments (odd bins: b = 2i+1 -> wp index i) ────────────
     dwell_mask = is_odd & (bins >= 1) & (bins <= 2 * n_wp - 1)
     wp_idx = (bins[dwell_mask] - 1) // 2
     yaw[dwell_mask] = wp_yaws[wp_idx]
     camera_pitch[dwell_mask] = wp_cpitch[wp_idx]
 
-    # ── Transition segments (even bins 2..2n_wp-2: b = 2i+2 → from i to i+1)
+    # ── Transition segments (even bins 2..2n_wp-2: b = 2i+2 -> from i to i+1)
     trans_mask = ~is_odd & (bins >= 2) & (bins <= 2 * n_wp - 2)
     if trans_mask.any():
         from_idx = bins[trans_mask] // 2 - 1  # source waypoint
@@ -99,7 +98,9 @@ def apply_heading_orientation(
         ease = 0.5 * (1.0 - cp.cos(math.pi * blend))
 
         yaw[trans_mask] = wp_yaws[from_idx] + ease * (wp_yaws[to_idx] - wp_yaws[from_idx])
-        camera_pitch[trans_mask] = wp_cpitch[from_idx] + ease * (wp_cpitch[to_idx] - wp_cpitch[from_idx])
+        camera_pitch[trans_mask] = wp_cpitch[from_idx] + ease * (
+            wp_cpitch[to_idx] - wp_cpitch[from_idx]
+        )
 
     # ── Pre-first segment (b == 0) ──────────────────────────────────
     pre_mask = bins == 0

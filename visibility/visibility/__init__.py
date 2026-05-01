@@ -1,4 +1,4 @@
-from .raycast import RaycastingVisibilityQuery
 from .epsilon import EpsilonVisibilityQuery
-from .raycast_cuda import RaycastingVisibilityQueryCuda
 from .epsilon_cuda import EpsilonVisibilityQueryCuda
+from .raycast import RaycastingVisibilityQuery
+from .raycast_cuda import RaycastingVisibilityQueryCuda

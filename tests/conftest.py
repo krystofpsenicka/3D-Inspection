@@ -1,7 +1,9 @@
 """Fixtures for the 3D-Inspection tests."""
+
 import cupy as cp
 import numpy as np
 import pytest
+
 from shared.occupancy_grid import OccupancyGrid
 
 
@@ -20,10 +22,10 @@ def small_og():
 @pytest.fixture
 def corridor_og():
     """10x10x10 grid with a wall at x=5 and a 1-voxel gap at (5,5,5).
-    Used for pathfinding tests — forces a path through the gap."""
+    Used for pathfinding tests  --  forces a path through the gap."""
     grid = cp.zeros((10, 10, 10), dtype=cp.bool_)
-    grid[5, :, :] = True       # wall at x=5
-    grid[5, 5, 5] = False      # single gap
+    grid[5, :, :] = True  # wall at x=5
+    grid[5, 5, 5] = False  # single gap
     return OccupancyGrid(
         grid=grid,
         origin=cp.zeros(3),
@@ -33,7 +35,7 @@ def corridor_og():
 
 @pytest.fixture
 def og(small_og):
-    """Alias for small_og — used by test_occupancy_grid."""
+    """Alias for small_og  --  used by test_occupancy_grid."""
     return small_og
 
 

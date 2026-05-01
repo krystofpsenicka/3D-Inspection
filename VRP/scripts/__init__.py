@@ -1,1 +1,1 @@
-"""VRP scripts – CLI entry points & tools."""
+"""VRP scripts - CLI entry points & tools."""

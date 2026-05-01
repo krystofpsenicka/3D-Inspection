@@ -8,7 +8,7 @@ import os
 import numpy as np
 
 
-def save_solution(result: "ExecutionResult", path: str) -> None:  # noqa: F821
+def save_solution(result: ExecutionResult, path: str) -> None:  # noqa: F821
     """Save an ExecutionResult to NPZ + JSON."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     base = path.rsplit(".", 1)[0] if "." in path else path
@@ -36,7 +36,7 @@ def save_solution(result: "ExecutionResult", path: str) -> None:  # noqa: F821
         json.dump(meta, f)
 
 
-def load_solution(path: str) -> "ExecutionResult":  # noqa: F821
+def load_solution(path: str) -> ExecutionResult:  # noqa: F821
     """Load an ExecutionResult from NPZ + JSON.
 
     Raises FileNotFoundError if the files do not exist.
@@ -48,9 +48,7 @@ def load_solution(path: str) -> "ExecutionResult":  # noqa: F821
     json_path = base + ".json"
 
     if not os.path.exists(npz_path) or not os.path.exists(json_path):
-        raise FileNotFoundError(
-            f"Solution files not found: {npz_path} and/or {json_path}"
-        )
+        raise FileNotFoundError(f"Solution files not found: {npz_path} and/or {json_path}")
 
     data = np.load(npz_path)
     with open(json_path) as f:
@@ -59,7 +57,7 @@ def load_solution(path: str) -> "ExecutionResult":  # noqa: F821
     def unpack_ragged(name):
         flat = data[name]
         offsets = data[f"{name}_offsets"]
-        return [flat[offsets[i]:offsets[i + 1]] for i in range(len(offsets) - 1)]
+        return [flat[offsets[i] : offsets[i + 1]] for i in range(len(offsets) - 1)]
 
     return ExecutionResult(
         all_traj_positions=unpack_ragged("all_traj_positions"),

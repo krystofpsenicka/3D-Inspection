@@ -1,15 +1,15 @@
 """Base class for iterative set-cover optimizers."""
 
 import logging
+import time
+from abc import ABC, abstractmethod
+
 import cupy as cp
 import numpy as np
-from abc import ABC, abstractmethod
-import time
-from typing import List, Optional, Tuple
 
+from ..core.constants import DEFAULT_MAX_VIEWPOINTS, DEFAULT_TARGET_COVERAGE
 from ..core.types import OptimizationResult
 from ..core.utils import compute_redundancy
-from ..core.constants import DEFAULT_TARGET_COVERAGE, DEFAULT_MAX_VIEWPOINTS
 
 logger = logging.getLogger(__name__)
 
@@ -19,18 +19,18 @@ class IterativeSetCoverOptimizer(ABC):
 
     Subclasses implement ``select_next`` and ``commit_selection`` for the
     specific scoring strategy. All arrays exchanged through these methods
-    are CuPy arrays on GPU for simplicity (the final pipeline will use gpu 
+    are CuPy arrays on GPU for simplicity (the final pipeline will use gpu
     implementations).
     """
 
     @abstractmethod
-    def select_next(self) -> Optional[Tuple[cp.ndarray, cp.ndarray, cp.ndarray]]:
+    def select_next(self) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray] | None:
         """Select the next best candidate viewpoint.
 
         Returns ``(position, rotation, visible_indices)`` as CuPy arrays,
         or ``None`` if no candidate provides new coverage.
 
-        Does **not** mutate internal state — call ``commit_selection``
+        Does **not** mutate internal state  --  call ``commit_selection``
         afterwards to apply the update.
         """
 
@@ -47,17 +47,20 @@ class IterativeSetCoverOptimizer(ABC):
         (e.g. expansion-based optimizers that generate new candidates).
         Subclasses that maintain ``_last_idx`` expose it automatically.
         """
-        return getattr(self, '_last_idx', -1)
+        return getattr(self, "_last_idx", -1)
 
-    def optimize(self, target_coverage: float = DEFAULT_TARGET_COVERAGE,
-                 max_viewpoints: int = DEFAULT_MAX_VIEWPOINTS) -> OptimizationResult:
+    def optimize(
+        self,
+        target_coverage: float = DEFAULT_TARGET_COVERAGE,
+        max_viewpoints: int = DEFAULT_MAX_VIEWPOINTS,
+    ) -> OptimizationResult:
         """Run the full iterative set-cover loop."""
         start_time = time.perf_counter()
 
-        sel_positions: List[cp.ndarray] = []
-        sel_rotations: List[cp.ndarray] = []
-        sel_vis_rows: List[cp.ndarray] = []  # (M,) uint8 rows for visibility_map
-        sel_indices: List[int] = []
+        sel_positions: list[cp.ndarray] = []
+        sel_rotations: list[cp.ndarray] = []
+        sel_vis_rows: list[cp.ndarray] = []  # (M,) uint8 rows for visibility_map
+        sel_indices: list[int] = []
 
         covered_mask = cp.zeros(self.num_points, dtype=cp.bool_)
         total_covered = 0
@@ -84,8 +87,12 @@ class IterativeSetCoverOptimizer(ABC):
 
             total_covered = int(covered_mask.sum())
             coverage = total_covered / self.num_points if self.num_points > 0 else 0.0
-            logger.info("  [SetCover] VP %d: +%d pts, coverage=%.1f%%",
-                        len(sel_positions), len(vis), coverage * 100)
+            logger.info(
+                "  [SetCover] VP %d: +%d pts, coverage=%.1f%%",
+                len(sel_positions),
+                len(vis),
+                coverage * 100,
+            )
 
         optimization_time = time.perf_counter() - start_time
         coverage = int(covered_mask.sum()) / self.num_points if self.num_points > 0 else 0.0

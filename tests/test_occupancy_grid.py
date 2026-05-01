@@ -1,10 +1,11 @@
 """Tests for OccupancyGrid, inflate_grid, and downsample_occupancy_grid."""
+
 import cupy as cp
 import numpy as np
 import pytest
-from shared.occupancy_grid import OccupancyGrid
-from shared.grid_utils import inflate_grid, downsample_occupancy_grid
 
+from shared.grid_utils import downsample_occupancy_grid, inflate_grid
+from shared.occupancy_grid import OccupancyGrid
 
 # ── Coordinate transforms ──────────────────────────────────────────────────
 
@@ -74,8 +75,9 @@ class TestInflateGrid:
                 for dz in range(-r, r + 1):
                     dist2 = dx**2 + dy**2 + dz**2
                     if dist2 <= r**2:
-                        assert inflated_np[5 + dx, 5 + dy, 5 + dz], \
+                        assert inflated_np[5 + dx, 5 + dy, 5 + dz], (
                             f"({dx},{dy},{dz}) dist2={dist2} should be occupied"
+                        )
 
     def test_zero_inflation_identity(self):
         grid = cp.zeros((5, 5, 5), dtype=cp.bool_)
@@ -97,8 +99,11 @@ class TestInflateGrid:
 
 class TestDownsample:
     def test_output_shape(self):
-        og = OccupancyGrid(grid=cp.zeros((20, 20, 20), dtype=cp.bool_),
-                           origin=cp.zeros(3, dtype=cp.float64), resolution=0.1)
+        og = OccupancyGrid(
+            grid=cp.zeros((20, 20, 20), dtype=cp.bool_),
+            origin=cp.zeros(3, dtype=cp.float64),
+            resolution=0.1,
+        )
         coarse_og = downsample_occupancy_grid(og, 0.2)
         assert coarse_og.shape == (10, 10, 10)
 
@@ -112,7 +117,8 @@ class TestDownsample:
 
     def test_origin_preserved(self):
         origin = cp.array([1.0, 2.0, 3.0])
-        og = OccupancyGrid(grid=cp.zeros((10, 10, 10), dtype=cp.bool_),
-                           origin=origin, resolution=0.1)
+        og = OccupancyGrid(
+            grid=cp.zeros((10, 10, 10), dtype=cp.bool_), origin=origin, resolution=0.1
+        )
         coarse_og = downsample_occupancy_grid(og, 0.2)
         assert cp.allclose(coarse_og.origin, origin)

@@ -26,15 +26,14 @@ of the nearest-neighbour approximation used here.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import cupy as cp
 import numpy as np
 
-from ..core.constants import OMPL_SIMPLIFY_MAX_TIME, PATH_SMOOTHER_RESERVATION_MARGIN
 from shared.occupancy_grid import OccupancyGrid
-from .reservation_table import ReservationTable
 
+from ..core.constants import OMPL_SIMPLIFY_MAX_TIME, PATH_SMOOTHER_RESERVATION_MARGIN
+from .reservation_table import ReservationTable
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +43,9 @@ def simplify_path_ompl(
     occupancy_grid: OccupancyGrid,
     robot_radius: float = 0.35,
     max_time: float = OMPL_SIMPLIFY_MAX_TIME,
-    reservation: Optional[ReservationTable] = None,
-    time_steps: Optional[cp.ndarray] = None,
-    coarse_og: Optional[OccupancyGrid] = None,
+    reservation: ReservationTable | None = None,
+    time_steps: cp.ndarray | None = None,
+    coarse_og: OccupancyGrid | None = None,
     reservation_margin: int = PATH_SMOOTHER_RESERVATION_MARGIN,
 ) -> cp.ndarray:
     """Simplify a 3D path using OMPL PathSimplifier.
@@ -92,17 +91,13 @@ def simplify_path_ompl(
     import ompl.geometric as og_ompl
 
     # Precompute reservation data for the validity checker.
-    check_reservation = (
-        reservation is not None
-        and time_steps is not None
-        and coarse_og is not None
-    )
+    check_reservation = reservation is not None and time_steps is not None and coarse_og is not None
     any_reserved_map = None
     if check_reservation:
         orig_path_gpu = path_xyz.copy()
         orig_time_gpu = time_steps.copy()
         # Precompute spatial-only reservation map: True where the voxel
-        # is reserved at ANY time step. Gives fast rejection for most 
+        # is reserved at ANY time step. Gives fast rejection for most
         # free voxels.
         any_reserved_map = reservation._data.any(axis=0)  # (Nx, Ny, Nz)
 
@@ -123,9 +118,11 @@ def simplify_path_ompl(
                 ix, iy, iz = int(ijk[0]), int(ijk[1]), int(ijk[2])
 
                 # Bounds check
-                if not (0 <= ix < reservation.Nx
-                        and 0 <= iy < reservation.Ny
-                        and 0 <= iz < reservation.Nz):
+                if not (
+                    0 <= ix < reservation.Nx
+                    and 0 <= iy < reservation.Ny
+                    and 0 <= iz < reservation.Nz
+                ):
                     return True
 
                 # Fast spatial rejection: never reserved -> safe
@@ -160,9 +157,7 @@ def simplify_path_ompl(
 
     si = ob.SpaceInformation(space)
     si.setStateValidityChecker(_Checker(si))
-    si.setStateValidityCheckingResolution(
-        float(robot_radius / max(hi - lo))
-    )
+    si.setStateValidityCheckingResolution(float(robot_radius / max(hi - lo)))
     si.setup()
 
     path = og_ompl.PathGeometric(si)
@@ -200,7 +195,5 @@ def arc_length_resample(
 
     target_s = cp.linspace(0.0, total_len, n_samples)
 
-    result = cp.column_stack([
-        cp.interp(target_s, cum_len, path_xyz[:, d]) for d in range(3)
-    ])
+    result = cp.column_stack([cp.interp(target_s, cum_len, path_xyz[:, d]) for d in range(3)])
     return result

@@ -1,27 +1,31 @@
 """Sampling space construction from occupancy grid and SDF."""
 
 import logging
-from typing import Tuple
 
 import cupy as cp
 
 from shared.grid_utils import downsample_occupancy_grid
 from shared.occupancy_grid import OccupancyGrid
-
-from ...core.constants import NORM_EPS, CURVATURE_POSITION_WEIGHT
-
 from shared.types import Side
+
+from ...core.constants import CURVATURE_POSITION_WEIGHT, NORM_EPS
 
 logger = logging.getLogger(__name__)
 
 
-def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray,
-                         target_points_gpu: cp.ndarray, normals_gpu: cp.ndarray, free_space_resolution: float,
-                         side: Side, min_dist: float, max_dist: float,
-                         curvature_weighting: bool = False,
-                         curvature_knn_k: int | None = None,
-                         position_weight: float | None = None,
-                         ) -> Tuple[cp.ndarray, cp.ndarray, float]:
+def build_sampling_space(
+    occupancy_grid: OccupancyGrid,
+    sdf_grid_gpu: cp.ndarray,
+    target_points_gpu: cp.ndarray,
+    normals_gpu: cp.ndarray,
+    free_space_resolution: float,
+    side: Side,
+    min_dist: float,
+    max_dist: float,
+    curvature_weighting: bool = False,
+    curvature_knn_k: int | None = None,
+    position_weight: float | None = None,
+) -> tuple[cp.ndarray, cp.ndarray, float]:
     """Build feasible sampling positions using EDT-SDF grid lookup on GPU.
 
     Downsamples the occupancy grid to *free_space_resolution*, filters by
@@ -29,10 +33,10 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
 
     Args:
         occupancy_grid:       OccupancyGrid object (GPU-resident).
-        sdf_grid_gpu:         CuPy array — precomputed SDF grid (fine res).
-        target_points_gpu:    CuPy float32 (M, 3) — surface points.
-        normals_gpu:          CuPy float32 (M, 3) — surface normals.
-        free_space_resolution: float — coarse grid resolution.
+        sdf_grid_gpu:         CuPy array  --  precomputed SDF grid (fine res).
+        target_points_gpu:    CuPy float32 (M, 3)  --  surface points.
+        normals_gpu:          CuPy float32 (M, 3)  --  surface normals.
+        free_space_resolution: float  --  coarse grid resolution.
         side:                 Side.OUTSIDE or Side.INSIDE.
         min_dist:             minimum SDF distance.
         max_dist:             maximum SDF distance.
@@ -55,8 +59,9 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
         logger.warning("[build_sampling_space] No free voxels in coarse grid.")
         return cp.empty((0, 3), dtype=cp.float32), cp.empty(0, dtype=cp.float32), actual_res
 
-    logger.info("[build_sampling_space] Coarse grid: %s, %d free voxels",
-                coarse_grid.shape, len(free_ijk))
+    logger.info(
+        "[build_sampling_space] Coarse grid: %s, %d free voxels", coarse_grid.shape, len(free_ijk)
+    )
 
     # 3. Map coarse voxel indices -> fine SDF-grid indices (center of each coarse voxel)
     factor = round(actual_res / og.resolution)
@@ -85,32 +90,46 @@ def build_sampling_space(occupancy_grid: OccupancyGrid, sdf_grid_gpu: cp.ndarray
     feasible_ijk = free_ijk[mask]
     feasible_sdf = sdf[mask]
     n_feasible = len(feasible_ijk)
-    logger.info("[build_sampling_space] After SDF filter (%s): %d / %d positions",
-                side.value, n_feasible, len(free_ijk))
+    logger.info(
+        "[build_sampling_space] After SDF filter (%s): %d / %d positions",
+        side.value,
+        n_feasible,
+        len(free_ijk),
+    )
 
     if n_feasible == 0:
         return cp.empty((0, 3), dtype=cp.float32), cp.empty(0, dtype=cp.float32), actual_res
 
     # 6. Convert feasible coarse indices to world coordinates
-    feasible_centers = (feasible_ijk.astype(cp.float32) * actual_res
-                        + coarse_og.origin.astype(cp.float32) + 0.5 * actual_res)
+    feasible_centers = (
+        feasible_ijk.astype(cp.float32) * actual_res
+        + coarse_og.origin.astype(cp.float32)
+        + 0.5 * actual_res
+    )
 
     # 7. Compute sampling weights: w = sdf^2 (footprint area ~ d^2)
-    weights = feasible_sdf ** 2
+    weights = feasible_sdf**2
 
     if curvature_weighting:
         from .curvature import compute_local_curvature
+
         knn_k_kwargs = {} if curvature_knn_k is None else {"k": curvature_knn_k}
         local_curv = compute_local_curvature(
-            feasible_centers, target_points_gpu, normals_gpu, **knn_k_kwargs)
+            feasible_centers, target_points_gpu, normals_gpu, **knn_k_kwargs
+        )
         curv_norm = local_curv / (local_curv.max() + NORM_EPS)
         pw = CURVATURE_POSITION_WEIGHT if position_weight is None else position_weight
-        weights *= (1.0 + pw * curv_norm)
+        weights *= 1.0 + pw * curv_norm
 
     weights = weights / weights.sum()
 
-    logger.info("[build_sampling_space] %s free space: %d feasible positions "
-                "(coarse res %.2fm, curvature_weighting=%s)",
-                side.value.capitalize(), n_feasible, actual_res, curvature_weighting)
+    logger.info(
+        "[build_sampling_space] %s free space: %d feasible positions "
+        "(coarse res %.2fm, curvature_weighting=%s)",
+        side.value.capitalize(),
+        n_feasible,
+        actual_res,
+        curvature_weighting,
+    )
 
     return feasible_centers, weights, actual_res

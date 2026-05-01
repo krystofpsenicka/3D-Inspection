@@ -13,19 +13,22 @@ import itertools
 import math
 from typing import List, Optional, Tuple
 
+import cupy as cp
 import numpy as np
 import pytest
 
-import cupy as cp
-
+from VRP.core.constants import MIP_GAP
 from VRP.core.types import VRPBackend, VRPResult
 from VRP.vrp._helpers import (
     compute_route_cost as _compute_route_cost,
+)
+from VRP.vrp._helpers import (
     nearest_neighbor_warmstart as _nearest_neighbor_warmstart,
+)
+from VRP.vrp._helpers import (
     per_vehicle_costs as _per_vehicle_costs,
 )
 from VRP.vrp.vrp_solver import solve_vrp
-from VRP.core.constants import MIP_GAP
 
 # ── Skip conditions ──────────────────────────────────────────────────────────
 
@@ -34,15 +37,15 @@ pulp = pytest.importorskip("pulp", reason="PuLP not installed")
 from VRP.vrp.mip_solver_cpu import MIPSolverCPU as MIPMakespanCPU
 from VRP.vrp.mip_solver_gpu import MIPSolverGPU as MIPMakespanGPU
 
-
 # ─── Brute-force reference solver ───────────────────────────────────────────
+
 
 def brute_force_vrp(
     dist_matrix,
     num_vehicles: int,
-    depots: List[int],
-    max_stops_per_vehicle: Optional[int] = None,
-) -> Tuple[float, float]:
+    depots: list[int],
+    max_stops_per_vehicle: int | None = None,
+) -> tuple[float, float]:
     """Exact optimal by full enumeration.
 
     Returns (best_total_distance, best_makespan).
@@ -52,7 +55,9 @@ def brute_force_vrp(
     permutations), then tracks the best total-distance and best makespan
     across all assignments.
     """
-    dist_matrix = cp.asnumpy(dist_matrix) if hasattr(dist_matrix, 'get') else np.asarray(dist_matrix)
+    dist_matrix = (
+        cp.asnumpy(dist_matrix) if hasattr(dist_matrix, "get") else np.asarray(dist_matrix)
+    )
     n = dist_matrix.shape[0]
     depot_set = set(depots)
     customers = [i for i in range(n) if i not in depot_set]
@@ -65,10 +70,10 @@ def brute_force_vrp(
     best_total = float("inf")
     best_makespan = float("inf")
 
-    # Enumerate all assignments: each customer → one of K vehicles
+    # Enumerate all assignments: each customer -> one of K vehicles
     for assignment in itertools.product(range(K), repeat=n_c):
         # Build per-vehicle customer groups
-        groups: List[List[int]] = [[] for _ in range(K)]
+        groups: list[list[int]] = [[] for _ in range(K)]
         for idx, v in enumerate(assignment):
             groups[v].append(customers[idx])
 
@@ -90,10 +95,7 @@ def brute_force_vrp(
             best_v = float("inf")
             for perm in itertools.permutations(grp):
                 full = [d] + list(perm) + [d]
-                c = sum(
-                    float(dist_matrix[full[i], full[i + 1]])
-                    for i in range(len(full) - 1)
-                )
+                c = sum(float(dist_matrix[full[i], full[i + 1]]) for i in range(len(full) - 1))
                 best_v = min(best_v, c)
 
             total_cost += best_v
@@ -107,30 +109,37 @@ def brute_force_vrp(
 
 # ─── Benchmark instances ─────────────────────────────────────────────────────
 
+
 def _eilon7_dist_matrix() -> cp.ndarray:
     """Eilon 7-node benchmark (E-n7, depots=0, customers 1-6)."""
-    return cp.array([
-        [0,  10, 20, 25, 12, 20,  2],
-        [10,  0, 25, 20, 20, 10, 11],
-        [20, 25,  0, 10, 25, 11, 25],
-        [25, 20, 10,  0, 30, 22, 10],
-        [12, 20, 25, 30,  0, 30, 20],
-        [20, 10, 11, 22, 30,  0, 12],
-        [2,  11, 25, 10, 20, 12,  0],
-    ], dtype=cp.float64)
+    return cp.array(
+        [
+            [0, 10, 20, 25, 12, 20, 2],
+            [10, 0, 25, 20, 20, 10, 11],
+            [20, 25, 0, 10, 25, 11, 25],
+            [25, 20, 10, 0, 30, 22, 10],
+            [12, 20, 25, 30, 0, 30, 20],
+            [20, 10, 11, 22, 30, 0, 12],
+            [2, 11, 25, 10, 20, 12, 0],
+        ],
+        dtype=cp.float64,
+    )
 
 
 def _asymmetric4_dist_matrix() -> cp.ndarray:
     """Custom asymmetric 4-node instance (depots=0)."""
-    return cp.array([
-        [0, 1, 4, 6],
-        [2, 0, 3, 5],
-        [4, 3, 0, 1],
-        [6, 5, 2, 0],
-    ], dtype=cp.float64)
+    return cp.array(
+        [
+            [0, 1, 4, 6],
+            [2, 0, 3, 5],
+            [4, 3, 0, 1],
+            [6, 5, 2, 0],
+        ],
+        dtype=cp.float64,
+    )
 
 
-def _multi_depot_line() -> Tuple[cp.ndarray, List[int]]:
+def _multi_depot_line() -> tuple[cp.ndarray, list[int]]:
     """6-node line graph with 2 depots. depots=[0,1], customers=2..5."""
     positions = [0, 10, 1, 2, 8, 9]
     n = len(positions)
@@ -141,20 +150,39 @@ def _multi_depot_line() -> Tuple[cp.ndarray, List[int]]:
     return cp.asarray(dm), [0, 1]
 
 
-def _eilon22_dist_matrix() -> Tuple[cp.ndarray, int]:
+def _eilon22_dist_matrix() -> tuple[cp.ndarray, int]:
     """E-n22-k4 benchmark. Returns (dist_matrix, num_vehicles=4).
 
     Coordinates from Christofides & Eilon (1969). Published optimal = 375.
     Distance: integer EUC_2D (TSPLIB convention: nint(sqrt(dx^2+dy^2))).
     """
-    coords = np.array([
-        (145, 215),  # 0 depot
-        (151, 264), (159, 261), (130, 254), (128, 252), (163, 247),
-        (146, 246), (161, 242), (142, 239), (163, 236), (148, 232),
-        (128, 231), (156, 217), (129, 214), (146, 208), (164, 208),
-        (141, 206), (147, 193), (164, 193), (129, 189), (155, 185),
-        (139, 182),
-    ], dtype=np.float64)
+    coords = np.array(
+        [
+            (145, 215),  # 0 depot
+            (151, 264),
+            (159, 261),
+            (130, 254),
+            (128, 252),
+            (163, 247),
+            (146, 246),
+            (161, 242),
+            (142, 239),
+            (163, 236),
+            (148, 232),
+            (128, 231),
+            (156, 217),
+            (129, 214),
+            (146, 208),
+            (164, 208),
+            (141, 206),
+            (147, 193),
+            (164, 193),
+            (129, 189),
+            (155, 185),
+            (139, 182),
+        ],
+        dtype=np.float64,
+    )
     n = len(coords)
     dm = np.zeros((n, n), dtype=np.float64)
     for i in range(n):
@@ -166,6 +194,7 @@ def _eilon22_dist_matrix() -> Tuple[cp.ndarray, int]:
 
 
 # ─── Helper: solver factory ─────────────────────────────────────────────────
+
 
 def _make_solver(name: str, alpha: float = 1.0):
     """Instantiate a solver by name."""
@@ -196,16 +225,16 @@ ALL_CPU_SOLVERS = ["mip_cpu", "mip_gpu"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. TestSolverOptimality — Solver correctness against brute-force optimal
+# 1. TestSolverOptimality  --  Solver correctness against brute-force optimal
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestSolverOptimality:
     """Verify solvers find solutions within tolerance of brute-force optimal."""
 
     # ── Eilon 7-node, makespan ────────────────────────────────────────
 
-    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS,
-                             ids=_solver_ids(MAKESPAN_SOLVERS))
+    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
     def test_eilon7_makespan(self, solver_name):
         dm = _eilon7_dist_matrix()
         _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
@@ -221,8 +250,7 @@ class TestSolverOptimality:
 
     # ── Eilon 7-node, total distance (alpha=0) ──────────────────────
 
-    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS,
-                             ids=_solver_ids(MAKESPAN_SOLVERS))
+    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
     def test_eilon7_total_distance(self, solver_name):
         dm = _eilon7_dist_matrix()
         bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
@@ -238,8 +266,7 @@ class TestSolverOptimality:
 
     # ── Multi-depot, makespan ────────────────────────────────────────
 
-    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS,
-                             ids=_solver_ids(MAKESPAN_SOLVERS))
+    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
     def test_multi_depot_makespan(self, solver_name):
         dm, depots = _multi_depot_line()
         _, bf_makespan = brute_force_vrp(dm, 2, depots, max_stops_per_vehicle=4)
@@ -255,8 +282,9 @@ class TestSolverOptimality:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. TestCVRPLIBBenchmark — Published benchmark regression
+# 2. TestCVRPLIBBenchmark  --  Published benchmark regression
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestCVRPLIBBenchmark:
     """Regression tests against published CVRPLIB benchmarks."""
@@ -275,8 +303,9 @@ class TestCVRPLIBBenchmark:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. TestSolverFeasibility — Structural invariants
+# 3. TestSolverFeasibility  --  Structural invariants
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestSolverFeasibility:
     """Run MIP solver and verify structural invariants."""
@@ -326,20 +355,16 @@ class TestSolverFeasibility:
         assert abs(sum(per_v) - result.total_cost) < 1e-3
 
     def test_closed_route_cost_includes_return(self, solved):
-        """Verify each vehicle's cost = depot → c1 → c2 → ... → depot."""
+        """Verify each vehicle's cost = depot -> c1 -> c2 -> ... -> depot."""
         result, dm = solved
         for v, route in enumerate(result.routes):
             if not route:
                 continue
             full = [0] + list(route) + [0]
-            expected = sum(
-                float(dm[full[i], full[i + 1]])
-                for i in range(len(full) - 1)
-            )
+            expected = sum(float(dm[full[i], full[i + 1]]) for i in range(len(full) - 1))
             actual = _per_vehicle_costs([route], dm, depots=[0])[0]
             assert abs(actual - expected) < 1e-6, (
-                f"Vehicle {v}: closed-route cost mismatch "
-                f"({actual:.4f} vs {expected:.4f})"
+                f"Vehicle {v}: closed-route cost mismatch ({actual:.4f} vs {expected:.4f})"
             )
 
 
@@ -347,10 +372,10 @@ class TestSolverFeasibility:
 # 4. TestSolverEdgeCases
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestSolverEdgeCases:
 
+class TestSolverEdgeCases:
     def test_single_customer(self):
-        """2 nodes, 1 vehicle → should visit the only customer."""
+        """2 nodes, 1 vehicle -> should visit the only customer."""
         dm = cp.array([[0, 5], [5, 0]], dtype=cp.float64)
         solver = MIPMakespanCPU(time_limit=30, mip_gap=0.05)
         result = solver.solve(dm, num_vehicles=1, depots=[0], alpha=1.0)
@@ -360,12 +385,15 @@ class TestSolverEdgeCases:
 
     def test_more_vehicles_than_customers(self):
         """3 customers, 5 vehicles via MIP."""
-        dm = cp.array([
-            [0, 1, 2, 3],
-            [1, 0, 1, 2],
-            [2, 1, 0, 1],
-            [3, 2, 1, 0],
-        ], dtype=cp.float64)
+        dm = cp.array(
+            [
+                [0, 1, 2, 3],
+                [1, 0, 1, 2],
+                [2, 1, 0, 1],
+                [3, 2, 1, 0],
+            ],
+            dtype=cp.float64,
+        )
         solver = MIPMakespanCPU(time_limit=30, mip_gap=0.05)
         result = solver.solve(dm, num_vehicles=5, depots=[0, 0, 0, 0, 0], alpha=1.0)
         assert result.status == "success"
@@ -376,16 +404,18 @@ class TestSolverEdgeCases:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5. TestSolveVRPEntryPoint — Unified solve_vrp() function
+# 5. TestSolveVRPEntryPoint  --  Unified solve_vrp() function
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestSolveVRPEntryPoint:
 
+class TestSolveVRPEntryPoint:
     def test_alpha_1_makespan(self):
         """solve_vrp with alpha=1.0 returns valid makespan-optimised result."""
         dm = _eilon7_dist_matrix()
         result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
+            cp.asarray(dm),
+            num_vehicles=2,
+            depots=[0, 0],
             alpha=1.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
@@ -398,7 +428,9 @@ class TestSolveVRPEntryPoint:
         """solve_vrp with alpha=0.0 returns valid total-distance result."""
         dm = _eilon7_dist_matrix()
         result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
+            cp.asarray(dm),
+            num_vehicles=2,
+            depots=[0, 0],
             alpha=0.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
@@ -412,18 +444,22 @@ class TestSolveVRPEntryPoint:
         assert visited == set(range(1, 7))
 
     def test_makespan_leq_total_distance_makespan(self):
-        """Makespan-objective solution should have ≤ makespan than
+        """Makespan-objective solution should have <= makespan than
         total-distance-objective solution (or within tolerance)."""
         dm = _eilon7_dist_matrix()
         td_result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
+            cp.asarray(dm),
+            num_vehicles=2,
+            depots=[0, 0],
             alpha=0.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
             mip_gap=0.05,
         )
         ms_result = solve_vrp(
-            cp.asarray(dm), num_vehicles=2, depots=[0, 0],
+            cp.asarray(dm),
+            num_vehicles=2,
+            depots=[0, 0],
             alpha=1.0,
             backend=VRPBackend.HIGHS,
             time_limit=60,
@@ -440,8 +476,9 @@ class TestSolveVRPEntryPoint:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. TestCombinedObjective — Alpha-blended objective
+# 6. TestCombinedObjective  --  Alpha-blended objective
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestCombinedObjective:
     """Verify combined-objective behaviour across alpha values."""
@@ -450,8 +487,15 @@ class TestCombinedObjective:
         """alpha=1.0 should produce near-optimal makespan."""
         dm = _eilon7_dist_matrix()
         _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=1.0,
-                           backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
+        result = solve_vrp(
+            cp.asarray(dm),
+            num_vehicles=2,
+            depots=[0, 0],
+            alpha=1.0,
+            backend=VRPBackend.HIGHS,
+            time_limit=60,
+            mip_gap=0.05,
+        )
         assert result.status == "success"
         tol = MIP_GAP + 0.01
         assert result.makespan <= bf_makespan * (1 + tol)
@@ -460,8 +504,15 @@ class TestCombinedObjective:
         """alpha=0.0 should produce near-optimal total distance."""
         dm = _eilon7_dist_matrix()
         bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=0.0,
-                           backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
+        result = solve_vrp(
+            cp.asarray(dm),
+            num_vehicles=2,
+            depots=[0, 0],
+            alpha=0.0,
+            backend=VRPBackend.HIGHS,
+            time_limit=60,
+            mip_gap=0.05,
+        )
         assert result.status == "success"
         tol = MIP_GAP + 0.01
         assert result.total_cost <= bf_total * (1 + tol)
@@ -469,8 +520,15 @@ class TestCombinedObjective:
     def test_alpha_05_tradeoff(self):
         """alpha=0.5 should produce a valid intermediate solution."""
         dm = _eilon7_dist_matrix()
-        result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=0.5,
-                           backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
+        result = solve_vrp(
+            cp.asarray(dm),
+            num_vehicles=2,
+            depots=[0, 0],
+            alpha=0.5,
+            backend=VRPBackend.HIGHS,
+            time_limit=60,
+            mip_gap=0.05,
+        )
         assert result.status == "success"
         assert result.alpha == 0.5
         assert result.objective_value == pytest.approx(
@@ -494,8 +552,15 @@ class TestCombinedObjective:
         """VRPResult.objective_value should be alpha*makespan + (1-alpha)*total_cost."""
         dm = _eilon7_dist_matrix()
         for alpha in [0.0, 0.3, 0.7, 1.0]:
-            result = solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=alpha,
-                               backend=VRPBackend.HIGHS, time_limit=60, mip_gap=0.05)
+            result = solve_vrp(
+                cp.asarray(dm),
+                num_vehicles=2,
+                depots=[0, 0],
+                alpha=alpha,
+                backend=VRPBackend.HIGHS,
+                time_limit=60,
+                mip_gap=0.05,
+            )
             if result.status == "success":
                 expected = alpha * result.makespan + (1 - alpha) * result.total_cost
                 assert result.objective_value == pytest.approx(expected)
@@ -505,8 +570,8 @@ class TestCombinedObjective:
 # 7. TestNearestNeighborWarmstart
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestNearestNeighborWarmstart:
 
+class TestNearestNeighborWarmstart:
     def test_all_customers_visited(self):
         dm = _eilon7_dist_matrix()
         routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depots=[0, 0])
@@ -533,13 +598,14 @@ class TestNearestNeighborWarmstart:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 8. TestReservationTable — Collision avoidance core
+# 8. TestReservationTable  --  Collision avoidance core
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestReservationTable:
 
+class TestReservationTable:
     def _make_table(self, shape=(10, 10, 10), T=20, radius=0.0):
         from VRP.mapf.reservation_table import ReservationTable
+
         return ReservationTable(shape, T, robot_collision_radius=radius)
 
     def test_commit_and_query(self):
@@ -551,7 +617,7 @@ class TestReservationTable:
         assert rt.is_reserved(3, 4, 5, 0) is True
         assert rt.is_reserved(3, 5, 5, 1) is True
         assert rt.is_reserved(3, 4, 5, 1) is False  # different time
-        assert rt.is_reserved(0, 0, 0, 0) is False   # uncommitted cell
+        assert rt.is_reserved(0, 0, 0, 0) is False  # uncommitted cell
 
     def test_sphere_inflation(self):
         """Sphere with radius=1.75 covers all 27 cells in the 3x3x3 cube."""
@@ -572,12 +638,12 @@ class TestReservationTable:
 
         # Outside the sphere should be free
         assert rt.is_reserved(5, 5, 5, 4) is False  # different time
-        assert rt.is_reserved(3, 5, 5, 3) is False   # outside sphere
+        assert rt.is_reserved(3, 5, 5, 3) is False  # outside sphere
 
     def test_boundary_no_crash(self):
         """Commit near grid boundary with inflation doesn't crash."""
         rt = self._make_table(shape=(5, 5, 5), T=5, radius=2.5)
-        # Point at corner: (0, 0, 0) — sphere extends outside grid
+        # Point at corner: (0, 0, 0)  --  sphere extends outside grid
         positions = cp.array([[0, 0, 0]], dtype=cp.intp)
         times = cp.array([0], dtype=cp.intp)
         rt.commit_trajectory(positions, times)  # should not crash
@@ -596,14 +662,15 @@ class TestReservationTable:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 9. TestSpaceTimeAStar — Pathfinding
+# 9. TestSpaceTimeAStar  --  Pathfinding
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestSpaceTimeAStar:
 
+class TestSpaceTimeAStar:
     def _make_og_and_table(self, shape=(20, 20, 20), T=100):
-        from VRP.mapf.reservation_table import ReservationTable
         from shared.occupancy_grid import OccupancyGrid
+        from VRP.mapf.reservation_table import ReservationTable
+
         grid = cp.zeros(shape, dtype=cp.bool_)
         og = OccupancyGrid(grid=grid, origin=cp.zeros(3, dtype=cp.float64), resolution=1.0)
         rt = ReservationTable(shape, T, robot_collision_radius=0.0)
@@ -611,6 +678,7 @@ class TestSpaceTimeAStar:
 
     def test_open_grid_finds_path(self):
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
+
         og, rt = self._make_og_and_table()
         start = cp.array([2, 2, 2], dtype=cp.intp)
         goal = cp.array([15, 15, 15], dtype=cp.intp)
@@ -625,6 +693,7 @@ class TestSpaceTimeAStar:
     def test_navigates_around_wall(self):
         """A* finds a path through a gap in a wall."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
+
         og, rt = self._make_og_and_table()
         # Build a wall at x=10 for all y except y=10
         for y in range(20):
@@ -642,6 +711,7 @@ class TestSpaceTimeAStar:
     def test_blocked_goal_returns_none(self):
         """Occupied goal -> None."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
+
         og, rt = self._make_og_and_table()
         og.grid[15, 15, 15] = True
 
@@ -653,9 +723,10 @@ class TestSpaceTimeAStar:
 
     def test_avoids_reserved_cells(self):
         """A* detours around time-reserved cells."""
-        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-        from VRP.mapf.reservation_table import ReservationTable
         from shared.occupancy_grid import OccupancyGrid
+        from VRP.mapf.reservation_table import ReservationTable
+        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
+
         grid = cp.zeros((10, 10, 1), dtype=cp.bool_)
         og = OccupancyGrid(grid=grid, origin=cp.zeros(3, dtype=cp.float64), resolution=1.0)
         rt = ReservationTable((10, 10, 1), 50, robot_collision_radius=0.0)
@@ -678,14 +749,20 @@ class TestSpaceTimeAStar:
 
         # Verify no path cell collides with reservations
         for i in range(len(path_ijk_np)):
-            assert not rt.is_reserved(
-                int(path_ijk_np[i, 0]), int(path_ijk_np[i, 1]),
-                int(path_ijk_np[i, 2]), int(path_t_np[i]),
-            ) or i == 0  # start position at t=0 is not reserved
+            assert (
+                not rt.is_reserved(
+                    int(path_ijk_np[i, 0]),
+                    int(path_ijk_np[i, 1]),
+                    int(path_ijk_np[i, 2]),
+                    int(path_t_np[i]),
+                )
+                or i == 0
+            )  # start position at t=0 is not reserved
 
     def test_same_start_goal(self):
         """Returns single-point path when start == goal."""
         from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
+
         og, rt = self._make_og_and_table()
         point = cp.array([5, 5, 5], dtype=cp.intp)
 
@@ -700,11 +777,12 @@ class TestSpaceTimeAStar:
 # 10. TestCoordinateTransforms
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestCoordinateTransforms:
 
+class TestCoordinateTransforms:
     def test_round_trip(self):
         """world -> voxel -> world is within res/2 per axis."""
         from shared.occupancy_grid import OccupancyGrid
+
         res = 0.5
         og = OccupancyGrid(
             grid=cp.zeros((100, 100, 100), dtype=cp.bool_),
@@ -717,13 +795,12 @@ class TestCoordinateTransforms:
         recovered = og.voxel_to_world(ijk).get()[0]
 
         diff = np.abs(recovered - xyz.get()[0])
-        assert np.all(diff <= res), (
-            f"Round-trip error too large: diff={diff}, max allowed={res}"
-        )
+        assert np.all(diff <= res), f"Round-trip error too large: diff={diff}, max allowed={res}"
 
     def test_known_values(self):
         """(1.0, 2.0, 3.0) at res=0.5 -> voxel (2, 4, 6) -> world (1.25, 2.25, 3.25)."""
         from shared.occupancy_grid import OccupancyGrid
+
         res = 0.5
         og = OccupancyGrid(
             grid=cp.zeros((100, 100, 100), dtype=cp.bool_),
@@ -743,43 +820,50 @@ class TestCoordinateTransforms:
 # 11. TestHelperFunctions
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestHelperFunctions:
 
+class TestHelperFunctions:
     def test_cost_uses_forward_direction(self):
-        """Asymmetric matrix: cost(0→1→2→0) uses d[0,1]+d[1,2]+d[2,0]."""
-        dm = cp.array([
-            [0, 1, 99],
-            [99, 0, 2],
-            [3, 99, 0],
-        ], dtype=cp.float64)
+        """Asymmetric matrix: cost(0->1->2->0) uses d[0,1]+d[1,2]+d[2,0]."""
+        dm = cp.array(
+            [
+                [0, 1, 99],
+                [99, 0, 2],
+                [3, 99, 0],
+            ],
+            dtype=cp.float64,
+        )
         cost = _compute_route_cost([[1, 2]], dm, depots=[0])
-        # 0→1 + 1→2 + 2→0 = 1 + 2 + 3 = 6
+        # 0->1 + 1->2 + 2->0 = 1 + 2 + 3 = 6
         assert abs(cost - 6.0) < 1e-6
 
     def test_per_vehicle_costs_multi_depot(self):
         """Each vehicle's cost computed from its own depot."""
-        dm = cp.array([
-            [0, 10, 20, 30],
-            [10, 0, 15, 25],
-            [20, 15, 0, 5],
-            [30, 25, 5, 0],
-        ], dtype=cp.float64)
-        # Vehicle 0: depots=0, route=[2] → 0→2→0 = 20+20 = 40
-        # Vehicle 1: depots=1, route=[3] → 1→3→1 = 25+25 = 50
+        dm = cp.array(
+            [
+                [0, 10, 20, 30],
+                [10, 0, 15, 25],
+                [20, 15, 0, 5],
+                [30, 25, 5, 0],
+            ],
+            dtype=cp.float64,
+        )
+        # Vehicle 0: depots=0, route=[2] -> 0->2->0 = 20+20 = 40
+        # Vehicle 1: depots=1, route=[3] -> 1->3->1 = 25+25 = 50
         per_v = _per_vehicle_costs([[2], [3]], dm, depots=[0, 1])
         assert abs(per_v[0] - 40.0) < 1e-6
         assert abs(per_v[1] - 50.0) < 1e-6
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 11. TestTrajectoryCollisions — GPU-vectorized AABB collision detection
+# 11. TestTrajectoryCollisions  --  GPU-vectorized AABB collision detection
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestTrajectoryCollisions:
 
+class TestTrajectoryCollisions:
     def test_no_collision_parallel_paths(self):
         """Two robots moving in parallel far apart produce no collisions."""
-        from VRP.core.collision import find_trajectory_collisions
+        from VRP.utils.collision import find_trajectory_collisions
+
         T = 50
         traj_a = cp.array([[0.0, 0.0, float(t) * 0.1] for t in range(T)], dtype=cp.float32)
         traj_b = cp.array([[5.0, 5.0, float(t) * 0.1] for t in range(T)], dtype=cp.float32)
@@ -788,7 +872,8 @@ class TestTrajectoryCollisions:
 
     def test_head_on_collision_detected(self):
         """Two robots crossing the same point detect overlap."""
-        from VRP.core.collision import find_trajectory_collisions
+        from VRP.utils.collision import find_trajectory_collisions
+
         T = 20
         # Robot A moves along +X, Robot B moves along -X; they cross at x=0
         traj_a = cp.array([[float(t) - 10.0, 0.0, 0.0] for t in range(T)], dtype=cp.float32)
@@ -796,13 +881,14 @@ class TestTrajectoryCollisions:
         collisions = find_trajectory_collisions([traj_a, traj_b])
         assert len(collisions) > 0
         # Verify tuple format: (step, robot_a, robot_b, penetration)
-        for step, ra, rb, pen in collisions:
+        for _step, ra, rb, pen in collisions:
             assert ra == 0 and rb == 1
             assert pen > 0.0
 
     def test_padding_shorter_trajectory(self):
         """Robots with different trajectory lengths are padded correctly."""
-        from VRP.core.collision import find_trajectory_collisions
+        from VRP.utils.collision import find_trajectory_collisions
+
         # Robot A: 10 steps far away; Robot B: 5 steps far away
         traj_a = cp.array([[100.0, 0.0, 0.0]] * 10, dtype=cp.float32)
         traj_b = cp.array([[-100.0, 0.0, 0.0]] * 5, dtype=cp.float32)
@@ -811,14 +897,16 @@ class TestTrajectoryCollisions:
 
     def test_single_robot_no_collision(self):
         """A single robot cannot collide with itself."""
-        from VRP.core.collision import find_trajectory_collisions
+        from VRP.utils.collision import find_trajectory_collisions
+
         traj = cp.array([[0.0, 0.0, float(t)] for t in range(10)], dtype=cp.float32)
         collisions = find_trajectory_collisions([traj])
         assert collisions == []
 
     def test_cupy_input_accepted(self):
         """Function accepts CuPy arrays as trajectory positions."""
-        from VRP.core.collision import find_trajectory_collisions
+        from VRP.utils.collision import find_trajectory_collisions
+
         T = 10
         traj_a = cp.array([[0.0, 0.0, float(t)] for t in range(T)], dtype=cp.float32)
         traj_b = cp.array([[100.0, 0.0, float(t)] for t in range(T)], dtype=cp.float32)

@@ -23,10 +23,10 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from experiments.common.config import ModelConfig, RESULTS_DIR
+from experiments.common.config import RESULTS_DIR, ModelConfig
 from experiments.common.persistence import load_run_result
 
-# visualization_isaac uses lazy pxr/omni imports — safe to import before SimulationApp
+# visualization_isaac uses lazy pxr/omni imports  --  safe to import before SimulationApp
 from visualization_isaac.visibility.set_cover import SetCoverVisualizer
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,10 @@ VIZ_DIR = os.path.join(RESULTS_DIR, "e01_sampling_strategy", "viz")
 def _list_available():
     if not os.path.isdir(VIZ_DIR):
         print(f"No viz data found at {VIZ_DIR}")
-        print("Run e01 first: conda run -n isaaclab python -m experiments.e01_sampling_strategy"
-              " --section A --seeds 42")
+        print(
+            "Run e01 first: conda run -n isaaclab python -m experiments.e01_sampling_strategy"
+            " --section A --seeds 42"
+        )
         return
     files = sorted(f.replace(".json", "") for f in os.listdir(VIZ_DIR) if f.endswith(".json"))
     print(f"Available viz runs in {VIZ_DIR}:")
@@ -58,8 +60,11 @@ def _load_viz(strategy: str, seed: int = 42):
 
 def main():
     p = argparse.ArgumentParser(description="Replay E01: Sampling Strategy in Isaac Sim")
-    p.add_argument("--strategy", default="targeted_50",
-                   help="Sampling strategy to replay (e.g. targeted_50, weighted, cmaes_50)")
+    p.add_argument(
+        "--strategy",
+        default="targeted_50",
+        help="Sampling strategy to replay (e.g. targeted_50, weighted, cmaes_50)",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--list", action="store_true", help="List available viz runs and exit")
     p.add_argument("--headless", action="store_true")
@@ -80,12 +85,16 @@ def main():
     data = _load_viz(args.strategy, args.seed)
 
     target_points = data["target_points"]
-    logger.info("  %d selected viewpoints, coverage=%.2f%%",
-                int(data["num_viewpoints"]), float(data["coverage"]) * 100)
+    logger.info(
+        "  %d selected viewpoints, coverage=%.2f%%",
+        int(data["num_viewpoints"]),
+        float(data["coverage"]) * 100,
+    )
 
     # ── Load mesh ──────────────────────────────────────────────────────────
     from shared.mesh_loader import load_and_transform_mesh
     from VRP.core.constants import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH
+
     mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
 
     # ── Frustum params ─────────────────────────────────────────────────────
@@ -93,8 +102,10 @@ def main():
     frustum_params = cfg.frustum
 
     # ── Reconstruct OptimizationResult-like object ─────────────────────────
-    import cupy as cp
     from types import SimpleNamespace
+
+    import cupy as cp
+
     result = SimpleNamespace(
         positions=cp.asarray(data["positions"]),
         rotations=cp.asarray(data["rotations"]),
@@ -110,9 +121,7 @@ def main():
     except ImportError:
         from isaacsim import SimulationApp  # type: ignore
 
-    simulation_app = SimulationApp(
-        {"headless": args.headless, "width": "1920", "height": "1080"}
-    )
+    simulation_app = SimulationApp({"headless": args.headless, "width": "1920", "height": "1080"})
 
     from omni.isaac.core import World  # type: ignore
 
@@ -127,8 +136,12 @@ def main():
     viz = SetCoverVisualizer(mesh, target_points, frustum_params)
     viz.add_solution(stage, "/World/E01", result)
 
-    logger.info("Scene ready — %d viewpoints for strategy=%s (coverage=%.2f%%)",
-                result.num_viewpoints, args.strategy, result.total_coverage * 100)
+    logger.info(
+        "Scene ready — %d viewpoints for strategy=%s (coverage=%.2f%%)",
+        result.num_viewpoints,
+        args.strategy,
+        result.total_coverage * 100,
+    )
     logger.info("Close the Isaac Sim window to exit.")
 
     while simulation_app.is_running():

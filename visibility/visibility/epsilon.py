@@ -1,16 +1,19 @@
 import logging
-import numpy as np
-import open3d as o3d
-from numpy.linalg import norm
 import time
-from typing import Tuple, Optional
 
-from ..core.types import FrustumParams, EpsilonHyperparams
-from .base import VisibilityQuery
+import numpy as np
+from numpy.linalg import norm
+
 from ..core.constants import (
-    NORM_EPS, DELTA_AGG_FUNCS, GAMMA_AGG_FUNCS,
-    DELTA_DEFAULT, DELTA_SAMPLE_SIZE, GAMMA_FALLBACK_DIVISOR,
+    DELTA_AGG_FUNCS,
+    DELTA_DEFAULT,
+    DELTA_SAMPLE_SIZE,
+    GAMMA_AGG_FUNCS,
+    GAMMA_FALLBACK_DIVISOR,
+    NORM_EPS,
 )
+from ..core.types import EpsilonHyperparams, FrustumParams
+from .base import VisibilityQuery
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +25,14 @@ class EpsilonVisibilityQuery(VisibilityQuery):
     Implements epsilon-based occlusion via radial partitioning (Algorithm 5.1).
     """
 
-    def __init__(self, target_points: np.ndarray,
-                 normals: np.ndarray, frustum_params: FrustumParams,
-                 epsilon_deg: Optional[float] = None,
-                 hyperparams: EpsilonHyperparams = EpsilonHyperparams()):
+    def __init__(
+        self,
+        target_points: np.ndarray,
+        normals: np.ndarray,
+        frustum_params: FrustumParams,
+        epsilon_deg: float | None = None,
+        hyperparams: EpsilonHyperparams = EpsilonHyperparams(),
+    ):
         super().__init__(target_points, normals, frustum_params)
         self.hp = hyperparams
 
@@ -33,8 +40,9 @@ class EpsilonVisibilityQuery(VisibilityQuery):
             logger.info("Using provided epsilon: %s degrees", epsilon_deg)
             self.fixed_epsilon = np.deg2rad(epsilon_deg)
             self.delta = None
-            logger.info("Using Epsilon (radians): %.6f (%.3f degrees)",
-                        self.fixed_epsilon, epsilon_deg)
+            logger.info(
+                "Using Epsilon (radians): %.6f (%.3f degrees)", self.fixed_epsilon, epsilon_deg
+            )
         else:
             logger.info("Epsilon not provided, estimating δ from point set...")
             self.fixed_epsilon = None
@@ -59,7 +67,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         return agg_func(distances) if distances else DELTA_DEFAULT
 
     def _compute_epsilon(self, distances, front_facing):
-        """Compute per-viewpoint ε = 2·arctan(δ/(4γ)) where γ = characteristic viewing distance."""
+        """Compute per-viewpoint ε = 2.arctan(δ/(4γ)) where γ = characteristic viewing distance."""
         front_distances = distances[front_facing]
         gamma_func = GAMMA_AGG_FUNCS[self.hp.gamma_method]
         if len(front_distances) == 0:
@@ -104,9 +112,14 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         comp_time = time.perf_counter() - start
         return visible_indices, comp_time
 
-    def _check_occlusion(self, viewpoint: np.ndarray, points: np.ndarray,
-                         normals: np.ndarray, front_facing: np.ndarray,
-                         epsilon: float) -> np.ndarray:
+    def _check_occlusion(
+        self,
+        viewpoint: np.ndarray,
+        points: np.ndarray,
+        normals: np.ndarray,
+        front_facing: np.ndarray,
+        epsilon: float,
+    ) -> np.ndarray:
         """Check occlusion using radial partitioning (Algorithm 5.1)."""
         num_points = len(points)
         if num_points == 0:
@@ -123,7 +136,7 @@ class EpsilonVisibilityQuery(VisibilityQuery):
         relative_vectors = points - viewpoint
         distances = norm(relative_vectors, axis=1)
 
-        # Spherical binning — scoped to frustum culled target points angular extents
+        # Spherical binning  --  scoped to frustum culled target points angular extents
         theta = np.arctan2(relative_vectors[:, 1], relative_vectors[:, 0])
         phi = np.arcsin(np.clip(relative_vectors[:, 2] / (distances + NORM_EPS), -1, 1))
 

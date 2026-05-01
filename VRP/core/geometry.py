@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from typing import List
 
 import cupy as cp
 import numpy as np
@@ -17,7 +16,7 @@ def compute_start_grid(
     mesh_bounds_max: np.ndarray,
     z_above: float = 1.0,
     spacing: float = 1.5,
-) -> List[np.ndarray]:
+) -> list[np.ndarray]:
     """Return per-robot start positions above the mesh centre.
 
     The ``num_robots`` start positions are arranged in a rectangular grid
@@ -49,7 +48,7 @@ def compute_start_grid(
     cols = math.ceil(math.sqrt(num_robots))
     rows = math.ceil(num_robots / cols)
 
-    start_positions: List[np.ndarray] = []
+    start_positions: list[np.ndarray] = []
     for idx in range(num_robots):
         r = idx // cols
         c = idx % cols
@@ -74,12 +73,12 @@ def viewpoints_to_robot_waypoints(
     Home nodes are returned unchanged (no camera offset).
 
     Args:
-        positions:    (N, 3) CuPy — viewpoint/camera positions.
-        rotmats:      (N, 3, 3) CuPy — rotation matrices (column 0 = forward).
-        home_indices: set of int — indices of home/depot nodes.
+        positions:    (N, 3) CuPy  --  viewpoint/camera positions.
+        rotmats:      (N, 3, 3) CuPy  --  rotation matrices (column 0 = forward).
+        home_indices: set of int  --  indices of home/depot nodes.
 
     Returns:
-        (N, 3) CuPy — robot body-centre positions.
+        (N, 3) CuPy  --  robot body-centre positions.
     """
     xyz = positions.copy()
 

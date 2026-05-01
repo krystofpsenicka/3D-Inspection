@@ -10,7 +10,7 @@ import cupy as cp
 import numpy as np
 import open3d as o3d
 
-from .config import ModelConfig, FrustumConfig
+from .config import FrustumConfig, ModelConfig
 
 # Ensure project root is importable
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class DegenerateNormalsError(Exception):
     """Raised when surface normals are degenerate (all pointing same direction)."""
+
     pass
 
 
@@ -42,8 +43,11 @@ def _check_normals(normals_np: np.ndarray, threshold_deg: float = 30.0) -> bool:
     angles_deg = np.degrees(np.arccos(np.abs(dots)))
     spread = np.percentile(angles_deg, 90)
     if spread < threshold_deg:
-        logger.warning("  Degenerate normals: 90th-pct angle spread = %.1f° < %.1f° threshold",
-                        spread, threshold_deg)
+        logger.warning(
+            "  Degenerate normals: 90th-pct angle spread = %.1f° < %.1f° threshold",
+            spread,
+            threshold_deg,
+        )
         return False
     return True
 
@@ -73,27 +77,34 @@ class PipelineContext:
 
         from shared.mesh_loader import load_and_transform_mesh
 
-        logger.info("Loading mesh: %s (target_length=%.1f)",
-                    self.model.name, self.model.target_length)
+        logger.info(
+            "Loading mesh: %s (target_length=%.1f)", self.model.name, self.model.target_length
+        )
         self._raw_tm = load_and_transform_mesh(
-            self.model.mesh_path, self.model.target_length, self.model.mesh_pose,
+            self.model.mesh_path,
+            self.model.target_length,
+            self.model.mesh_pose,
         )
         self._o3d_mesh = o3d.geometry.TriangleMesh()
-        self._o3d_mesh.vertices = o3d.utility.Vector3dVector(
-            np.asarray(self._raw_tm.vertices))
-        self._o3d_mesh.triangles = o3d.utility.Vector3iVector(
-            np.asarray(self._raw_tm.faces))
+        self._o3d_mesh.vertices = o3d.utility.Vector3dVector(np.asarray(self._raw_tm.vertices))
+        self._o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(self._raw_tm.faces))
         self._o3d_mesh.compute_vertex_normals()
 
-        logger.info("  Mesh bounds: %s → %s",
-                    self._raw_tm.bounds[0].round(2), self._raw_tm.bounds[1].round(2))
+        logger.info(
+            "  Mesh bounds: %s → %s",
+            self._raw_tm.bounds[0].round(2),
+            self._raw_tm.bounds[1].round(2),
+        )
         return self._raw_tm, self._o3d_mesh
 
     def sample_surface(self, num_points: int | None = None, seed: int = 42):
         """Sample surface points + normals. Cached per seed+num_points."""
         n = num_points or self.model.num_surface_points
-        if (self._target_points is not None and self._surface_seed == seed
-                and len(self._target_points) == n):
+        if (
+            self._target_points is not None
+            and self._surface_seed == seed
+            and len(self._target_points) == n
+        ):
             return self._target_points, self._normals
 
         _, o3d_mesh = self.load_mesh()
@@ -127,16 +138,20 @@ class PipelineContext:
         from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
 
         min_clearance = 2 * self.model.collision_radius
-        logger.info("Building sampling OG (res=%.2f, clearance=%.2f) ...",
-                    self.model.voxel_resolution, min_clearance)
+        logger.info(
+            "Building sampling OG (res=%.2f, clearance=%.2f) ...",
+            self.model.voxel_resolution,
+            min_clearance,
+        )
         self._sampling_og = build_sampling_occupancy_grid(
             mesh=o3d_mesh,
             frustum_far=self.model.frustum.far,
             min_clearance=min_clearance,
             resolution=self.model.voxel_resolution,
         )
-        logger.info("  OG shape: %s  free=%d",
-                    self._sampling_og.grid.shape, self._sampling_og.num_free)
+        logger.info(
+            "  OG shape: %s  free=%d", self._sampling_og.grid.shape, self._sampling_og.num_free
+        )
         return self._sampling_og
 
     def build_visibility_query(self, method: str = "raycast"):
@@ -162,14 +177,19 @@ class PipelineContext:
 
         if method == "raycast":
             from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
+
             query = RaycastingVisibilityQueryCuda(
-                mesh=o3d_mesh, target_points=target_points,
-                normals=normals, frustum_params=frustum_params,
+                mesh=o3d_mesh,
+                target_points=target_points,
+                normals=normals,
+                frustum_params=frustum_params,
             )
         elif method == "epsilon":
             from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
+
             query = EpsilonVisibilityQueryCuda(
-                target_points=target_points, normals=normals,
+                target_points=target_points,
+                normals=normals,
                 frustum_params=frustum_params,
             )
         else:
@@ -194,18 +214,24 @@ class PipelineContext:
 
         if strategy in ("weighted", "targeted"):
             from visibility.sampling import TargetedViewpointSampler
+
             sampler = TargetedViewpointSampler(
-                mesh=o3d_mesh, target_points=target_points,
-                normals=normals, frustum_far=self.model.frustum.far,
+                mesh=o3d_mesh,
+                target_points=target_points,
+                normals=normals,
+                frustum_far=self.model.frustum.far,
                 collision_radius=self.model.collision_radius,
                 occupancy_grid=og,
             )
         elif strategy == "optimizing":
-            from visibility.sampling import OptimizingSampler, CMAESBackend
+            from visibility.sampling import CMAESBackend, OptimizingSampler
+
             base_sampler = self.build_sampler("targeted")
             sampler = OptimizingSampler(
-                mesh=o3d_mesh, target_points=target_points,
-                normals=normals, frustum_far=self.model.frustum.far,
+                mesh=o3d_mesh,
+                target_points=target_points,
+                normals=normals,
+                frustum_far=self.model.frustum.far,
                 collision_radius=self.model.collision_radius,
                 occupancy_grid=og,
                 backend=CMAESBackend(),

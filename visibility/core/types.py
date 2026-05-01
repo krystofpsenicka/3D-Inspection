@@ -1,8 +1,8 @@
+from dataclasses import dataclass
+
 import cupy as cp
 import numpy as np
 from numpy.linalg import norm
-from dataclasses import dataclass, field
-from typing import Optional
 
 from .constants import NORM_EPS
 
@@ -18,6 +18,7 @@ def normalize_vector(v: np.ndarray) -> np.ndarray:
 @dataclass
 class FrustumParams:
     """Parameters defining the camera view frustum."""
+
     fov_y: float  # Field of View in Y-direction (radians)
     aspect: float  # Aspect ratio (width/height)
     near: float  # Near plane distance
@@ -27,6 +28,7 @@ class FrustumParams:
 @dataclass
 class EpsilonHyperparams:
     """Tunable hyperparameters for epsilon-visibility."""
+
     gamma_method: str = "p30"
     epsilon_scale: float = 1.2
     delta_k: int = 8
@@ -37,11 +39,12 @@ class EpsilonHyperparams:
 @dataclass
 class OptimizationResult:
     """Result from set-cover optimization. GPU arrays (CuPy) unless noted."""
-    positions: cp.ndarray                    # (K, 3) selected viewpoint positions
-    rotations: cp.ndarray                    # (K, 3, 3) selected rotation matrices
-    visibility_map: cp.ndarray               # (K, M) uint8 — selected viewpoints' visibility
+
+    positions: cp.ndarray  # (K, 3) selected viewpoint positions
+    rotations: cp.ndarray  # (K, 3, 3) selected rotation matrices
+    visibility_map: cp.ndarray  # (K, M) uint8 — selected viewpoints' visibility
     total_coverage: float
     num_viewpoints: int
     redundancy: float
     optimization_time: float
-    selected_indices: Optional[np.ndarray] = None  # (K,) int — indices into candidate pool
+    selected_indices: np.ndarray | None = None  # (K,) int — indices into candidate pool

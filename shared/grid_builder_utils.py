@@ -12,15 +12,13 @@ converted to CuPy (GPU) at the boundary and stay on GPU from there.
 from __future__ import annotations
 
 import logging
-import os
-from typing import Optional, Tuple
 
 import cupy as cp
 import numpy as np
 import trimesh
 
-from .occupancy_grid import OccupancyGrid
 from .grid_utils import inflate_grid
+from .occupancy_grid import OccupancyGrid
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +52,7 @@ def _map_voxels_to_grid(
     result = cp.zeros(tuple(grid_shape), dtype=cp.bool_)
     vox_matrix = cp.asarray(vg.matrix)
     vox_world_origin = cp.asarray(vg.transform[:3, 3])
-    vox_origin_ijk = cp.floor(
-        (vox_world_origin - origin) / resolution
-    ).astype(cp.int32)
+    vox_origin_ijk = cp.floor((vox_world_origin - origin) / resolution).astype(cp.int32)
     grid_shape_gpu = cp.asarray(grid_shape)
     vox_shape_gpu = cp.asarray(vox_matrix.shape)
     dst_min = cp.maximum(vox_origin_ijk, 0)
@@ -78,7 +74,7 @@ def voxelize_mesh(
     origin: cp.ndarray,
     resolution: float,
     fill_interior: bool = False,
-) -> Tuple[cp.ndarray, cp.ndarray]:
+) -> tuple[cp.ndarray, cp.ndarray]:
     """Voxelize a trimesh mesh into GPU-resident occupancy grids.
 
     Returns
@@ -92,7 +88,9 @@ def voxelize_mesh(
     fill_label = "Filled" if fill_interior else "Surface-only"
     logger.info(
         "[voxelize_mesh] %s voxelization: %s voxels occupied (shape %s)",
-        fill_label, int(vg.matrix.sum()), vg.matrix.shape,
+        fill_label,
+        int(vg.matrix.sum()),
+        vg.matrix.shape,
     )
 
     raw_grid = _map_voxels_to_grid(vg, grid_shape, origin, resolution)
@@ -100,7 +98,8 @@ def voxelize_mesh(
 
     logger.info(
         "[voxelize_mesh] Mesh voxels occupied: %d (raw), %d (filled)",
-        int(raw_grid.sum()), int(filled_raw_grid.sum()),
+        int(raw_grid.sum()),
+        int(filled_raw_grid.sum()),
     )
     return raw_grid, filled_raw_grid
 
@@ -110,15 +109,15 @@ def compute_grid_bounds(
     bounds_max: np.ndarray,
     padding: float,
     resolution: float,
-    extra_free_points: Optional[np.ndarray] = None,
+    extra_free_points: np.ndarray | None = None,
     extra_margin_voxels: int = 0,
-) -> Tuple[cp.ndarray, np.ndarray]:
+) -> tuple[cp.ndarray, np.ndarray]:
     """Compute grid origin and shape from mesh bounds.
 
     Parameters
     ----------
     bounds_min, bounds_max : np.ndarray (3,)
-        AABB of the mesh (numpy — from trimesh).
+        AABB of the mesh (numpy  --  from trimesh).
     padding : float
         Extra space added around the bounding box.
     resolution : float
@@ -154,7 +153,8 @@ def compute_grid_bounds(
     grid_shape = np.maximum(grid_shape, 1)
     logger.info(
         "[compute_grid_bounds] Grid shape: %s  (%.1f M voxels)",
-        tuple(grid_shape), np.prod(grid_shape) / 1e6,
+        tuple(grid_shape),
+        np.prod(grid_shape) / 1e6,
     )
     return origin, grid_shape
 
@@ -166,7 +166,7 @@ def build_occupancy_grid(
     resolution: float,
     fill_interior: bool = False,
     complement_fill: bool = False,
-    extra_free_points: Optional[np.ndarray] = None,
+    extra_free_points: np.ndarray | None = None,
     extra_margin_voxels: int = 0,
 ) -> OccupancyGrid:
     """Build a base OccupancyGrid from a trimesh mesh.
@@ -200,14 +200,20 @@ def build_occupancy_grid(
     OccupancyGrid (GPU-resident)
     """
     origin, grid_shape = compute_grid_bounds(
-        mesh.bounds[0], mesh.bounds[1],
-        padding, resolution,
+        mesh.bounds[0],
+        mesh.bounds[1],
+        padding,
+        resolution,
         extra_free_points=extra_free_points,
         extra_margin_voxels=extra_margin_voxels,
     )
 
     raw_grid, filled_grid = voxelize_mesh(
-        mesh, grid_shape, origin, resolution, fill_interior=fill_interior,
+        mesh,
+        grid_shape,
+        origin,
+        resolution,
+        fill_interior=fill_interior,
     )
 
     if complement_fill:
@@ -215,7 +221,8 @@ def build_occupancy_grid(
         raw_grid = ~filled_grid | raw_grid
         logger.info(
             "[build_occupancy_grid] Complement-fill: %d occupied  (%d free)",
-            int(raw_grid.sum()), int((~raw_grid).sum()),
+            int(raw_grid.sum()),
+            int((~raw_grid).sum()),
         )
 
     if inflation_voxels > 0:
@@ -225,7 +232,8 @@ def build_occupancy_grid(
 
     logger.info(
         "[build_occupancy_grid] After inflation: %d occupied  (%d free)",
-        int(inflated.sum()), int((~inflated).sum()),
+        int(inflated.sum()),
+        int((~inflated).sum()),
     )
 
     return OccupancyGrid(

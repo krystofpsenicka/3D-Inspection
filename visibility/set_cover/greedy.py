@@ -1,9 +1,9 @@
 """Standard greedy set-cover optimizer (CPU)."""
 
 import logging
+
 import cupy as cp
 import numpy as np
-from typing import Optional, Tuple
 
 from .base import IterativeSetCoverOptimizer
 
@@ -18,8 +18,13 @@ class GreedySetCover(IterativeSetCoverOptimizer):
     converts to/from cupy at the boundary.
     """
 
-    def __init__(self, num_points: int, positions: np.ndarray,
-                 rotmats: np.ndarray, visibility_map: np.ndarray):
+    def __init__(
+        self,
+        num_points: int,
+        positions: np.ndarray,
+        rotmats: np.ndarray,
+        visibility_map: np.ndarray,
+    ):
         self.num_points = num_points
         self.positions = positions
         self.rotmats = rotmats
@@ -28,10 +33,11 @@ class GreedySetCover(IterativeSetCoverOptimizer):
         self.uncovered = np.ones(num_points, dtype=np.bool_)
         self.candidate_active = np.ones(n_cand, dtype=np.bool_)
         self._last_idx = -1
-        logger.info("[GreedySetCover] Initialized with %d candidates, %d points.",
-                    n_cand, num_points)
+        logger.info(
+            "[GreedySetCover] Initialized with %d candidates, %d points.", n_cand, num_points
+        )
 
-    def select_next(self) -> Optional[Tuple[cp.ndarray, cp.ndarray, cp.ndarray]]:
+    def select_next(self) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray] | None:
         if not np.any(self.candidate_active):
             return None
 
@@ -45,9 +51,7 @@ class GreedySetCover(IterativeSetCoverOptimizer):
         self._last_idx = best
         vis = np.where(self.V[best])[0]
 
-        return (cp.asarray(self.positions[best]),
-                cp.asarray(self.rotmats[best]),
-                cp.asarray(vis))
+        return (cp.asarray(self.positions[best]), cp.asarray(self.rotmats[best]), cp.asarray(vis))
 
     def commit_selection(self, visible_indices: cp.ndarray):
         assert self._last_idx != -1, "commit_selection called before select_next"

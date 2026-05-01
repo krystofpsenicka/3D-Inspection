@@ -1,6 +1,6 @@
-from .base import ViewpointSamplerBase, ProbabilisticSampler
-from .weighted import WeightedViewpointSampler
-from .targeted import TargetedViewpointSampler
-from .optimizing import OptimizingSampler, OptimizationBackend
+from .base import ProbabilisticSampler, ViewpointSamplerBase
+from .expansion import ExpansionSampler, OptimizingExpansionSampler, ProbabilisticExpansionSampler
 from .optimization_backends import CMAESBackend
-from .expansion import ExpansionSampler, ProbabilisticExpansionSampler, OptimizingExpansionSampler
+from .optimizing import OptimizationBackend, OptimizingSampler
+from .targeted import TargetedViewpointSampler
+from .weighted import WeightedViewpointSampler

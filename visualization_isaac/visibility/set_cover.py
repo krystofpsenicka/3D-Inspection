@@ -6,10 +6,11 @@ import numpy as np
 import trimesh
 
 from visibility.core.types import FrustumParams, OptimizationResult
+
+from .._helpers import generate_tab20_colors
+from .._usd_primitives import create_points_prim
 from .frustum_utils import add_viewpoint_geometry
 from .model import ModelVisualizer
-from .._usd_primitives import create_points_prim
-from .._helpers import generate_tab20_colors
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,14 @@ class SetCoverVisualizer:
     frustum_params : Camera frustum geometry.
     """
 
-    def __init__(self, mesh: trimesh.Trimesh,
-                 target_points: np.ndarray,
-                 frustum_params: FrustumParams):
+    def __init__(
+        self, mesh: trimesh.Trimesh, target_points: np.ndarray, frustum_params: FrustumParams
+    ):
         self.mesh = mesh
         self.target_points = target_points
         self.frustum_params = frustum_params
 
-    def add_solution(self, stage, base_path: str,
-                     result: OptimizationResult) -> list[str]:
+    def add_solution(self, stage, base_path: str, result: OptimizationResult) -> list[str]:
         """Add the complete solution geometry to *stage*.
 
         Parameters
@@ -59,10 +59,14 @@ class SetCoverVisualizer:
         uncovered_indices = np.where(~covered_mask)[0]
 
         if len(uncovered_indices) > 0:
-            paths.append(create_points_prim(
-                stage, f"{base_path}/uncovered",
-                self.target_points[uncovered_indices],
-                colors=(1.0, 0.0, 0.0)))
+            paths.append(
+                create_points_prim(
+                    stage,
+                    f"{base_path}/uncovered",
+                    self.target_points[uncovered_indices],
+                    colors=(1.0, 0.0, 0.0),
+                )
+            )
 
         colors = generate_tab20_colors(result.num_viewpoints)
 
@@ -73,15 +77,20 @@ class SetCoverVisualizer:
             vis = np.where(vis_map_np[i])[0]
 
             paths += add_viewpoint_geometry(
-                stage, f"{base_path}/vp_{i}",
-                pos, rot, self.frustum_params, color)
+                stage, f"{base_path}/vp_{i}", pos, rot, self.frustum_params, color
+            )
 
             if len(vis) > 0:
-                paths.append(create_points_prim(
-                    stage, f"{base_path}/vp_{i}/visible",
-                    self.target_points[vis], colors=color))
+                paths.append(
+                    create_points_prim(
+                        stage, f"{base_path}/vp_{i}/visible", self.target_points[vis], colors=color
+                    )
+                )
 
-        logger.info("[SetCoverVisualizer] Added solution: %d VPs, coverage=%.2f%%",
-                    result.num_viewpoints, result.total_coverage * 100)
+        logger.info(
+            "[SetCoverVisualizer] Added solution: %d VPs, coverage=%.2f%%",
+            result.num_viewpoints,
+            result.total_coverage * 100,
+        )
 
         return paths

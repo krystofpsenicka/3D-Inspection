@@ -24,8 +24,9 @@ import logging
 import os
 import sys
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -33,23 +34,30 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from experiments.common.config import ModelConfig, SEEDS_3, RESULTS_DIR
-from experiments.common.persistence import save_run_result, load_run_result
+from experiments.common.config import RESULTS_DIR, SEEDS_3, ModelConfig
+from experiments.common.persistence import load_run_result, save_run_result
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure, heatmap_annotated,
-    THESIS_COL, DOUBLE_COL, CATEGORICAL_COLORS,
+    CATEGORICAL_COLORS,
+    DOUBLE_COL,
+    THESIS_COL,
+    heatmap_annotated,
+    save_figure,
+    setup_thesis_style,
 )
 
 # ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
-    from experiments.common.runner import set_seed, timed, free_gpu_memory
+
     from experiments.common.pipeline_setup import (
-        PipelineContext, DegenerateNormalsError,
+        DegenerateNormalsError,
+        PipelineContext,
     )
+    from experiments.common.runner import free_gpu_memory, set_seed, timed
     from shared.types import Side
     from visibility.set_cover import LazyGreedySetCover
+
     _RUNTIME_AVAILABLE = True
 except ImportError as _e:
     cp = None
@@ -71,6 +79,7 @@ N_CANDIDATES = 2000
 # Single run logic
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
     """Run sampling + visibility + set cover with curvature parameters."""
     set_seed(seed)
@@ -87,9 +96,12 @@ def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
     # Sample with curvature weighting and the given parameters
     with timed() as t_sample:
         pos_gpu, rot_gpu = sampler.sample(
-            cp.arange(len(target_points)), N_CANDIDATES,
-            side=Side.OUTSIDE, curvature_weighting=True,
-            curvature_knn_k=knn_k, position_weight=position_weight,
+            cp.arange(len(target_points)),
+            N_CANDIDATES,
+            side=Side.OUTSIDE,
+            curvature_weighting=True,
+            curvature_knn_k=knn_k,
+            position_weight=position_weight,
         )
 
     # Visibility
@@ -104,10 +116,14 @@ def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
 
     with timed() as t_opt:
         optimizer = LazyGreedySetCover(
-            len(target_points), pos_np, rot_np, V,
+            len(target_points),
+            pos_np,
+            rot_np,
+            V,
         )
         opt_result = optimizer.optimize(
-            target_coverage=0.95, max_viewpoints=1000,
+            target_coverage=0.95,
+            max_viewpoints=1000,
         )
 
     return {
@@ -128,6 +144,7 @@ def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
 # Plot generation
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def generate_plots(results: list[dict], output_dir: str):
     """Generate all E04 figures."""
     setup_thesis_style()
@@ -144,18 +161,28 @@ def generate_plots(results: list[dict], output_dir: str):
     k_labels = [str(k) for k in k_vals]
     w_labels = [str(w) for w in w_vals]
 
-    # ── Heatmap: knn_k × position_weight -> viewpoints ───────────────
+    # ── Heatmap: knn_k x position_weight -> viewpoints ───────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 4))
     vp_vals = np.zeros((len(k_vals), len(w_vals)))
     for i, k in enumerate(k_vals):
         for j, w in enumerate(w_vals):
-            vals = [r["num_viewpoints"] for r in results
-                    if r["knn_k"] == k and r["position_weight"] == w]
+            vals = [
+                r["num_viewpoints"]
+                for r in results
+                if r["knn_k"] == k and r["position_weight"] == w
+            ]
             vp_vals[i, j] = np.mean(vals) if vals else 0
-    heatmap_annotated(ax, k_labels, w_labels, vp_vals, fmt=".0f",
-                      title="Viewpoints Selected",
-                      xlabel="Position weight", ylabel="Curvature knn_k",
-                      cbar_label="Selected viewpoints")
+    heatmap_annotated(
+        ax,
+        k_labels,
+        w_labels,
+        vp_vals,
+        fmt=".0f",
+        title="Viewpoints Selected",
+        xlabel="Position weight",
+        ylabel="Curvature knn_k",
+        cbar_label="Selected viewpoints",
+    )
     save_figure(fig, os.path.join(fig_dir, "e04_heatmap_viewpoints"))
 
     logger.info("E04 figures saved to %s", fig_dir)
@@ -165,19 +192,23 @@ def generate_plots(results: list[dict], output_dir: str):
 # CLI
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def main():
     p = argparse.ArgumentParser(description="E04: Curvature Sensitivity")
     p.add_argument("--knn_k_values", type=int, nargs="+", default=KNN_K_VALUES)
     p.add_argument("--position_weights", type=float, nargs="+", default=POSITION_WEIGHTS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
-    p.add_argument("--output_dir",
-                   default=os.path.join(RESULTS_DIR, "e04_curvature_sensitivity"))
-    p.add_argument("--plots_only", action="store_true",
-                   help="Only regenerate plots from existing results")
-    p.add_argument("--resume", action="store_true",
-                   help="Skip rows whose result JSON already exists; exit "
-                        "non-zero on CUDA OOM so an outer restart loop can "
-                        "reclaim GPU memory.")
+    p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e04_curvature_sensitivity"))
+    p.add_argument(
+        "--plots_only", action="store_true", help="Only regenerate plots from existing results"
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip rows whose result JSON already exists; exit "
+        "non-zero on CUDA OOM so an outer restart loop can "
+        "reclaim GPU memory.",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -212,21 +243,28 @@ def main():
 
                     if args.resume and os.path.exists(rpath + ".json"):
                         all_results.append(load_run_result(rpath))
-                        logger.info("[%d/%d] [resume] skip %s",
-                                    run_idx, total, row_desc)
+                        logger.info("[%d/%d] [resume] skip %s", run_idx, total, row_desc)
                         continue
 
-                    logger.info("[%d/%d] knn_k=%d position_weight=%.1f seed=%d",
-                                run_idx, total, knn_k, pw, seed)
+                    logger.info(
+                        "[%d/%d] knn_k=%d position_weight=%.1f seed=%d",
+                        run_idx,
+                        total,
+                        knn_k,
+                        pw,
+                        seed,
+                    )
 
                     try:
                         result = run_single(knn_k, pw, seed)
                         all_results.append(result)
                         save_run_result(result, rpath)
-                        logger.info("  vps=%d cov=%.2f%% time=%.1fs",
-                                    result["num_viewpoints"],
-                                    result["coverage"] * 100,
-                                    result["total_time"])
+                        logger.info(
+                            "  vps=%d cov=%.2f%% time=%.1fs",
+                            result["num_viewpoints"],
+                            result["coverage"] * 100,
+                            result["total_time"],
+                        )
                     except Exception as e:
                         logger.error("  FAILED [%s]: %s", row_desc, e, exc_info=True)
                     finally:
@@ -235,7 +273,8 @@ def main():
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):
                 all_results.append(
-                    load_run_result(os.path.join(raw_dir, fname.replace(".json", ""))))
+                    load_run_result(os.path.join(raw_dir, fname.replace(".json", "")))
+                )
 
     if all_results:
         generate_plots(all_results, args.output_dir)

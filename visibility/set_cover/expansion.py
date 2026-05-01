@@ -1,11 +1,11 @@
-"""Expansion set-cover optimizer — composes an inner optimizer with a refinement sampler."""
+"""Expansion set-cover optimizer  --  composes an inner optimizer with a refinement sampler."""
 
 import logging
-import cupy as cp
-from typing import Optional, Tuple
 
-from .base import IterativeSetCoverOptimizer
+import cupy as cp
+
 from ..sampling.samplers.expansion import ExpansionSampler
+from .base import IterativeSetCoverOptimizer
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,7 @@ class ExpansionIterativeSetCover(IterativeSetCoverOptimizer):
     Inherits ``optimize()`` from the base class.
     """
 
-    def __init__(self, inner_optimizer: IterativeSetCoverOptimizer,
-                 sampler: ExpansionSampler):
+    def __init__(self, inner_optimizer: IterativeSetCoverOptimizer, sampler: ExpansionSampler):
         self.inner = inner_optimizer
         self.sampler = sampler
         self.num_points = inner_optimizer.num_points
@@ -39,13 +38,12 @@ class ExpansionIterativeSetCover(IterativeSetCoverOptimizer):
     def last_selected_index(self) -> int:
         return self.inner.last_selected_index
 
-    def select_next(self) -> Optional[Tuple[cp.ndarray, cp.ndarray, cp.ndarray]]:
+    def select_next(self) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray] | None:
         result = self.inner.select_next()
         if result is None:
             return None
         pos, rot, vis = result
-        ref_pos, ref_rot, ref_vis = self.sampler.refine(
-            pos, rot, vis, self._uncovered_mask)
+        ref_pos, ref_rot, ref_vis = self.sampler.refine(pos, rot, vis, self._uncovered_mask)
         return (ref_pos, ref_rot, ref_vis)
 
     def commit_selection(self, visible_indices: cp.ndarray):

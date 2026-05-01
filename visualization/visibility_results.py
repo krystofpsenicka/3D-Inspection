@@ -6,9 +6,10 @@ import numpy as np
 import open3d as o3d
 
 from visibility.core.types import FrustumParams
-from .frustum_utils import create_frustum_lineset, create_viewpoint_geometry
-from .model import ModelVisualizer
+
 from ._helpers import generate_tab20_colors, show_geometries
+from .frustum_utils import create_viewpoint_geometry
+from .model import ModelVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,12 @@ class VisibilityVisualizer:
     frustum_params : Camera frustum geometry.
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh,
-                 target_points: np.ndarray,
-                 frustum_params: FrustumParams):
+    def __init__(
+        self,
+        mesh: o3d.geometry.TriangleMesh,
+        target_points: np.ndarray,
+        frustum_params: FrustumParams,
+    ):
         self.mesh = mesh
         self.target_points = target_points
         self.num_points = len(target_points)
@@ -35,9 +39,9 @@ class VisibilityVisualizer:
     # Single viewpoint
     # ------------------------------------------------------------------
 
-    def _create_single_geometries(self, visible_indices: np.ndarray,
-                                  position: np.ndarray,
-                                  rotation: np.ndarray) -> list:
+    def _create_single_geometries(
+        self, visible_indices: np.ndarray, position: np.ndarray, rotation: np.ndarray
+    ) -> list:
         """Build geometries for a single viewpoint's visibility."""
         geometries = [ModelVisualizer(self.mesh).create_mesh_geometry()]
 
@@ -51,7 +55,9 @@ class VisibilityVisualizer:
 
         # Viewpoint sphere + frustum + arrow (small sphere, short arrow for single-VP view)
         geometries += create_viewpoint_geometry(
-            position, rotation, self.frustum_params,
+            position,
+            rotation,
+            self.frustum_params,
             color=[1.0, 1.0, 0.0],
             sphere_radius=0.015,
             arrow_length=self.frustum_params.far * 0.2,
@@ -59,8 +65,9 @@ class VisibilityVisualizer:
 
         return geometries
 
-    def visualize_single(self, visible_indices: np.ndarray,
-                         position: np.ndarray, rotation: np.ndarray):
+    def visualize_single(
+        self, visible_indices: np.ndarray, position: np.ndarray, rotation: np.ndarray
+    ):
         """Visualize one viewpoint's visibility.
 
         Parameters
@@ -70,10 +77,8 @@ class VisibilityVisualizer:
         rotation : (3, 3) rotation matrix.
         """
         geometries = self._create_single_geometries(visible_indices, position, rotation)
-        logger.info("[VisibilityVisualizer] Viewpoint: %d visible points.",
-                    len(visible_indices))
-        o3d.visualization.draw_geometries(
-            geometries, window_name="Visibility Visualization")
+        logger.info("[VisibilityVisualizer] Viewpoint: %d visible points.", len(visible_indices))
+        o3d.visualization.draw_geometries(geometries, window_name="Visibility Visualization")
 
     # ------------------------------------------------------------------
     # All viewpoints
@@ -95,7 +100,8 @@ class VisibilityVisualizer:
         if uncovered_indices:
             uncovered_pcd = o3d.geometry.PointCloud()
             uncovered_pcd.points = o3d.utility.Vector3dVector(
-                self.target_points[list(uncovered_indices)])
+                self.target_points[list(uncovered_indices)]
+            )
             uncovered_pcd.paint_uniform_color([1.0, 0.0, 0.0])
             geometries.append(uncovered_pcd)
 
@@ -105,14 +111,12 @@ class VisibilityVisualizer:
             visible_indices = visibility_map[i]
             color = list(vp_colors[i % len(vp_colors)])
 
-            geometries += create_viewpoint_geometry(
-                pos, rotation, self.frustum_params, color)
+            geometries += create_viewpoint_geometry(pos, rotation, self.frustum_params, color)
 
             # Visible points
             if len(visible_indices) > 0:
                 visible_pcd = o3d.geometry.PointCloud()
-                visible_pcd.points = o3d.utility.Vector3dVector(
-                    self.target_points[visible_indices])
+                visible_pcd.points = o3d.utility.Vector3dVector(self.target_points[visible_indices])
                 visible_pcd.paint_uniform_color(color)
                 geometries.append(visible_pcd)
 
@@ -132,11 +136,16 @@ class VisibilityVisualizer:
 
         num_vps = len(visibility_map)
         uncovered_count = self.num_points - len(
-            set().union(*(idx.tolist() for idx in visibility_map.values())))
+            set().union(*(idx.tolist() for idx in visibility_map.values()))
+        )
 
         geometries = self._create_all_geometries(visibility_map, candidates)
 
-        logger.info("[VisibilityVisualizer] Showing %d viewpoints (%d/%d covered).",
-                    num_vps, self.num_points - uncovered_count, self.num_points)
+        logger.info(
+            "[VisibilityVisualizer] Showing %d viewpoints (%d/%d covered).",
+            num_vps,
+            self.num_points - uncovered_count,
+            self.num_points,
+        )
 
         show_geometries(geometries, window_name="All Viewpoints Visibility")

@@ -51,3 +51,31 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["assets", "configs", "data", "models", "plots", "logs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",  # line length handled by formatter
+    "B008",  # function call in default arg (common for cp constants)
+    "B904",  # raise from in except (low value here)
+    "SIM108", # if/else into ternary (often less readable)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["F401", "F841"]
+"experiments/*" = ["F401", "E402"]
+"scripts/*" = ["E402"]
+"VRP/scripts/*" = ["E402"]
+"VRP/utils/occupancy_grid.py" = ["E402"]
+"visibility/scripts/*" = ["E402"]
+"run_full_pipeline.py" = ["E402"]
+"run_isaaclab_full_pipeline.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VRP Planner – CLI Entry Point
+VRP Planner - CLI Entry Point
 
 Usage examples
 --------------
@@ -10,9 +10,6 @@ Random 5 waypoints, 2 AUVs, save solution:
 
 Inside inspection (routes traverse mesh interior):
     python -m VRP.scripts.run_vrp --num_robots 2 --random_waypoints 5 --side inside
-
-Visualize a previously planned solution in Isaac Sim (activate Isaac Sim env first):
-    python VRP/visualize_solution.py --solution_file solution.pkl
 """
 
 from __future__ import annotations
@@ -31,18 +28,18 @@ import cupy as cp
 import numpy as np
 import open3d as o3d
 
-from VRP.core.constants import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH, ROBOT_RADIUS
-from VRP.core.types import ExecutionResult, VRPBackend, VRPResult
-from shared.types import Side
 from shared.mesh_loader import load_and_transform_mesh
 from shared.surface_sampler import SurfacePointSampler
+from shared.types import Side
 from visibility.sampling import WeightedViewpointSampler
 from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
+from VRP.core.constants import MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH, ROBOT_RADIUS
 from VRP.core.distance_matrix import compute_distance_matrix
 from VRP.core.geometry import compute_start_grid
-from VRP.core.collision import find_trajectory_collisions
-from VRP.vrp.vrp_solver import solve_vrp
+from VRP.core.types import ExecutionResult, VRPBackend, VRPResult
 from VRP.mapf.mapf_planner import MultiAgentPathPlanner
+from VRP.utils.collision import find_trajectory_collisions
+from VRP.vrp.vrp_solver import solve_vrp
 
 logger = logging.getLogger(__name__)
 
@@ -54,42 +51,60 @@ def parse_args() -> argparse.Namespace:
     )
 
     # ── Robot / simulation ─────────────────────────────────────────────
-    p.add_argument("--num_robots", "-n", type=int, default=2,
-                   help="Number of AUV robots.")
-    p.add_argument("--side", choices=["outside", "inside"],
-                   default="outside",
-                   help="Inspection side: 'outside' (routes around mesh) "
-                        "or 'inside' (routes inside mesh).")
+    p.add_argument("--num_robots", "-n", type=int, default=2, help="Number of AUV robots.")
+    p.add_argument(
+        "--side",
+        choices=["outside", "inside"],
+        default="outside",
+        help="Inspection side: 'outside' (routes around mesh) or 'inside' (routes inside mesh).",
+    )
 
     # ── Waypoint source ────────────────────────────────────────────────
-    p.add_argument("--random_waypoints", type=int, default=5,
-                   metavar="N",
-                   help="Sample N random collision-free waypoints.")
+    p.add_argument(
+        "--random_waypoints",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Sample N random collision-free waypoints.",
+    )
 
-    p.add_argument("--random_seed", type=int, default=42,
-                   help="Random seed for waypoint sampling.")
+    p.add_argument("--random_seed", type=int, default=42, help="Random seed for waypoint sampling.")
 
     # ── VRP solver ────────────────────────────────────────────────────
-    p.add_argument("--alpha", type=float, default=1.0,
-                   help="Objective blending: 1.0=pure makespan, 0.0=pure "
-                        "total distance, 0.5=balanced trade-off.")
-    p.add_argument("--solver", choices=["cuopt", "highs"],
-                   default="highs",
-                   help="MIP backend: 'cuopt' (GPU) or 'highs' (CPU).")
-    p.add_argument("--mip_time_limit", type=int, default=120,
-                   help="MIP solver time budget (seconds).")
-    p.add_argument("--mip_gap", type=float, default=0.05,
-                   help="MIP solver relative optimality gap (0.05 = 5%%).")
+    p.add_argument(
+        "--alpha",
+        type=float,
+        default=1.0,
+        help="Objective blending: 1.0=pure makespan, 0.0=pure "
+        "total distance, 0.5=balanced trade-off.",
+    )
+    p.add_argument(
+        "--solver",
+        choices=["cuopt", "highs"],
+        default="highs",
+        help="MIP backend: 'cuopt' (GPU) or 'highs' (CPU).",
+    )
+    p.add_argument(
+        "--mip_time_limit", type=int, default=120, help="MIP solver time budget (seconds)."
+    )
+    p.add_argument(
+        "--mip_gap",
+        type=float,
+        default=0.05,
+        help="MIP solver relative optimality gap (0.05 = 5%%).",
+    )
 
     # ── Solution persistence ──────────────────────────────────
-    p.add_argument("--save_solution", type=str, default="vrp_solution.pkl",
-                   metavar="PATH",
-                   help="Save the planned ExecutionResult to PATH (.pkl). "
-                        "Load later with VRP/visualize_solution.py.")
+    p.add_argument(
+        "--save_solution",
+        type=str,
+        default="vrp_solution.pkl",
+        metavar="PATH",
+        help="Save the planned ExecutionResult to PATH (.pkl).",
+    )
 
     # ── Logging ───────────────────────────────────────────────────────
-    p.add_argument("--verbose", "-v", action="store_true",
-                   help="Enable DEBUG logging.")
+    p.add_argument("--verbose", "-v", action="store_true", help="Enable DEBUG logging.")
 
     return p.parse_args()
 
@@ -131,7 +146,9 @@ def main():
     # ── 3. Sample viewpoints ─────────────────────────────────────────
     logger.info("Building WeightedViewpointSampler …")
     pts_np, norms_np = SurfacePointSampler().sample(
-        o3d_mesh, _NUM_SURFACE_POINTS, seed=args.random_seed,
+        o3d_mesh,
+        _NUM_SURFACE_POINTS,
+        seed=args.random_seed,
     )
     sampler = WeightedViewpointSampler(
         o3d_mesh,
@@ -178,16 +195,19 @@ def main():
         time_limit=args.mip_time_limit,
         mip_gap=args.mip_gap,
     )
-    logger.info("VRP status=%s  total_cost=%.2f  makespan=%.2f",
-                vrp_result.status, vrp_result.total_cost, vrp_result.makespan)
+    logger.info(
+        "VRP status=%s  total_cost=%.2f  makespan=%.2f",
+        vrp_result.status,
+        vrp_result.total_cost,
+        vrp_result.makespan,
+    )
 
     if not any(vrp_result.routes):
         logger.error("VRP produced empty routes – aborting.")
         sys.exit(1)
 
     routes = [
-        [home_indices[i]] + list(r) + [home_indices[i]]
-        for i, r in enumerate(vrp_result.routes)
+        [home_indices[i]] + list(r) + [home_indices[i]] for i, r in enumerate(vrp_result.routes)
     ]
     logger.info("Routes: %s", routes)
 
@@ -211,19 +231,18 @@ def main():
 
     # ── 8. Save solution ─────────────────────────────────────────────
     if args.save_solution:
-        from VRP.core.serialization import save_solution
+        from VRP.utils.serialization import save_solution
+
         save_solution(result, args.save_solution)
         logger.info("Solution saved to: %s", args.save_solution)
 
     # ── 9. Summary ───────────────────────────────────────────────────
     total_wps = sum(len(r) for r in result.all_waypoints)
     total_fail = sum(result.fail_counts)
-    total_steps = max(
-        len(t) for t in result.all_traj_positions
-    ) if result.all_traj_positions else 0
+    total_steps = max(len(t) for t in result.all_traj_positions) if result.all_traj_positions else 0
 
     print("\n" + "=" * 60)
-    print(f"VRP planning complete")
+    print("VRP planning complete")
     print(f"  Robots             : {K}")
     print(f"  Waypoints          : {total_wps} total  ({total_fail} failed)")
     print(f"  Trajectory steps   : {total_steps}")
@@ -232,7 +251,6 @@ def main():
     print(f"  VRP total cost     : {vrp_result.total_cost:.1f} m")
     if args.save_solution:
         print(f"  Solution saved     : {args.save_solution}")
-        print(f"  Visualize with     : python VRP/visualize_solution.py --solution_file {args.save_solution}")
     print("=" * 60)
 
 

@@ -6,10 +6,12 @@ from abc import ABC, abstractmethod
 
 import cupy as cp
 import open3d as o3d
-from typing import Tuple
+
+from shared.types import Side
+
+from ...core.constants import DEFAULT_MAX_DISTANCE_OFFSET
 from ..utils.sampling_grid_builder import build_sampling_occupancy_grid, build_sdf_grid
 from ..utils.sampling_space_builder import build_sampling_space
-from shared.types import Side
 
 logger = logging.getLogger(__name__)
 
@@ -24,47 +26,63 @@ class ViewpointSamplerBase(ABC):
     Subclasses implement specific sampling strategies.
     """
 
-    def __init__(self, mesh: o3d.geometry.TriangleMesh, target_points: cp.ndarray,
-                 normals: cp.ndarray, frustum_far: float,
-                 collision_radius: float = 0.0,
-                 occupancy_grid=None,
-                 free_space_resolution: float = 0.5):
+    def __init__(
+        self,
+        mesh: o3d.geometry.TriangleMesh,
+        target_points: cp.ndarray,
+        normals: cp.ndarray,
+        frustum_far: float,
+        collision_radius: float = 0.0,
+        occupancy_grid=None,
+        free_space_resolution: float = 0.5,
+        seed: int | None = None,
+    ):
         self.mesh = mesh
-        self.target_points = target_points    # CuPy float32
-        self.normals = normals                # CuPy float32
+        self.target_points = target_points  # CuPy float32
+        self.normals = normals  # CuPy float32
         self.frustum_far = frustum_far
         self.num_points = len(target_points)
         self.collision_radius = collision_radius
         self.min_clearance = 2.0 * collision_radius
         self.free_space_resolution = free_space_resolution
         self._occupancy_grid = occupancy_grid
+        self._rng = cp.random.default_rng(seed)
 
         if self.num_points == 0:
             logger.warning("[ViewpointSamplerBase] No target points available.")
 
         if occupancy_grid is None:
-            logger.info("[ViewpointSamplerBase] No occupancy grid provided — building surface-only OG from mesh...")
-            self._occupancy_grid = build_sampling_occupancy_grid(mesh, frustum_far, self.min_clearance)
+            logger.info(
+                "[ViewpointSamplerBase] No occupancy grid provided -- building surface-only OG from mesh..."
+            )
+            self._occupancy_grid = build_sampling_occupancy_grid(
+                mesh,
+                frustum_far,
+                self.min_clearance,
+            )
 
         if not mesh.is_watertight():
             logger.warning(
-                "[ViewpointSamplerBase] Mesh is not watertight — SDF signs may be "
+                "[ViewpointSamplerBase] Mesh is not watertight -- SDF signs may be "
                 "unreliable. Free-space sampling results could be incorrect."
             )
 
         # Sphere restriction for expansion sampling
-        self._sphere_center = None   # CuPy float32 (3,) or None
-        self._sphere_radius = None   # float or None
+        self._sphere_center = None  # CuPy float32 (3,) or None
+        self._sphere_radius = None  # float or None
 
         # Cache for feasible free-space data
         self._feasible_cache = {}
 
         t0 = time.perf_counter()
-        self._sdf_grid_gpu = build_sdf_grid(self._occupancy_grid)
+        self._sdf_grid_gpu = build_sdf_grid(mesh, self._occupancy_grid)
         dt = time.perf_counter() - t0
         gpu_mb = cp.get_default_memory_pool().used_bytes() / 1e6
-        logger.info("[ViewpointSamplerBase] GPU init: %.2fs (SDF precompute). "
-                    "GPU memory: %.1f MB", dt, gpu_mb)
+        logger.info(
+            "[ViewpointSamplerBase] GPU init: %.2fs (SDF precompute). GPU memory: %.1f MB",
+            dt,
+            gpu_mb,
+        )
 
     # ── Sphere restriction ──────────────────────────────────────
 
@@ -80,13 +98,15 @@ class ViewpointSamplerBase(ABC):
 
     # ── Feasible data access ────────────────────────────────────
 
-    def get_feasible_sampling_data(self, side: Side = Side.OUTSIDE,
-                                   min_distance: float | None = None,
-                                   max_distance_offset: float = 0.95,
-                                   curvature_weighting: bool = False,
-                                   curvature_knn_k: int | None = None,
-                                   position_weight: float | None = None,
-                                   ) -> Tuple[cp.ndarray, cp.ndarray, float]:
+    def get_feasible_sampling_data(
+        self,
+        side: Side = Side.OUTSIDE,
+        min_distance: float | None = None,
+        max_distance_offset: float = DEFAULT_MAX_DISTANCE_OFFSET,
+        curvature_weighting: bool = False,
+        curvature_knn_k: int | None = None,
+        position_weight: float | None = None,
+    ) -> tuple[cp.ndarray, cp.ndarray, float]:
         """Return cached (centers_gpu, weights_gpu, coarse_res) for the given side."""
         if min_distance is None:
             min_distance = self.min_clearance
@@ -96,10 +116,14 @@ class ViewpointSamplerBase(ABC):
         if key not in self._feasible_cache:
             t0 = time.perf_counter()
             self._feasible_cache[key] = build_sampling_space(
-                self._occupancy_grid, self._sdf_grid_gpu,
-                self.target_points, self.normals,
+                self._occupancy_grid,
+                self._sdf_grid_gpu,
+                self.target_points,
+                self.normals,
                 self.free_space_resolution,
-                side, min_distance, max_distance,
+                side,
+                min_distance,
+                max_distance,
                 curvature_weighting=curvature_weighting,
                 curvature_knn_k=curvature_knn_k,
                 position_weight=position_weight,
@@ -125,9 +149,9 @@ class ProbabilisticSampler(ViewpointSamplerBase, ABC):
     """Base class for samplers that generate N random candidate viewpoints."""
 
     @abstractmethod
-    def sample(self, num_candidates: int, **kwargs) -> Tuple[cp.ndarray, cp.ndarray]:
+    def sample(self, num_candidates: int, **kwargs) -> tuple[cp.ndarray, cp.ndarray]:
         """Sample candidate viewpoints.
 
         Returns:
-            (positions_gpu, rotmats_gpu) — CuPy arrays (N, 3) and (N, 3, 3).
+            (positions_gpu, rotmats_gpu)  --  CuPy arrays (N, 3) and (N, 3, 3).
         """

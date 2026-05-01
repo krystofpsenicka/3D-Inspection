@@ -116,7 +116,7 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
         total_cost = vrp_result.total_cost
         status = vrp_result.status
 
-        # LB sidecar (no MAPF in this experiment — VRP-only LBs).
+        # LB sidecar (no MAPF in this experiment  --  VRP-only LBs).
         try:
             lb = compute_all_lbs(
                 dist_matrix, home_indices, K, N_WAYPOINTS, alpha,

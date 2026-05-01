@@ -1,18 +1,19 @@
 import logging
-import numpy as np
-import cupy as cp
-from typing import Tuple
 
+import cupy as cp
+import numpy as np
+
+from ..core.constants import CUDA_BLOCK_SIZE
 from ..core.types import FrustumParams
 from .base import VisibilityQueryBase
-from ..core.constants import CUDA_BLOCK_SIZE
 
 logger = logging.getLogger(__name__)
 
 # ── Batch frustum culling CUDA kernel ────────────────────────────────────────
 # One thread per (viewpoint, point) pair.  Loads one VP + one target point from
 # global memory, computes 3 dot-products in registers, writes 1 byte.
-_BATCH_FRUSTUM_KERNEL = cp.RawKernel(r'''
+_BATCH_FRUSTUM_KERNEL = cp.RawKernel(
+    r"""
 extern "C" __global__
 void batch_frustum_cull(
     const float* points,       // (M, 3)
@@ -46,14 +47,17 @@ void batch_frustum_cull(
 
     mask[idx] = (lat_r < max_h && lat_u < max_v) ? 1 : 0;
 }
-''', 'batch_frustum_cull')
+""",
+    "batch_frustum_cull",
+)
 
 
 class VisibilityQueryCuda(VisibilityQueryBase):
-    """GPU-accelerated base class for visibility queries."""
+    """Base class for visibility queries."""
 
-    def __init__(self, target_points: cp.ndarray,
-                 normals: cp.ndarray, frustum_params: FrustumParams):
+    def __init__(
+        self, target_points: cp.ndarray, normals: cp.ndarray, frustum_params: FrustumParams
+    ):
         super().__init__(frustum_params, num_points=len(target_points))
 
         # float64 for same precision as CPU frustum culling
@@ -62,8 +66,9 @@ class VisibilityQueryCuda(VisibilityQueryBase):
 
         logger.info("[VisibilityQueryCuda] GPU arrays ready (%d points)", self.num_points)
 
-    def points_in_frustum_gpu(self, viewpoint_gpu: cp.ndarray,
-                               rotmat_gpu: cp.ndarray) -> cp.ndarray:
+    def points_in_frustum_gpu(
+        self, viewpoint_gpu: cp.ndarray, rotmat_gpu: cp.ndarray
+    ) -> cp.ndarray:
         """Brute-force frustum culling on GPU.
 
         Args:
@@ -79,10 +84,11 @@ class VisibilityQueryCuda(VisibilityQueryBase):
         vp_gpu = viewpoint_gpu.astype(cp.float64)
 
         vp_vectors = self.gpu_points - vp_gpu  # (N, 3)
-        proj_distance = vp_vectors @ forward_gpu   # (N,)
+        proj_distance = vp_vectors @ forward_gpu  # (N,)
 
-        mask = (proj_distance >= self.frustum_params.near) & \
-               (proj_distance <= self.frustum_params.far)
+        mask = (proj_distance >= self.frustum_params.near) & (
+            proj_distance <= self.frustum_params.far
+        )
 
         tan_half_fov = np.tan(self.frustum_params.fov_y / 2.0)
         max_size_v = proj_distance * tan_half_fov
@@ -95,8 +101,9 @@ class VisibilityQueryCuda(VisibilityQueryBase):
 
         return cp.where(mask)[0]
 
-    def batch_points_in_frustum_gpu(self, positions_gpu: cp.ndarray,
-                                     rotmats_gpu: cp.ndarray) -> cp.ndarray:
+    def batch_points_in_frustum_gpu(
+        self, positions_gpu: cp.ndarray, rotmats_gpu: cp.ndarray
+    ) -> cp.ndarray:
         """Batch frustum culling via fused CUDA kernel.
 
         Args:
@@ -110,10 +117,8 @@ class VisibilityQueryCuda(VisibilityQueryBase):
         M = self.num_points
 
         # Ensure arrays are contiguous for pointer arithmetic in CUDA kernel.
-        positions_f32 = cp.ascontiguousarray(
-            cp.asarray(positions_gpu, dtype=cp.float32))
-        points_f32 = cp.ascontiguousarray(
-            self.gpu_points.astype(cp.float32))
+        positions_f32 = cp.ascontiguousarray(cp.asarray(positions_gpu, dtype=cp.float32))
+        points_f32 = cp.ascontiguousarray(self.gpu_points.astype(cp.float32))
 
         # Flatten rotation matrices.
         rotmats_f32 = cp.ascontiguousarray(
@@ -125,22 +130,27 @@ class VisibilityQueryCuda(VisibilityQueryBase):
         grid_size = (total_threads + CUDA_BLOCK_SIZE - 1) // CUDA_BLOCK_SIZE
 
         _BATCH_FRUSTUM_KERNEL(
-            (grid_size,), (CUDA_BLOCK_SIZE,),
-            (points_f32, positions_f32, rotmats_f32, mask,
-             np.int32(N), np.int32(M),
-             np.float32(self.frustum_params.near),
-             np.float32(self.frustum_params.far),
-             np.float32(np.tan(self.frustum_params.fov_y / 2.0)),
-             np.float32(self.frustum_params.aspect))
+            (grid_size,),
+            (CUDA_BLOCK_SIZE,),
+            (
+                points_f32,
+                positions_f32,
+                rotmats_f32,
+                mask,
+                np.int32(N),
+                np.int32(M),
+                np.float32(self.frustum_params.near),
+                np.float32(self.frustum_params.far),
+                np.float32(np.tan(self.frustum_params.fov_y / 2.0)),
+                np.float32(self.frustum_params.aspect),
+            ),
         )
 
         return mask.reshape(N, M)
 
-    def compute_visibility_batch(self, positions, rotmats) -> Tuple[cp.ndarray, float]:
+    def compute_visibility_batch(self, positions, rotmats) -> tuple[cp.ndarray, float]:
         """Compute visibility for a batch of viewpoints.
 
         Subclasses must override this to provide an efficient batch implementation.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement compute_visibility_batch"
-        )
+        raise NotImplementedError(f"{type(self).__name__} must implement compute_visibility_batch")

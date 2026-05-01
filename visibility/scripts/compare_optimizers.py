@@ -2,22 +2,22 @@
 Compare Greedy vs KernelGreedy optimizers using EpsilonVisibilityQuery,
 cross-validated with RaycastingVisibilityQuery for ground truth coverage.
 """
-import numpy as np
-import cupy as cp
-import open3d as o3d
+
 import os
-import time
-from typing import Dict, Any
+from typing import Any
+
+import cupy as cp
 import matplotlib.pyplot as plt
+import numpy as np
+import open3d as o3d
 
-from visibility.core.types import FrustumParams, OptimizationResult
-from shared.types import Side
-from visibility.sampling import WeightedViewpointSampler
 from shared.surface_sampler import SurfacePointSampler
-from visibility.visibility.raycast import RaycastingVisibilityQuery
-from visibility.visibility.epsilon import EpsilonVisibilityQuery
+from shared.types import Side
+from visibility.core.types import FrustumParams, OptimizationResult
+from visibility.sampling import WeightedViewpointSampler
 from visibility.set_cover import GreedySetCover
-
+from visibility.visibility.epsilon import EpsilonVisibilityQuery
+from visibility.visibility.raycast import RaycastingVisibilityQuery
 
 # ===========================================================================
 # CONFIGURATION
@@ -32,8 +32,10 @@ MAX_VIEWPOINTS = 1000
 # ANALYSIS FUNCTIONS
 # ===========================================================================
 
-def check_solution_with_raycast(raycast_query: RaycastingVisibilityQuery,
-                                result: OptimizationResult) -> float:
+
+def check_solution_with_raycast(
+    raycast_query: RaycastingVisibilityQuery, result: OptimizationResult
+) -> float:
     """Computes actual coverage using ground-truth Raycasting."""
     num_target_points = len(raycast_query.target_points)
     total_visible_mask = np.zeros(num_target_points, dtype=bool)
@@ -42,16 +44,18 @@ def check_solution_with_raycast(raycast_query: RaycastingVisibilityQuery,
     rotations_np = result.rotations.get()
     for i in range(result.num_viewpoints):
         visible_indices_rc, _ = raycast_query.compute_visibility(
-            viewpoint=positions_np[i],
-            rotation=rotations_np[i]
+            viewpoint=positions_np[i], rotation=rotations_np[i]
         )
         total_visible_mask[visible_indices_rc] = True
 
     return np.sum(total_visible_mask) / num_target_points
 
 
-def generate_comparison_graphs(data: Dict[float, Dict[str, Dict[str, Any]]],
-                               mesh_name: str, output_dir: str = "optimizer_comparison_results"):
+def generate_comparison_graphs(
+    data: dict[float, dict[str, dict[str, Any]]],
+    mesh_name: str,
+    output_dir: str = "optimizer_comparison_results",
+):
     """Generates bar graphs comparing Greedy vs KernelGreedy optimizers."""
     print(f"\n[GRAPHS] Generating bar graphs and saving to '{output_dir}/'...")
     os.makedirs(output_dir, exist_ok=True)
@@ -59,8 +63,8 @@ def generate_comparison_graphs(data: Dict[float, Dict[str, Dict[str, Any]]],
     target_coverages = sorted(data.keys())
     methods = ["Greedy", "KernelGreedy"]
 
-    plt.style.use('seaborn-v0_8-whitegrid')
-    plt.rcParams.update({'font.size': 12, 'axes.titlesize': 14, 'axes.labelsize': 12})
+    plt.style.use("seaborn-v0_8-whitegrid")
+    plt.rcParams.update({"font.size": 12, "axes.titlesize": 14, "axes.labelsize": 12})
 
     def get_metric_list(metric_name):
         res = {m: [] for m in methods}
@@ -77,21 +81,31 @@ def generate_comparison_graphs(data: Dict[float, Dict[str, Dict[str, Any]]],
         x = np.arange(len(target_coverages))
         width = 0.35
 
-        colors = {'Greedy': 'tab:blue', 'KernelGreedy': 'tab:orange'}
+        colors = {"Greedy": "tab:blue", "KernelGreedy": "tab:orange"}
 
-        rects1 = ax.bar(x - width / 2, metric_data[methods[0]], width,
-                        label=methods[0], color=colors[methods[0]])
-        rects2 = ax.bar(x + width / 2, metric_data[methods[1]], width,
-                        label=methods[1], color=colors[methods[1]])
-        ax.bar_label(rects1, padding=3, fmt='%.1f')
-        ax.bar_label(rects2, padding=3, fmt='%.1f')
+        rects1 = ax.bar(
+            x - width / 2,
+            metric_data[methods[0]],
+            width,
+            label=methods[0],
+            color=colors[methods[0]],
+        )
+        rects2 = ax.bar(
+            x + width / 2,
+            metric_data[methods[1]],
+            width,
+            label=methods[1],
+            color=colors[methods[1]],
+        )
+        ax.bar_label(rects1, padding=3, fmt="%.1f")
+        ax.bar_label(rects2, padding=3, fmt="%.1f")
 
         ax.set_ylabel(ylabel)
-        ax.set_xlabel('Target Coverage (%)')
+        ax.set_xlabel("Target Coverage (%)")
         ax.set_title(title)
         ax.set_xticks(x)
         ax.set_xticklabels([f"{tc * 100:.1f}%" for tc in target_coverages])
-        ax.legend(loc='best')
+        ax.legend(loc="best")
 
         fig.tight_layout()
         plt.savefig(os.path.join(output_dir, filename), dpi=300)
@@ -99,31 +113,39 @@ def generate_comparison_graphs(data: Dict[float, Dict[str, Dict[str, Any]]],
         print(f"  - {filename} saved.")
 
     vp_counts = get_metric_list("Num_Viewpoints")
-    create_grouped_bar_chart(vp_counts,
-                             f'Viewpoints Selected ({mesh_name})',
-                             'Number of Viewpoints',
-                             f"{mesh_name}_Optimizer_VP_Count.png")
+    create_grouped_bar_chart(
+        vp_counts,
+        f"Viewpoints Selected ({mesh_name})",
+        "Number of Viewpoints",
+        f"{mesh_name}_Optimizer_VP_Count.png",
+    )
 
     total_times = get_metric_list("Total_Time")
-    create_grouped_bar_chart(total_times,
-                             f'Total Time ({mesh_name})',
-                             'Time (seconds)',
-                             f"{mesh_name}_Optimizer_Total_Time.png")
+    create_grouped_bar_chart(
+        total_times,
+        f"Total Time ({mesh_name})",
+        "Time (seconds)",
+        f"{mesh_name}_Optimizer_Total_Time.png",
+    )
 
     act_coverage = get_metric_list("Actual_Coverage")
     for m in methods:
         act_coverage[m] = [val * 100 for val in act_coverage[m]]
 
-    create_grouped_bar_chart(act_coverage,
-                             f'Actual Coverage (Raycast-verified) ({mesh_name})',
-                             'Actual Coverage (%)',
-                             f"{mesh_name}_Optimizer_Coverage.png")
+    create_grouped_bar_chart(
+        act_coverage,
+        f"Actual Coverage (Raycast-verified) ({mesh_name})",
+        "Actual Coverage (%)",
+        f"{mesh_name}_Optimizer_Coverage.png",
+    )
 
     redundancy = get_metric_list("Redundancy")
-    create_grouped_bar_chart(redundancy,
-                             f'Coverage Redundancy ({mesh_name})',
-                             'Avg Viewpoints per Point',
-                             f"{mesh_name}_Optimizer_Redundancy.png")
+    create_grouped_bar_chart(
+        redundancy,
+        f"Coverage Redundancy ({mesh_name})",
+        "Avg Viewpoints per Point",
+        f"{mesh_name}_Optimizer_Redundancy.png",
+    )
 
     print(f"[GRAPHS] All graphs saved to {os.path.abspath(output_dir)}")
 
@@ -131,6 +153,7 @@ def generate_comparison_graphs(data: Dict[float, Dict[str, Dict[str, Any]]],
 # ===========================================================================
 # MAIN COMPARISON PIPELINE
 # ===========================================================================
+
 
 def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
     """Creates a basic mesh, target points, and candidates for testing."""
@@ -144,12 +167,16 @@ def create_mock_data(num_points=1000, num_candidates=100, mesh_path=None):
 
     surface_sampler = SurfacePointSampler()
     target_points, normals = surface_sampler.sample(
-        mesh, num_points, normal_radius=0.1, tangent_plane_k=10,
+        mesh,
+        num_points,
+        normal_radius=0.1,
+        tangent_plane_k=10,
     )
 
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7)
 
     from shared.geometry import direction_roll_to_rotmat
+
     candidate_pos = target_points[:num_candidates] + normals[:num_candidates] * 1.5
     candidate_dir = -normals[:num_candidates]
     positions = candidate_pos.astype(np.float32)
@@ -177,7 +204,9 @@ def run_comparison_pipeline():
         NUM_CANDIDATE_VPs,
     )
 
-    sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    sampler = WeightedViewpointSampler(
+        mesh, target_points, normals, frustum_params.far, collision_radius=0.5
+    )
 
     print(f"[SAMPLING] Generating {NUM_CANDIDATE_VPs} candidate viewpoints...")
     pos_gpu, rot_gpu = sampler.sample(num_candidates=NUM_CANDIDATE_VPs, side=Side.OUTSIDE)
@@ -186,17 +215,15 @@ def run_comparison_pipeline():
 
     # Initialize Epsilon query (used by both optimizers)
     visibility_query_epsilon = EpsilonVisibilityQuery(
-        target_points=target_points,
-        normals=normals, frustum_params=frustum_params
+        target_points=target_points, normals=normals, frustum_params=frustum_params
     )
 
     # Initialize Raycast query for ground-truth validation
     visibility_query_raycast = RaycastingVisibilityQuery(
-        mesh=mesh, target_points=target_points,
-        normals=normals, frustum_params=frustum_params
+        mesh=mesh, target_points=target_points, normals=normals, frustum_params=frustum_params
     )
 
-    comparison_data: Dict[float, Dict[str, Dict[str, Any]]] = {}
+    comparison_data: dict[float, dict[str, dict[str, Any]]] = {}
 
     for TARGET_COVERAGE in TARGET_COVERAGES:
         print("\n" + "=" * 80)
@@ -210,8 +237,7 @@ def run_comparison_pipeline():
         V_eps, _ = visibility_query_epsilon.compute_visibility_batch(positions, rotmats)
         optimizer_greedy = GreedySetCover(len(target_points), positions, rotmats, V_eps)
         result_greedy = optimizer_greedy.optimize(
-            target_coverage=TARGET_COVERAGE,
-            max_viewpoints=MAX_VIEWPOINTS
+            target_coverage=TARGET_COVERAGE, max_viewpoints=MAX_VIEWPOINTS
         )
 
         actual_coverage_greedy = check_solution_with_raycast(
@@ -227,9 +253,11 @@ def run_comparison_pipeline():
         }
 
         print(f"\n[SUMMARY for {TARGET_COVERAGE * 100:.1f}% Target]")
-        print(f"  Greedy: VPs={result_greedy.num_viewpoints}, "
-              f"Actual={actual_coverage_greedy * 100:.2f}%, "
-              f"Time={result_greedy.optimization_time:.2f}s")
+        print(
+            f"  Greedy: VPs={result_greedy.num_viewpoints}, "
+            f"Actual={actual_coverage_greedy * 100:.2f}%, "
+            f"Time={result_greedy.optimization_time:.2f}s"
+        )
 
     print("\n" + "=" * 80)
     print("OPTIMIZER COMPARISON PIPELINE COMPLETE")

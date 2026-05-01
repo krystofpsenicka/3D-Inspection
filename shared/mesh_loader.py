@@ -5,7 +5,6 @@ Mesh loading: load, uniform-scale, and pose-transform a mesh.
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import numpy as np
 import trimesh
@@ -43,7 +42,7 @@ def load_and_transform_mesh(
         mesh = scene_or_mesh
 
     longest = float(mesh.extents.max())
-    scale_factor: Optional[float] = None
+    scale_factor: float | None = None
     if longest > 0:
         scale_factor = target_length / longest
         mesh.apply_scale(scale_factor)

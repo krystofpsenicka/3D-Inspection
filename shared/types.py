@@ -5,5 +5,6 @@ from enum import Enum
 
 class Side(Enum):
     """Which side of the surface we are inspected."""
+
     OUTSIDE = "outside"
     INSIDE = "inside"

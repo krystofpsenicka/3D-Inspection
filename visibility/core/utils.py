@@ -1,6 +1,6 @@
 import cupy as cp
 
-from shared.geometry import orient_normals_outward  # re-export
+from shared.geometry import orient_normals_outward as orient_normals_outward  # re-export
 
 
 def compute_redundancy(visibility_map: cp.ndarray) -> float:

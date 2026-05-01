@@ -5,19 +5,21 @@ Usage:
     python -m visibility.scripts.check_visibility [mesh_path] [--method raycast|epsilon]
                                                    [--num-viewpoints N] [--num-points M]
 """
+
 import argparse
-import numpy as np
-import cupy as cp
-import open3d as o3d
 import time
 
-from visibility.core import FrustumParams
-from shared.types import Side
+import cupy as cp
+import numpy as np
+import open3d as o3d
+
 from shared.surface_sampler import SurfacePointSampler
+from shared.types import Side
+from visibility.core import FrustumParams
 from visibility.sampling import WeightedViewpointSampler
-from visibility.visibility.raycast import RaycastingVisibilityQuery
 from visibility.visibility.epsilon import EpsilonVisibilityQuery
 from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
+from visibility.visibility.raycast import RaycastingVisibilityQuery
 from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
 from visualization import VisibilityVisualizer
 
@@ -35,18 +37,39 @@ def load_mesh(mesh_path: str | None) -> o3d.geometry.TriangleMesh:
 
 def main():
     parser = argparse.ArgumentParser(description="Visual inspection of visibility results.")
-    parser.add_argument("mesh_path", nargs="?", default=None,
-                        help="Path to mesh file (default: sphere r=5)")
-    parser.add_argument("--method", choices=["raycast", "epsilon", "epsilon_cuda", "raycast_cuda"], default="raycast_cuda",
-                        help="Visibility method to visualize (default: raycast_cuda)")
-    parser.add_argument("--num-viewpoints", type=int, default=200,
-                        help="Number of viewpoints to generate (default: 200)")
-    parser.add_argument("--num-points", type=int, default=2000,
-                        help="Number of surface points to sample (default: 2000)")
-    parser.add_argument("--side", choices=["outside", "inside"], default="outside",
-                        help="Whether to sample viewpoints outside or inside the mesh (default: outside)")
-    parser.add_argument("--separate", action="store_true", default=False,
-                        help="Show each viewpoint in a separate window (default: all together)")
+    parser.add_argument(
+        "mesh_path", nargs="?", default=None, help="Path to mesh file (default: sphere r=5)"
+    )
+    parser.add_argument(
+        "--method",
+        choices=["raycast", "epsilon", "epsilon_cuda", "raycast_cuda"],
+        default="raycast_cuda",
+        help="Visibility method to visualize (default: raycast_cuda)",
+    )
+    parser.add_argument(
+        "--num-viewpoints",
+        type=int,
+        default=200,
+        help="Number of viewpoints to generate (default: 200)",
+    )
+    parser.add_argument(
+        "--num-points",
+        type=int,
+        default=2000,
+        help="Number of surface points to sample (default: 2000)",
+    )
+    parser.add_argument(
+        "--side",
+        choices=["outside", "inside"],
+        default="outside",
+        help="Whether to sample viewpoints outside or inside the mesh (default: outside)",
+    )
+    parser.add_argument(
+        "--separate",
+        action="store_true",
+        default=False,
+        help="Show each viewpoint in a separate window (default: all together)",
+    )
     args = parser.parse_args()
 
     side = Side(args.side)
@@ -60,7 +83,9 @@ def main():
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
     # --- Viewpoints ---
-    sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    sampler = WeightedViewpointSampler(
+        mesh, target_points, normals, frustum_params.far, collision_radius=0.5
+    )
     pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side=side)
 
     # --- Query ---
@@ -78,8 +103,10 @@ def main():
             raise ValueError(f"Unknown method: {args.method}")
 
     n_vp = len(pos_gpu)
-    print(f"\nRunning '{args.method}' visibility on {n_vp} viewpoints "
-          f"({len(target_points)} surface points)...\n")
+    print(
+        f"\nRunning '{args.method}' visibility on {n_vp} viewpoints "
+        f"({len(target_points)} surface points)...\n"
+    )
 
     # Transfer to CPU for CPU queries
     if use_gpu:
@@ -91,14 +118,16 @@ def main():
     for i in range(n_vp):
         t0 = time.perf_counter()
         visible_indices, comp_time = query.compute_visibility(positions[i], rotmats[i])
-        print(f"  VP {i}: visible {len(visible_indices)} / {len(target_points)}  "
-              f"time={time.perf_counter() - t0:.3f} s")
+        print(
+            f"  VP {i}: visible {len(visible_indices)} / {len(target_points)}  "
+            f"time={time.perf_counter() - t0:.3f} s"
+        )
         visibility_map[i] = visible_indices.astype(int)
 
     # --- Visualize (CPU arrays + list of tuples) ---
     pos_cpu = cp.asnumpy(pos_gpu) if use_gpu else positions
     rot_cpu = cp.asnumpy(rot_gpu) if use_gpu else rotmats
-    candidates = list(zip(pos_cpu, rot_cpu))
+    candidates = list(zip(pos_cpu, rot_cpu, strict=False))
 
     viz = VisibilityVisualizer(mesh, target_points, frustum_params)
     if args.separate:

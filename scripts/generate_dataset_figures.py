@@ -7,6 +7,7 @@ Outputs:
 Run:
   conda run -n isaaclab python 3D-Inspection/scripts/generate_dataset_figures.py
 """
+
 from __future__ import annotations
 
 import logging
@@ -117,7 +118,8 @@ def render_duke(out_path: Path) -> None:
     extents_scaled = extents_native * scale_factor
     log.info(
         "  native extents (m): %.2f x %.2f x %.2f -> scaled to %.2f x %.2f x %.2f",
-        *extents_native, *extents_scaled,
+        *extents_native,
+        *extents_scaled,
     )
 
     mesh = _trimesh_to_o3d(tm)
@@ -127,7 +129,8 @@ def render_duke(out_path: Path) -> None:
     # angle that shows both length and superstructure detail.
     img = _render_mesh_offscreen(
         mesh,
-        width=2200, height=1100,
+        width=2200,
+        height=1100,
         front=(0.45, -0.55, 0.70),
         up=(0.0, -1.0, 0.0),
         zoom=0.17,
@@ -138,19 +141,19 @@ def render_duke(out_path: Path) -> None:
     draw = ImageDraw.Draw(pil)
     font = _load_font(36)
 
-    L_scaled = extents_scaled[0]   # X = length
-    H_scaled = extents_scaled[1]   # Y = height
-    W_scaled = extents_scaled[2]   # Z = width / beam
-    label = (f"≈ {L_scaled:.0f} m (length)  ×  "
-             f"{W_scaled:.1f} m (beam)  ×  "
-             f"{H_scaled:.1f} m (height)")
+    L_scaled = extents_scaled[0]  # X = length
+    H_scaled = extents_scaled[1]  # Y = height
+    W_scaled = extents_scaled[2]  # Z = width / beam
+    label = f"≈ {L_scaled:.0f} m (length)  ×  {W_scaled:.1f} m (beam)  ×  {H_scaled:.1f} m (height)"
 
     text_xy = (40, pil.height - 70)
     bbox = draw.textbbox(text_xy, label, font=font)
     pad = 10
     draw.rectangle(
         (bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad),
-        fill=(255, 255, 255), outline=(80, 80, 80), width=1,
+        fill=(255, 255, 255),
+        outline=(80, 80, 80),
+        width=1,
     )
     draw.text(text_xy, label, fill=(20, 20, 20), font=font)
 
@@ -162,12 +165,12 @@ def render_duke(out_path: Path) -> None:
 # Selection of TOSCA classes for the sample grid. Six distinct classes
 # (humans + animals) using the lowest-index pose available.
 TOSCA_PICKS: list[tuple[str, str]] = [
-    ("cat0",      "Cat"),
-    ("centaur0",  "Centaur"),
-    ("david0",    "David"),
-    ("gorilla1",  "Gorilla"),  # gorilla0.off is not present in the dataset
-    ("horse0",    "Horse"),
-    ("michael0",  "Michael"),
+    ("cat0", "Cat"),
+    ("centaur0", "Centaur"),
+    ("david0", "David"),
+    ("gorilla1", "Gorilla"),  # gorilla0.off is not present in the dataset
+    ("horse0", "Horse"),
+    ("michael0", "Michael"),
 ]
 
 
@@ -182,7 +185,8 @@ def _render_tosca_tile(file_stem: str, tile_size: int) -> np.ndarray:
     # camera convention so the grid feels uniform.
     return _render_mesh_offscreen(
         mesh,
-        width=tile_size, height=tile_size,
+        width=tile_size,
+        height=tile_size,
         front=(0.4, -0.9, 0.45),
         up=(0.0, 0.0, 1.0),
         zoom=0.85,
@@ -215,7 +219,8 @@ def render_tosca(out_path: Path) -> None:
         # Light-grey border around tile.
         draw.rectangle(
             (cx, cy + label_h, cx + cell_w, cy + cell_h),
-            outline=(180, 180, 180), width=border,
+            outline=(180, 180, 180),
+            width=border,
         )
         canvas.paste(tile_img, (cx + border, cy + label_h + border))
 
@@ -225,7 +230,9 @@ def render_tosca(out_path: Path) -> None:
         text_h = bbox[3] - bbox[1]
         draw.text(
             (cx + (cell_w - text_w) // 2, cy + (label_h - text_h) // 2 - 6),
-            pretty, fill=(20, 20, 20), font=font,
+            pretty,
+            fill=(20, 20, 20),
+            font=font,
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -14,13 +14,13 @@ All strategies should converge to the same coverage ceiling at large N;
 strategies that plateau earlier or lower indicate structural limitations.
 
 See e01 for which strategy achieves the best coverage/viewpoint ratio at a
-fixed candidate count — e02 confirms that finding holds across all budgets.
+fixed candidate count  --  e02 confirms that finding holds across all budgets.
 
 Strategies compared:
-  weighted            — SDF² uniform, no curvature weighting (one-shot)
-  weighted_curvature  — SDF² + curvature weighting (one-shot)
-  targeted_X          — X% targeted toward uncovered regions, (100-X)% weighted
-  cmaes_X             — X% CMA-ES optimised, (100-X)% weighted
+  weighted             --  SDF² uniform, no curvature weighting (one-shot)
+  weighted_curvature   --  SDF² + curvature weighting (one-shot)
+  targeted_X           --  X% targeted toward uncovered regions, (100-X)% weighted
+  cmaes_X              --  X% CMA-ES optimised, (100-X)% weighted
 
 Usage:
     conda run -n isaaclab python -m experiments.e02_candidate_scaling
@@ -34,8 +34,9 @@ import logging
 import os
 import sys
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -44,16 +45,21 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import (
-    ModelConfig, SEEDS_3, E02_CANDIDATE_COUNTS, RESULTS_DIR,
+    E02_CANDIDATE_COUNTS,
+    RESULTS_DIR,
+    SEEDS_3,
+    ModelConfig,
 )
 
 # ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
-    from experiments.common.runner import set_seed, timed, free_gpu_memory
+
     from experiments.common.pipeline_setup import PipelineContext
+    from experiments.common.runner import free_gpu_memory, set_seed, timed
     from experiments.common.sampling_dispatch import sample_strategy
+
     _RUNTIME_AVAILABLE = True
 except ImportError as _e:
     cp = None
@@ -84,23 +90,30 @@ def _strategy_kwargs(strategy: str) -> dict:
     return {}
 
 
-from experiments.common.persistence import save_run_result, load_run_result
+from experiments.common.persistence import load_run_result, save_run_result
 from experiments.common.plotting import (
-    setup_thesis_style, save_figure, display_strategy,
-    DOUBLE_COL, CATEGORICAL_COLORS,
+    CATEGORICAL_COLORS,
+    DOUBLE_COL,
+    display_strategy,
+    save_figure,
+    setup_thesis_style,
 )
 
 logger = logging.getLogger(__name__)
-
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Single run logic
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_single(ctx: PipelineContext, strategy: str, num_candidates: int, seed: int,
-               target_coverage: float = 0.95) -> dict:
+
+def run_single(
+    ctx: PipelineContext,
+    strategy: str,
+    num_candidates: int,
+    seed: int,
+    target_coverage: float = 0.95,
+) -> dict:
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
@@ -108,13 +121,21 @@ def run_single(ctx: PipelineContext, strategy: str, num_candidates: int, seed: i
 
     with timed() as t_sample:
         pos_gpu, rot_gpu, n_base, n_iter, base_name, _ = sample_strategy(
-            ctx, strategy, num_candidates, target_points, normals, vis_query, model,
-            **_strategy_kwargs(strategy))
+            ctx,
+            strategy,
+            num_candidates,
+            target_points,
+            normals,
+            vis_query,
+            model,
+            **_strategy_kwargs(strategy),
+        )
 
     with timed() as t_vis:
         V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
     from visibility.set_cover import LazyGreedySetCover  # CPU — fastest per e04 results
+
     V_np = cp.asnumpy(V)
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)
@@ -145,6 +166,7 @@ def run_single(ctx: PipelineContext, strategy: str, num_candidates: int, seed: i
 # Plot generation
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     setup_thesis_style()
     fig_dir = os.path.join(output_dir, "figures")
@@ -155,8 +177,11 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     def _agg(strategy, metric):
         means, stds = [], []
         for nc in candidates:
-            vals = [r[metric] for r in results
-                    if r["strategy"] == strategy and r["num_candidates_requested"] == nc]
+            vals = [
+                r[metric]
+                for r in results
+                if r["strategy"] == strategy and r["num_candidates_requested"] == nc
+            ]
             if vals:
                 means.append(float(np.mean(vals)))
                 stds.append(float(np.std(vals)))
@@ -172,7 +197,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
         "targeted": CATEGORICAL_COLORS[2],
         "cmaes": CATEGORICAL_COLORS[3],
     }
-    linestyles = ["solid", "dashed", "dotted", "dashdot"]
 
     def _style(strategy):
         if strategy == "weighted":
@@ -194,10 +218,16 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     for strat in strategies:
         m, s = _agg(strat, "coverage")
         color, ls, marker = _style(strat)
-        ax.plot(candidates, m * 100, marker=marker, linestyle=ls, color=color,
-                label=display_strategy(strat), linewidth=1.5)
-        ax.fill_between(candidates, (m - s) * 100, (m + s) * 100,
-                        alpha=0.08, color=color)
+        ax.plot(
+            candidates,
+            m * 100,
+            marker=marker,
+            linestyle=ls,
+            color=color,
+            label=display_strategy(strat),
+            linewidth=1.5,
+        )
+        ax.fill_between(candidates, (m - s) * 100, (m + s) * 100, alpha=0.08, color=color)
     ax.axhline(95, color="red", linestyle="--", alpha=0.5, label="95% target")
     ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Achieved coverage (%)")
@@ -210,8 +240,15 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     for strat in strategies:
         m, s = _agg(strat, "num_viewpoints")
         color, ls, marker = _style(strat)
-        ax.plot(candidates, m, marker=marker, linestyle=ls, color=color,
-                label=display_strategy(strat), linewidth=1.5)
+        ax.plot(
+            candidates,
+            m,
+            marker=marker,
+            linestyle=ls,
+            color=color,
+            label=display_strategy(strat),
+            linewidth=1.5,
+        )
     ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Selected viewpoints")
     ax.set_title("Selected Viewpoints vs. Candidate Count — All Strategies")
@@ -223,8 +260,15 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     for strat in strategies:
         m, s = _agg(strat, "num_candidates")
         color, ls, marker = _style(strat)
-        ax.plot(candidates, m, marker=marker, linestyle=ls, color=color,
-                label=display_strategy(strat), linewidth=1.5)
+        ax.plot(
+            candidates,
+            m,
+            marker=marker,
+            linestyle=ls,
+            color=color,
+            label=display_strategy(strat),
+            linewidth=1.5,
+        )
     # Identity line
     ax.plot(candidates, candidates, "k--", alpha=0.3, label="N requested")
     ax.set_xlabel("Candidates requested")
@@ -240,6 +284,7 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
 # CLI
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def main():
     p = argparse.ArgumentParser(description="E2: Candidate Count Scaling")
     p.add_argument("--model", default="duke_of_lancaster")
@@ -247,8 +292,7 @@ def main():
     p.add_argument("--strategies", nargs="+", default=_E02_STRATEGIES)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--target_coverage", type=float, default=0.95)
-    p.add_argument("--output_dir",
-                   default=os.path.join(RESULTS_DIR, "e02_candidate_scaling"))
+    p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e02_candidate_scaling"))
     p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -280,31 +324,31 @@ def main():
         ctx.sample_surface(seed=42)
         ctx.build_sampling_og()
 
-        combos = [(s, nc, seed)
-                  for s in args.strategies
-                  for nc in args.candidates
-                  for seed in args.seeds]
+        combos = [
+            (s, nc, seed) for s in args.strategies for nc in args.candidates for seed in args.seeds
+        ]
         total = len(combos)
 
         for idx, (strategy, nc, seed) in enumerate(combos, 1):
-            rpath = os.path.join(
-                raw_dir, f"strategy={strategy}_candidates={nc}_seed={seed}")
+            rpath = os.path.join(raw_dir, f"strategy={strategy}_candidates={nc}_seed={seed}")
 
             if args.resume and os.path.exists(rpath + ".json"):
-                logger.info("[%d/%d] SKIP %s nc=%d seed=%d",
-                            idx, total, strategy, nc, seed)
+                logger.info("[%d/%d] SKIP %s nc=%d seed=%d", idx, total, strategy, nc, seed)
                 all_results.append(load_run_result(rpath))
                 continue
 
-            logger.info("[%d/%d] strategy=%s candidates=%d seed=%d",
-                        idx, total, strategy, nc, seed)
+            logger.info("[%d/%d] strategy=%s candidates=%d seed=%d", idx, total, strategy, nc, seed)
             try:
                 result = run_single(ctx, strategy, nc, seed, args.target_coverage)
                 all_results.append(result)
                 save_run_result(result, rpath)
-                logger.info("  VPs=%d cov=%.2f%% generated=%d time=%.1fs",
-                            result["num_viewpoints"], result["coverage"] * 100,
-                            result["num_candidates"], result["total_time"])
+                logger.info(
+                    "  VPs=%d cov=%.2f%% generated=%d time=%.1fs",
+                    result["num_viewpoints"],
+                    result["coverage"] * 100,
+                    result["num_candidates"],
+                    result["total_time"],
+                )
             except Exception as e:
                 logger.error("  FAILED: %s", e, exc_info=True)
             finally:
@@ -312,11 +356,12 @@ def main():
     else:
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):
-                all_results.append(load_run_result(
-                    os.path.join(raw_dir, fname.replace(".json", ""))))
+                all_results.append(
+                    load_run_result(os.path.join(raw_dir, fname.replace(".json", "")))
+                )
 
     # Older raw files predate the per-strategy schema and lack the
-    # "strategy" field — drop them so they don't crash the plot loop.
+    # "strategy" field  --  drop them so they don't crash the plot loop.
     all_results = [r for r in all_results if "strategy" in r]
 
     if all_results:

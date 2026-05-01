@@ -5,16 +5,18 @@ Usage:
     python -m visibility.scripts.compare_vs_raycast [mesh_path] [--method epsilon]
                                                      [--num-viewpoints N] [--num-points M]
 """
+
 import argparse
-import numpy as np
-import cupy as cp
-import open3d as o3d
 import time
-from visibility.core import FrustumParams
-from shared.types import Side
+
+import cupy as cp
+import numpy as np
+import open3d as o3d
+
 from shared.surface_sampler import SurfacePointSampler
+from shared.types import Side
+from visibility.core import FrustumParams
 from visibility.sampling import WeightedViewpointSampler
-from visibility.visibility.raycast import RaycastingVisibilityQuery
 from visibility.visibility.epsilon import EpsilonVisibilityQuery
 from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
 from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
@@ -32,9 +34,15 @@ def load_mesh(mesh_path: str | None) -> o3d.geometry.TriangleMesh:
     return mesh
 
 
-def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
-                   gt_set: set, pred_set: set, viewpoints, vp_index: int,
-                   frustum_params: FrustumParams):
+def visualize_diff(
+    mesh: o3d.geometry.TriangleMesh,
+    target_points: np.ndarray,
+    gt_set: set,
+    pred_set: set,
+    viewpoints,
+    vp_index: int,
+    frustum_params: FrustumParams,
+):
     """
     Render a per-viewpoint diff window:
       Green  = true positive  (visible in both GT and pred)
@@ -49,11 +57,11 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
     num_points = len(target_points)
     colors = np.full((num_points, 3), [0.4, 0.4, 0.4], dtype=np.float64)  # gray = TN
     for idx in tp:
-        colors[idx] = [0.0, 1.0, 0.0]   # green
+        colors[idx] = [0.0, 1.0, 0.0]  # green
     for idx in fp:
-        colors[idx] = [1.0, 0.0, 0.0]   # red
+        colors[idx] = [1.0, 0.0, 0.0]  # red
     for idx in fn:
-        colors[idx] = [1.0, 0.5, 0.0]   # orange
+        colors[idx] = [1.0, 0.5, 0.0]  # orange
 
     pcd_vis = o3d.geometry.PointCloud()
     pcd_vis.points = o3d.utility.Vector3dVector(target_points)
@@ -89,8 +97,7 @@ def visualize_diff(mesh: o3d.geometry.TriangleMesh, target_points: np.ndarray,
     geometries.append(frustum)
 
     o3d.visualization.draw_geometries(
-        geometries,
-        window_name=f"Diff VP {vp_index}  TP=green  FP=red  FN=orange  TN=gray"
+        geometries, window_name=f"Diff VP {vp_index}  TP=green  FP=red  FN=orange  TN=gray"
     )
 
 
@@ -98,14 +105,27 @@ def main():
     parser = argparse.ArgumentParser(
         description="Quantitative comparison of a visibility method against raycast GT."
     )
-    parser.add_argument("mesh_path", nargs="?", default=None,
-                        help="Path to mesh file (default: sphere r=5)")
-    parser.add_argument("--method", choices=["epsilon", "epsilon_cuda"], default="epsilon",
-                        help="Method to compare against raycast (default: epsilon)")
-    parser.add_argument("--num-viewpoints", type=int, default=5,
-                        help="Number of viewpoints to evaluate (default: 5)")
-    parser.add_argument("--num-points", type=int, default=2000,
-                        help="Number of surface points to sample (default: 2000)")
+    parser.add_argument(
+        "mesh_path", nargs="?", default=None, help="Path to mesh file (default: sphere r=5)"
+    )
+    parser.add_argument(
+        "--method",
+        choices=["epsilon", "epsilon_cuda"],
+        default="epsilon",
+        help="Method to compare against raycast (default: epsilon)",
+    )
+    parser.add_argument(
+        "--num-viewpoints",
+        type=int,
+        default=5,
+        help="Number of viewpoints to evaluate (default: 5)",
+    )
+    parser.add_argument(
+        "--num-points",
+        type=int,
+        default=2000,
+        help="Number of surface points to sample (default: 2000)",
+    )
     args = parser.parse_args()
 
     # --- Setup ---
@@ -117,7 +137,9 @@ def main():
     frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
 
     # --- Viewpoints (GPU arrays) ---
-    sampler = WeightedViewpointSampler(mesh, target_points, normals, frustum_params.far, collision_radius=0.5)
+    sampler = WeightedViewpointSampler(
+        mesh, target_points, normals, frustum_params.far, collision_radius=0.5
+    )
     pos_gpu, rot_gpu = sampler.sample(num_candidates=args.num_viewpoints, side=Side.OUTSIDE)
 
     # --- Instantiate both queries ---
@@ -133,8 +155,10 @@ def main():
         case _:
             raise ValueError(f"Unknown method: {args.method}")
 
-    print(f"\nComparing '{args.method}' vs raycast on {len(pos_gpu)} viewpoints "
-          f"({len(target_points)} surface points)...\n")
+    print(
+        f"\nComparing '{args.method}' vs raycast on {len(pos_gpu)} viewpoints "
+        f"({len(target_points)} surface points)...\n"
+    )
 
     header = f"{'VP':>4}  {'GT':>6}  {'Pred':>6}  {'TP':>6}  "
     header += f"{'Precision':>9}  {'Recall':>7}  {'F1':>7}  {'Time':>8}"
@@ -167,16 +191,17 @@ def main():
         tp = len(gt_set & pred_set)
         precision = tp / len(pred_set) if len(pred_set) > 0 else 0.0
         recall = tp / len(gt_set) if len(gt_set) > 0 else 0.0
-        f1 = (2 * precision * recall / (precision + recall)
-              if (precision + recall) > 0 else 0.0)
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
         precisions.append(precision)
         recalls.append(recall)
         f1s.append(f1)
 
-        print(f"VP {i:>2}: GT={len(gt_set):>6}  Pred={len(pred_set):>6}  TP={tp:>6}  "
-              f"Precision={precision:.3f}  Recall={recall:.3f}  F1={f1:.3f}  "
-              f"({elapsed:.3f} s)")
+        print(
+            f"VP {i:>2}: GT={len(gt_set):>6}  Pred={len(pred_set):>6}  TP={tp:>6}  "
+            f"Precision={precision:.3f}  Recall={recall:.3f}  F1={f1:.3f}  "
+            f"({elapsed:.3f} s)"
+        )
 
     # --- Summary ---
     print("\n" + "=" * 60)
@@ -190,7 +215,7 @@ def main():
     # Build CPU viewpoints list for visualization
     pos_cpu = cp.asnumpy(pos_gpu)
     rot_cpu = cp.asnumpy(rot_gpu)
-    viewpoints = list(zip(pos_cpu, rot_cpu))
+    viewpoints = list(zip(pos_cpu, rot_cpu, strict=False))
 
     print("\nOpening visual diff windows (close each to advance)...")
     for i, (gt_set, pred_set) in enumerate(vp_results):

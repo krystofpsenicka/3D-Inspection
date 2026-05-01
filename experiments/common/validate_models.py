@@ -48,6 +48,7 @@ def validate_all_tosca(models: list[str] | None = None) -> tuple[list[str], list
 
         try:
             import trimesh
+
             mesh = trimesh.load(cfg.mesh_path, force="mesh")
             longest = float(mesh.extents.max())
             if longest > 0:
@@ -59,11 +60,14 @@ def validate_all_tosca(models: list[str] | None = None) -> tuple[list[str], list
             o3d_mesh.compute_vertex_normals()
 
             from shared.surface_sampler import SurfacePointSampler
+
             sampler = SurfacePointSampler()
             pts, norms = sampler.sample(o3d_mesh, 2000, seed=42)
 
             if _check_normals(norms, threshold_deg=30.0):
-                logger.info("  OK: %s (%d verts, %d faces)", name, len(mesh.vertices), len(mesh.faces))
+                logger.info(
+                    "  OK: %s (%d verts, %d faces)", name, len(mesh.vertices), len(mesh.faces)
+                )
                 valid.append(name)
             else:
                 logger.warning("  INVALID: %s (degenerate normals)", name)

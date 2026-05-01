@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import List, Tuple
 
 import numpy as np
 
@@ -21,20 +20,21 @@ logger = logging.getLogger(__name__)
 # ─── Waypoint-marker colours ─────────────────────────────────────────────────
 
 ROBOT_COLORS = [
-    np.array([1.0, 0.2, 0.2]),   # red
-    np.array([0.2, 0.6, 1.0]),   # blue
-    np.array([0.2, 1.0, 0.2]),   # green
-    np.array([1.0, 0.8, 0.0]),   # yellow
-    np.array([1.0, 0.2, 1.0]),   # magenta
-    np.array([0.0, 1.0, 1.0]),   # cyan
-    np.array([1.0, 0.5, 0.0]),   # orange
-    np.array([0.5, 0.0, 1.0]),   # purple
+    np.array([1.0, 0.2, 0.2]),  # red
+    np.array([0.2, 0.6, 1.0]),  # blue
+    np.array([0.2, 1.0, 0.2]),  # green
+    np.array([1.0, 0.8, 0.0]),  # yellow
+    np.array([1.0, 0.2, 1.0]),  # magenta
+    np.array([0.0, 1.0, 1.0]),  # cyan
+    np.array([1.0, 0.5, 0.0]),  # orange
+    np.array([0.5, 0.0, 1.0]),  # purple
 ]
 
 
 # ─── Pose conversion utilities (pure NumPy / SciPy, no USD) ─────────────────
 
-def traj8_to_pose(traj_pos: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+
+def traj8_to_pose(traj_pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Convert one 8-DOF joint position to ``(xyz, quat_wxyz)``.
 
     The 8 DOFs are ``[x, y, z, yaw, pitch, roll, cam_yaw, cam_pitch]``.
@@ -47,7 +47,7 @@ def traj8_to_pose(traj_pos: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return xyz, rot.as_quat(scalar_first=True).astype(np.float64)
 
 
-def convert_trajectories(all_traj_positions: list) -> List[np.ndarray]:
+def convert_trajectories(all_traj_positions: list) -> list[np.ndarray]:
     """Pre-convert all robot trajectories to ``(N, 7)`` arrays of ``[x,y,z,qw,qx,qy,qz]``."""
     result = []
     for robot_traj in all_traj_positions:
@@ -61,6 +61,7 @@ def convert_trajectories(all_traj_positions: list) -> List[np.ndarray]:
 
 
 # ─── Stage-builder class ────────────────────────────────────────────────────
+
 
 class ReplayVisualizer:
     """Stage-builder for VRP multi-robot trajectory replay.
@@ -78,19 +79,15 @@ class ReplayVisualizer:
         Per-robot waypoint lists from ``ExecutionResult.all_waypoints``.
     """
 
-    def __init__(self, traj_poses: list[np.ndarray],
-                 all_waypoints: list[list]):
+    def __init__(self, traj_poses: list[np.ndarray], all_waypoints: list[list]):
         self.traj_poses = traj_poses
         self.all_waypoints = all_waypoints
         self.num_robots = len(traj_poses)
-        self.total_steps = (
-            max(len(t) for t in traj_poses) if traj_poses else 0
-        )
+        self.total_steps = max(len(t) for t in traj_poses) if traj_poses else 0
 
     # ── Waypoint markers ─────────────────────────────────────────────
 
-    def add_waypoint_markers(self, stage, base_path: str,
-                             marker_size: float = 0.08) -> list[str]:
+    def add_waypoint_markers(self, stage, base_path: str, marker_size: float = 0.08) -> list[str]:
         """Add colour-coded waypoint cubes for each robot.
 
         Returns
@@ -102,20 +99,25 @@ class ReplayVisualizer:
             color = tuple(ROBOT_COLORS[i % len(ROBOT_COLORS)])
             for wi, wp in enumerate(self.all_waypoints[i]):
                 p = f"{base_path}/wp_r{i}_{wi}"
-                paths.append(create_cuboid_prim(
-                    stage, p,
-                    position=np.array(wp[:3], dtype=np.float64),
-                    orientation=np.array(wp[3:7], dtype=np.float64),
-                    color=color,
-                    size=marker_size,
-                ))
+                paths.append(
+                    create_cuboid_prim(
+                        stage,
+                        p,
+                        position=np.array(wp[:3], dtype=np.float64),
+                        orientation=np.array(wp[3:7], dtype=np.float64),
+                        color=color,
+                        size=marker_size,
+                    )
+                )
         logger.info("Added waypoint markers for %d robots.", self.num_robots)
         return paths
 
     # ── Environment obstacles ────────────────────────────────────────
 
     def add_obstacles(
-        self, stage, base_path: str,
+        self,
+        stage,
+        base_path: str,
         mesh_path: str,
         mesh_pose: list,
         mesh_target_length: float,
@@ -146,7 +148,9 @@ class ReplayVisualizer:
     # ── Robot spawning ──────────────────────────────────────────────
 
     def add_robots(
-        self, stage, base_path: str,
+        self,
+        stage,
+        base_path: str,
         urdf_path: str,
         num_robots: int,
     ) -> list:
@@ -161,10 +165,11 @@ class ReplayVisualizer:
             from omni.importer.urdf import _urdf
         except ImportError:
             from isaacsim.asset.importer.urdf import _urdf  # type: ignore
+
             ISAAC_SIM_45 = True
 
-        from omni.isaac.core.robots import Robot
         import omni.usd  # type: ignore
+        from omni.isaac.core.robots import Robot
 
         urdf_iface = _urdf.acquire_urdf_interface()
 
@@ -178,9 +183,7 @@ class ReplayVisualizer:
         import_config.import_inertia_tensor = False
         import_config.default_drive_strength = 100_000.0
         import_config.default_position_drive_damping = 10_000.0
-        import_config.default_drive_type = (
-            _urdf.UrdfJointTargetType.JOINT_DRIVE_POSITION
-        )
+        import_config.default_drive_type = _urdf.UrdfJointTargetType.JOINT_DRIVE_POSITION
         import_config.distance_scale = 1
         import_config.density = 0.0
 
@@ -189,6 +192,7 @@ class ReplayVisualizer:
 
         if ISAAC_SIM_45:
             import omni.kit.commands  # type: ignore
+
             dest_usd = os.path.join(
                 robot_dir,
                 os.path.splitext(urdf_file)[0] + "_vrp_temp.usd",
@@ -211,7 +215,9 @@ class ReplayVisualizer:
         for i in range(num_robots):
             dp = str(stage.GetDefaultPrim().GetPath())
             pp = omni.usd.get_stage_next_free_path(
-                stage, dp + inner_prim_path, False,
+                stage,
+                dp + inner_prim_path,
+                False,
             )
             stage.OverridePrim(pp).GetReferences().AddReference(dest_usd)
             robot = Robot(prim_path=pp, name=f"brov_{i}")
@@ -224,12 +230,14 @@ class ReplayVisualizer:
             rob_prims.append(stage.GetPrimAtPath(pp))
             logger.info("Spawned robot %d  prim=%s", i, pp)
 
-        return list(zip(robots, rob_prims))
+        return list(zip(robots, rob_prims, strict=False))
 
     # ── Scene setup helpers ──────────────────────────────────────────
 
     def add_dome_light(
-        self, stage, path: str = "/World/DomeLight",
+        self,
+        stage,
+        path: str = "/World/DomeLight",
         intensity: float = 800.0,
         color: tuple = (0.75, 0.85, 1.0),
     ) -> str:
@@ -239,7 +247,7 @@ class ReplayVisualizer:
         -------
         The prim path string.
         """
-        from pxr import UsdLux, Gf
+        from pxr import Gf, UsdLux
 
         dome_light = UsdLux.DomeLight.Define(stage, path)
         dome_light.GetIntensityAttr().Set(intensity)
@@ -247,15 +255,14 @@ class ReplayVisualizer:
         logger.info("Dome light added.")
         return path
 
-    def add_zero_gravity(self, stage,
-                         scene_path: str = "/physicsScene") -> str:
+    def add_zero_gravity(self, stage, scene_path: str = "/physicsScene") -> str:
         """Configure a zero-gravity physics scene (for underwater AUVs).
 
         Returns
         -------
         The physics scene prim path.
         """
-        from pxr import UsdPhysics, Gf
+        from pxr import Gf, UsdPhysics
 
         ps = UsdPhysics.Scene.Get(stage, scene_path)
         if not ps:

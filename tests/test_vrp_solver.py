@@ -1,22 +1,29 @@
 """Tests for VRP solver pure functions."""
+
 import cupy as cp
 import numpy as np
 import pytest
+
 from VRP.core.types import VRPResult
 from VRP.vrp._helpers import (
     compute_route_cost as _compute_route_cost,
+)
+from VRP.vrp._helpers import (
     per_vehicle_costs as _per_vehicle_costs,
 )
 
 
 class TestComputeRouteCost:
     def test_known_cost(self):
-        dm = cp.array([
-            [0, 1, 3, 7],
-            [1, 0, 2, 6],
-            [3, 2, 0, 4],
-            [7, 6, 4, 0],
-        ], dtype=cp.float32)
+        dm = cp.array(
+            [
+                [0, 1, 3, 7],
+                [1, 0, 2, 6],
+                [3, 2, 0, 4],
+                [7, 6, 4, 0],
+            ],
+            dtype=cp.float32,
+        )
         routes = [[1, 2]]  # depots=0 → 0→1→2→0 = 1+2+3 = 6
         cost = _compute_route_cost(routes, dm, depots=[0])
         assert abs(cost - 6.0) < 1e-6
@@ -29,12 +36,15 @@ class TestComputeRouteCost:
 
 class TestPerVehicleCosts:
     def test_sum_equals_total(self):
-        dm = cp.array([
-            [0, 1, 3, 7],
-            [1, 0, 2, 6],
-            [3, 2, 0, 4],
-            [7, 6, 4, 0],
-        ], dtype=cp.float32)
+        dm = cp.array(
+            [
+                [0, 1, 3, 7],
+                [1, 0, 2, 6],
+                [3, 2, 0, 4],
+                [7, 6, 4, 0],
+            ],
+            dtype=cp.float32,
+        )
         routes = [[1, 2], [3]]
         total = _compute_route_cost(routes, dm, depots=[0, 0])
         per_v = _per_vehicle_costs(routes, dm, depots=[0, 0])
@@ -57,13 +67,16 @@ class TestNearestNeighborWarmstart:
     def test_tiny_problem(self):
         from VRP.vrp._helpers import nearest_neighbor_warmstart as _nearest_neighbor_warmstart
 
-        dm = cp.array([
-            [0, 1, 2, 3, 4],
-            [1, 0, 1, 2, 3],
-            [2, 1, 0, 1, 2],
-            [3, 2, 1, 0, 1],
-            [4, 3, 2, 1, 0],
-        ], dtype=cp.float32)
+        dm = cp.array(
+            [
+                [0, 1, 2, 3, 4],
+                [1, 0, 1, 2, 3],
+                [2, 1, 0, 1, 2],
+                [3, 2, 1, 0, 1],
+                [4, 3, 2, 1, 0],
+            ],
+            dtype=cp.float32,
+        )
         routes = _nearest_neighbor_warmstart(dm, num_vehicles=2, depots=[0, 0])
         # All non-depot nodes visited
         visited = set()

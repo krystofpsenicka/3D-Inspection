@@ -1,12 +1,10 @@
-"""GPU backend for VRP MIP — cuOpt MILP solver (in-process)."""
+"""GPU backend for VRP MIP  --  cuOpt MILP solver (in-process)."""
 
 from __future__ import annotations
 
 import logging
-import math
 import os
 import tempfile
-from typing import List, Optional
 
 import cupy as cp
 import numpy as np
@@ -19,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_routes_gpu(var_values: dict, num_vehicles: int, depots: list[int], n: int):
-    """GPU-vectorized route extraction from solved variable values."""
+    """Route extraction from solved variable values."""
     depot_set = set(depots)
 
     active_i, active_j, active_v = [], [], []
@@ -60,14 +58,11 @@ def _extract_routes_gpu(var_values: dict, num_vehicles: int, depots: list[int], 
         active = (current >= 0) & ~is_depot[current]
 
     route_matrix_cpu = cp.asnumpy(route_matrix)
-    return [
-        [int(node) for node in route_matrix_cpu[v] if node >= 0]
-        for v in range(K)
-    ]
+    return [[int(node) for node in route_matrix_cpu[v] if node >= 0] for v in range(K)]
 
 
 class MIPSolverGPU(VRPSolverBase):
-    """Combined-objective VRP via MIP — cuOpt MILP solver (GPU).
+    """Combined-objective VRP via MIP  --  cuOpt MILP solver (GPU).
 
     Builds the MIP with PuLP, exports to MPS, and solves with the
     cuOpt MILP solver directly in-process.
@@ -87,19 +82,21 @@ class MIPSolverGPU(VRPSolverBase):
         num_vehicles: int,
         depots: list[int],
         alpha: float = 1.0,
-        warm_start_routes: Optional[List[List[int]]] = None,
+        warm_start_routes: list[list[int]] | None = None,
     ):
         from ..core.types import VRPResult
 
         depot_set = set(depots)
         n = dist_matrix.shape[0]
-        n_inspection = n - len(depot_set)
+        n - len(depot_set)
 
         # PuLP needs numpy for model building
         dist_matrix_np = cp.asnumpy(dist_matrix)
 
         prob, warm_start = build_vrp_mip(
-            dist_matrix_np, num_vehicles, depots,
+            dist_matrix_np,
+            num_vehicles,
+            depots,
             alpha=alpha,
             warm_start_routes=warm_start_routes,
             mip_gap=self.mip_gap,
@@ -112,7 +109,8 @@ class MIPSolverGPU(VRPSolverBase):
             from cuopt.linear_programming import Solve, SolverSettings
             from cuopt.linear_programming.cuopt_mps_parser import ParseMps
             from cuopt.linear_programming.solver.solver_parameters import (
-                CUOPT_TIME_LIMIT, CUOPT_MIP_RELATIVE_GAP,
+                CUOPT_MIP_RELATIVE_GAP,
+                CUOPT_TIME_LIMIT,
             )
 
             data_model = ParseMps(mps_path)
@@ -130,8 +128,11 @@ class MIPSolverGPU(VRPSolverBase):
                         initial[name_to_idx[var_name]] = val
                 data_model.set_initial_primal_solution(initial)
 
-            logger.info("[MIPSolverGPU] Solving with cuOpt MILP (limit=%ds, gap=%.1f%%) ...",
-                        self.time_limit, self.mip_gap * 100)
+            logger.info(
+                "[MIPSolverGPU] Solving with cuOpt MILP (limit=%ds, gap=%.1f%%) ...",
+                self.time_limit,
+                self.mip_gap * 100,
+            )
             solution = Solve(data_model, settings)
 
             if solution.get_error_status() != 0:
@@ -146,7 +147,7 @@ class MIPSolverGPU(VRPSolverBase):
 
             # cuOpt's MIP best bound is in solution.get_milp_stats()
             # ["solution_bound"]. (solution.get_dual_objective() is the LP
-            # dual and raises for MILPs — "not supported for milp solution".)
+            # dual and raises for MILPs  --  "not supported for milp solution".)
             best_bound = 0.0
             try:
                 stats = solution.get_milp_stats()
@@ -155,10 +156,13 @@ class MIPSolverGPU(VRPSolverBase):
             except Exception as exc:
                 logger.warning("[MIPSolverGPU] dual-bound read failed: %s", exc)
 
-            logger.info("[MIPSolverGPU] makespan=%.2f  total_cost=%.2f  "
-                        "best_bound=%.2f  per_vehicle=%s",
-                        makespan, total_cost, best_bound,
-                        [f"{c:.1f}" for c in per_v])
+            logger.info(
+                "[MIPSolverGPU] makespan=%.2f  total_cost=%.2f  best_bound=%.2f  per_vehicle=%s",
+                makespan,
+                total_cost,
+                best_bound,
+                [f"{c:.1f}" for c in per_v],
+            )
 
             return VRPResult(
                 routes=routes,
@@ -172,8 +176,9 @@ class MIPSolverGPU(VRPSolverBase):
 
         except Exception as exc:
             logger.error("[MIPSolverGPU] Solver error: %s", exc)
-            return VRPResult(routes=[], total_cost=float("inf"),
-                             solver="cuopt_mip", status=f"error: {exc}")
+            return VRPResult(
+                routes=[], total_cost=float("inf"), solver="cuopt_mip", status=f"error: {exc}"
+            )
         finally:
             try:
                 os.unlink(mps_path)

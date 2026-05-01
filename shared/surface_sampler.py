@@ -5,9 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
-from pathlib import Path
 import time
+from pathlib import Path
 
 import numpy as np
 import open3d as o3d
@@ -52,7 +51,12 @@ class SurfacePointSampler:
         Uses disk cache when available.
         """
         cache_key = self._build_cache_key(
-            mesh, num_points, normal_radius, normal_max_nn, tangent_plane_k, seed,
+            mesh,
+            num_points,
+            normal_radius,
+            normal_max_nn,
+            tangent_plane_k,
+            seed,
         )
 
         # Try cache
@@ -67,7 +71,8 @@ class SurfacePointSampler:
         pcd = mesh.sample_points_poisson_disk(number_of_points=num_points)
         pcd.estimate_normals(
             search_param=o3d.geometry.KDTreeSearchParamHybrid(
-                radius=normal_radius, max_nn=normal_max_nn,
+                radius=normal_radius,
+                max_nn=normal_max_nn,
             )
         )
         pcd.orient_normals_consistent_tangent_plane(k=tangent_plane_k)
@@ -80,7 +85,9 @@ class SurfacePointSampler:
         logger.info("  Sampled %d points in %.1f s", len(target_points), elapsed)
 
         self._save_cache(
-            cache_key, target_points, normals,
+            cache_key,
+            target_points,
+            normals,
             params=dict(
                 num_points=num_points,
                 normal_radius=normal_radius,
@@ -114,8 +121,7 @@ class SurfacePointSampler:
         mesh_hash = SurfacePointSampler._mesh_hash(mesh)[:16]
         seed_str = str(seed) if seed is not None else "none"
         raw = (
-            f"{mesh_hash}_{num_points}_{normal_radius}_{normal_max_nn}"
-            f"_{tangent_plane_k}_{seed_str}"
+            f"{mesh_hash}_{num_points}_{normal_radius}_{normal_max_nn}_{tangent_plane_k}_{seed_str}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 

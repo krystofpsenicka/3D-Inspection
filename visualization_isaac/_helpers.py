@@ -1,7 +1,7 @@
-"""Shared visualization utilities (Isaac Sim variant — no Open3D dependency)."""
+"""Shared visualization utilities (Isaac Sim variant  --  no Open3D dependency)."""
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def generate_tab20_colors(n: int) -> list[tuple]:

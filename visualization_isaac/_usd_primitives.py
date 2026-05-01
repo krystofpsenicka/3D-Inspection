@@ -10,10 +10,10 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
-
 # ---------------------------------------------------------------------------
 # Mesh
 # ---------------------------------------------------------------------------
+
 
 def create_mesh_prim(
     stage,
@@ -36,28 +36,23 @@ def create_mesh_prim(
     -------
     The prim path string.
     """
-    from pxr import UsdGeom, Vt, Gf, Sdf
+    from pxr import Gf, UsdGeom, Vt
 
     usd_mesh = UsdGeom.Mesh.Define(stage, path)
 
     vertices = mesh.vertices.astype(np.float64)
-    usd_mesh.GetPointsAttr().Set(
-        Vt.Vec3fArray([Gf.Vec3f(*v) for v in vertices]))
+    usd_mesh.GetPointsAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*v) for v in vertices]))
 
     faces = mesh.faces.astype(int)
-    usd_mesh.GetFaceVertexCountsAttr().Set(
-        Vt.IntArray([3] * len(faces)))
-    usd_mesh.GetFaceVertexIndicesAttr().Set(
-        Vt.IntArray(faces.flatten().tolist()))
+    usd_mesh.GetFaceVertexCountsAttr().Set(Vt.IntArray([3] * len(faces)))
+    usd_mesh.GetFaceVertexIndicesAttr().Set(Vt.IntArray(faces.flatten().tolist()))
 
     if mesh.vertex_normals is not None and len(mesh.vertex_normals) == len(vertices):
         normals = mesh.vertex_normals.astype(np.float64)
-        usd_mesh.GetNormalsAttr().Set(
-            Vt.Vec3fArray([Gf.Vec3f(*n) for n in normals]))
+        usd_mesh.GetNormalsAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*n) for n in normals]))
         usd_mesh.SetNormalsInterpolation("vertex")
 
-    usd_mesh.GetDisplayColorAttr().Set(
-        Vt.Vec3fArray([Gf.Vec3f(*color)]))
+    usd_mesh.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*color)]))
 
     if opacity < 1.0:
         usd_mesh.GetDisplayOpacityAttr().Set(Vt.FloatArray([opacity]))
@@ -68,6 +63,7 @@ def create_mesh_prim(
 # ---------------------------------------------------------------------------
 # Points
 # ---------------------------------------------------------------------------
+
 
 def create_points_prim(
     stage,
@@ -91,20 +87,21 @@ def create_points_prim(
     -------
     The prim path string.
     """
-    from pxr import UsdGeom, Vt, Gf
+    from pxr import Gf, UsdGeom, Vt
 
     pts_prim = UsdGeom.Points.Define(stage, path)
 
     positions = np.asarray(positions, dtype=np.float64)
-    pts_prim.GetPointsAttr().Set(
-        Vt.Vec3fArray([Gf.Vec3f(*p) for p in positions]))
+    pts_prim.GetPointsAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*p) for p in positions]))
 
     widths = Vt.FloatArray([point_size] * len(positions))
     pts_prim.GetWidthsAttr().Set(widths)
 
     if colors is None:
         colors_arr = Vt.Vec3fArray([Gf.Vec3f(1, 1, 1)] * len(positions))
-    elif isinstance(colors, (tuple, list)) and len(colors) == 3 and not hasattr(colors[0], '__len__'):
+    elif (
+        isinstance(colors, (tuple, list)) and len(colors) == 3 and not hasattr(colors[0], "__len__")
+    ):
         colors_arr = Vt.Vec3fArray([Gf.Vec3f(*colors)] * len(positions))
     else:
         colors = np.asarray(colors, dtype=np.float64)
@@ -118,6 +115,7 @@ def create_points_prim(
 # ---------------------------------------------------------------------------
 # LineSet (BasisCurves)
 # ---------------------------------------------------------------------------
+
 
 def create_lineset_prim(
     stage,
@@ -134,7 +132,7 @@ def create_lineset_prim(
     stage : Usd.Stage
     path : USD prim path.
     points : (P, 3) array of vertices referenced by *lines*.
-    lines : (L, 2) array of index pairs — each row is one segment.
+    lines : (L, 2) array of index pairs  --  each row is one segment.
     color : Uniform (r, g, b) colour.
     width : Line display width.
 
@@ -142,7 +140,7 @@ def create_lineset_prim(
     -------
     The prim path string.
     """
-    from pxr import UsdGeom, Vt, Gf
+    from pxr import Gf, UsdGeom, Vt
 
     curves = UsdGeom.BasisCurves.Define(stage, path)
     curves.GetTypeAttr().Set("linear")
@@ -157,14 +155,11 @@ def create_lineset_prim(
         seg_pts.append(Gf.Vec3f(*points[i1]))
 
     curves.GetPointsAttr().Set(Vt.Vec3fArray(seg_pts))
-    curves.GetCurveVertexCountsAttr().Set(
-        Vt.IntArray([2] * len(lines)))
+    curves.GetCurveVertexCountsAttr().Set(Vt.IntArray([2] * len(lines)))
 
-    curves.GetWidthsAttr().Set(
-        Vt.FloatArray([width] * len(seg_pts)))
+    curves.GetWidthsAttr().Set(Vt.FloatArray([width] * len(seg_pts)))
 
-    curves.GetDisplayColorAttr().Set(
-        Vt.Vec3fArray([Gf.Vec3f(*color)]))
+    curves.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*color)]))
 
     return path
 
@@ -172,6 +167,7 @@ def create_lineset_prim(
 # ---------------------------------------------------------------------------
 # Sphere
 # ---------------------------------------------------------------------------
+
 
 def create_sphere_prim(
     stage,
@@ -192,6 +188,7 @@ def create_sphere_prim(
     position = np.asarray(position, dtype=np.float64)
     try:
         from omni.isaac.core.objects import VisualSphere
+
         VisualSphere(
             path,
             position=position,
@@ -199,14 +196,13 @@ def create_sphere_prim(
             color=np.array(color, dtype=np.float32),
         )
     except Exception:
-        from pxr import UsdGeom, Gf
+        from pxr import Gf, UsdGeom
+
         sphere = UsdGeom.Sphere.Define(stage, path)
         sphere.GetRadiusAttr().Set(float(radius))
-        sphere.GetDisplayColorAttr().Set(
-            [Gf.Vec3f(*color)])
+        sphere.GetDisplayColorAttr().Set([Gf.Vec3f(*color)])
         xformable = UsdGeom.Xformable(sphere.GetPrim())
-        xformable.AddTranslateOp().Set(
-            Gf.Vec3d(*position.tolist()))
+        xformable.AddTranslateOp().Set(Gf.Vec3d(*position.tolist()))
 
     return path
 
@@ -214,6 +210,7 @@ def create_sphere_prim(
 # ---------------------------------------------------------------------------
 # Coordinate frame (3 coloured axis lines)
 # ---------------------------------------------------------------------------
+
 
 def create_coordinate_frame_prim(
     stage,
@@ -248,6 +245,7 @@ def create_coordinate_frame_prim(
 # Wireframe from trimesh
 # ---------------------------------------------------------------------------
 
+
 def set_prim_pose(prim, xyz: np.ndarray, qwxyz: np.ndarray) -> None:
     """Teleport a USD prim by setting xformOp:translate and xformOp:orient.
 
@@ -275,6 +273,7 @@ def set_prim_pose(prim, xyz: np.ndarray, qwxyz: np.ndarray) -> None:
                 pass
     else:
         from pxr import UsdGeom
+
         UsdGeom.Xformable(prim).AddTranslateOp().Set(Gf.Vec3f(x, y, z))
 
     if orient_attr and orient_attr.IsValid():
@@ -287,12 +286,14 @@ def set_prim_pose(prim, xyz: np.ndarray, qwxyz: np.ndarray) -> None:
                 pass
     else:
         from pxr import UsdGeom
+
         UsdGeom.Xformable(prim).AddOrientOp().Set(Gf.Quatf(qw, qx, qy, qz))
 
 
 # ---------------------------------------------------------------------------
 # Cuboid
 # ---------------------------------------------------------------------------
+
 
 def create_cuboid_prim(
     stage,
@@ -315,6 +316,7 @@ def create_cuboid_prim(
     orientation = np.asarray(orientation, dtype=np.float64)
     try:
         from omni.isaac.core.objects import cuboid as cuboid_mod
+
         cuboid_mod.VisualCuboid(
             path,
             position=position,
@@ -323,7 +325,8 @@ def create_cuboid_prim(
             size=float(size),
         )
     except Exception:
-        from pxr import UsdGeom, Gf
+        from pxr import Gf, UsdGeom
+
         cube = UsdGeom.Cube.Define(stage, path)
         cube.GetSizeAttr().Set(float(size))
         cube.GetDisplayColorAttr().Set([Gf.Vec3f(*color)])
@@ -331,8 +334,7 @@ def create_cuboid_prim(
         xformable.AddTranslateOp().Set(Gf.Vec3d(*position.tolist()))
         if len(orientation) == 4:
             qw, qx, qy, qz = orientation
-            xformable.AddOrientOp().Set(
-                Gf.Quatd(float(qw), float(qx), float(qy), float(qz)))
+            xformable.AddOrientOp().Set(Gf.Quatd(float(qw), float(qx), float(qy), float(qz)))
 
     return path
 
@@ -340,6 +342,7 @@ def create_cuboid_prim(
 # ---------------------------------------------------------------------------
 # Wireframe from trimesh
 # ---------------------------------------------------------------------------
+
 
 def create_wireframe_from_trimesh(
     stage,
@@ -356,7 +359,8 @@ def create_wireframe_from_trimesh(
     """
     edges = mesh.edges_unique
     return create_lineset_prim(
-        stage, path,
+        stage,
+        path,
         points=mesh.vertices,
         lines=edges,
         color=color,

@@ -17,14 +17,15 @@ TOSCA_DIR = os.path.join(MODELS_DIR, "TOSCA-dataset")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "experiments", "results")
 
 # ── Corrected mesh pose for Duke of Lancaster ────────────────────────────────
-# trimesh loads Y-up GLB; Isaac Sim applies Y-up→Z-up.  We compose the
-# mesh_pose (180° X) with the Y→Z correction (+90° X) = R_x(-90°).
+# trimesh loads Y-up GLB; Isaac Sim applies Y-up->Z-up.  We compose the
+# mesh_pose (180 deg X) with the Y->Z correction (+90 deg X) = R_x(-90 deg).
 _SQRT2_2 = math.sqrt(2.0) / 2.0
 _DUKE_MESH_POSE = [0, 0, 1.5, _SQRT2_2, -_SQRT2_2, 0.0, 0.0]
 _IDENTITY_POSE = [0, 0, 0, 1.0, 0.0, 0.0, 0.0]
 
 
 # ── Model configuration ─────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class FrustumConfig:
@@ -41,6 +42,7 @@ class FrustumConfig:
 @dataclass(frozen=True)
 class ModelConfig:
     """Configuration for a 3D model used in experiments."""
+
     name: str
     mesh_path: str
     target_length: float
@@ -86,9 +88,11 @@ class ModelConfig:
 
 # ── Experiment configuration ─────────────────────────────────────────────────
 
+
 @dataclass
 class ExperimentConfig:
     """Top-level config wrapping a model and experiment parameters."""
+
     model: ModelConfig
     target_coverage: float = 0.95
     max_viewpoints: int = 1000
@@ -107,13 +111,20 @@ TOSCA_REPRESENTATIVE = ["wolf0", "cat0", "david0"]
 
 # One per category (for E10 cross-model sweep)
 TOSCA_ALL = [
-    "wolf0", "cat0", "centaur0", "david0", "dog0",
-    "gorilla1", "horse0", "michael0", "victoria0",
+    "wolf0",
+    "cat0",
+    "centaur0",
+    "david0",
+    "dog0",
+    "gorilla1",
+    "horse0",
+    "michael0",
+    "victoria0",
 ]
 
 # After running validate_models.py, invalid models are removed from these lists.
 # The validated list is stored here:
-TOSCA_VALID: Optional[list] = None  # Set by validate_models.py
+TOSCA_VALID: list | None = None  # Set by validate_models.py
 
 
 # ── Parameter grids ──────────────────────────────────────────────────────────
@@ -127,7 +138,8 @@ E01_STRATEGIES = E01_STRATEGIES_A
 
 E02_CANDIDATE_COUNTS = [250, 500, 750, 1000, 1500, 2000, 3000, 5000]
 E02_STRATEGIES = [
-    "weighted", "weighted_curvature",
+    "weighted",
+    "weighted_curvature",
     "targeted_25",
     "cmaes_100",
 ]
@@ -153,7 +165,8 @@ E04_OPTIMIZERS_B = [
 ]
 # All 10 input strategies for Section B
 E04_INPUT_STRATEGIES = [
-    "weighted", "weighted_curvature",
+    "weighted",
+    "weighted_curvature",
     "targeted_25",
     "cmaes_100",
 ]
@@ -179,20 +192,20 @@ E16_FOV_VALUES = [30.0, 45.0, 60.0, 90.0]  # degrees
 E16_NEAR_FAR_PAIRS = [(0.1, 5.0), (0.2, 10.0), (0.5, 15.0)]  # (near_m, far_m)
 
 # E03: Iterative sampler parameter sweeps (Targeted + CMA-ES)
-_E03_BASE_N = 500           # TOSCA candidate budget; scales as _E03_BASE_N * k_coverage
+_E03_BASE_N = 500  # TOSCA candidate budget; scales as _E03_BASE_N * k_coverage
 
-# Section 1 — Targeted sampler
-E03_T_K_VALUES   = [1, 2, 3, 4, 6, 8]
-E03_T_FRACTIONS  = [12, 25, 50, 75, 100]    # % of budget from targeted phase
-E03_T_SPI_VALUES = [1, 5, 25, None]     # samples_per_iteration; None = all-at-once baseline
+# Section 1  --  Targeted sampler
+E03_T_K_VALUES = [1, 2, 3, 4, 6, 8]
+E03_T_FRACTIONS = [12, 25, 50, 75, 100]  # % of budget from targeted phase
+E03_T_SPI_VALUES = [1, 5, 25, None]  # samples_per_iteration; None = all-at-once baseline
 
-# Section 2 — CMA-ES sampler
-E03_C_K_VALUES       = [1, 2, 3, 4, 6, 8]
-E03_C_FRACTIONS      = [25, 50, 75, 100]
+# Section 2  --  CMA-ES sampler
+E03_C_K_VALUES = [1, 2, 3, 4, 6, 8]
+E03_C_FRACTIONS = [25, 50, 75, 100]
 E03_C_TRAVEL_WEIGHTS_TOSCA = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
-E03_C_TRAVEL_WEIGHTS_DUKE  = [0.01, 0.02, 0.03, 0.06, 0.1]
-E03_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]   # population size per CMA-ES generation (default 15)
-E03_C_MAXITER_VALUES = [5, 10, 20, 40]        # max generations per optimisation round (default 20)
+E03_C_TRAVEL_WEIGHTS_DUKE = [0.01, 0.02, 0.03, 0.06, 0.1]
+E03_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]  # population size per CMA-ES generation (default 15)
+E03_C_MAXITER_VALUES = [5, 10, 20, 40]  # max generations per optimisation round (default 20)
 
 # E09: Sampler routing impact
 E17_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "targeted_50", "cmaes_100"]

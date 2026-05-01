@@ -1,12 +1,12 @@
-"""GPU-accelerated viewing direction computation for viewpoint sampling."""
+"""Viewing direction computation for viewpoint sampling."""
 
-import numpy as np
 import cupy as cp
+import numpy as np
 
-from ...core.constants import NORM_EPS, KNN_DIRECTION_K, CUDA_BLOCK_SIZE
+from ...core.constants import CUDA_BLOCK_SIZE, KNN_DIRECTION_K, NORM_EPS
 
-
-_KNN_DIRECTION_KERNEL = cp.RawKernel(r'''
+_KNN_DIRECTION_KERNEL = cp.RawKernel(
+    r"""
 #define MAX_K 512
 #define NORM_EPS 1e-12f
 
@@ -28,7 +28,7 @@ extern "C" __global__
 void knn_direction(
     const float* __restrict__ queries,      // (num_queries, 3)
     const float* __restrict__ targets,      // (num_targets, 3)
-    const float* __restrict__ normals,      // (num_targets, 3) — unused when use_normals==0
+    const float* __restrict__ normals,      // (num_targets, 3)  --  unused when use_normals==0
     float* __restrict__ directions,         // (num_queries, 3)
     int num_queries, int num_targets, int num_neighbors, int use_normals
 ) {
@@ -107,7 +107,7 @@ void knn_direction(
         mean_ny *= inv_norm;
         mean_nz *= inv_norm;
 
-        // Step 2: weighted centroid — compute weight and accumulate in one pass
+        // Step 2: weighted centroid  --  compute weight and accumulate in one pass
         float total_weight = 0.0f;
         for (int i = 0; i < num_neighbors; i++) {
             int neighbor_idx = heap_idx[i];
@@ -148,12 +148,12 @@ void knn_direction(
     directions[query_idx * 3 + 1] = dy * inv_len;
     directions[query_idx * 3 + 2] = dz * inv_len;
 }
-''', 'knn_direction')
+""",
+    "knn_direction",
+)
 
 
-def knn_centroid_direction(query_gpu, targets_gpu,
-                           k: int = KNN_DIRECTION_K,
-                           normals_gpu=None):
+def knn_centroid_direction(query_gpu, targets_gpu, k: int = KNN_DIRECTION_K, normals_gpu=None):
     """Compute viewing direction as centroid of K nearest surface points.
 
     When *normals_gpu* is passed, the centroid computation is weighted by the angular
@@ -161,14 +161,14 @@ def knn_centroid_direction(query_gpu, targets_gpu,
     the look-direction toward geometrically complex patches.
 
     Args:
-        query_gpu:   (N, 3) CuPy array — query positions.
-        targets_gpu: (M, 3) CuPy array — surface points.
+        query_gpu:   (N, 3) CuPy array  --  query positions.
+        targets_gpu: (M, 3) CuPy array  --  surface points.
         k:           number of nearest neighbours.
-        normals_gpu: (M, 3) CuPy array — surface normals for curvature
+        normals_gpu: (M, 3) CuPy array  --  surface normals for curvature
                      weighting.
 
     Returns:
-        (N, 3) CuPy float32 — normalized direction vectors.
+        (N, 3) CuPy float32  --  normalized direction vectors.
     """
     num_queries = len(query_gpu)
     num_targets = len(targets_gpu)
@@ -189,34 +189,50 @@ def knn_centroid_direction(query_gpu, targets_gpu,
     shared_mem = CUDA_BLOCK_SIZE * 3 * 4  # bytes
 
     _KNN_DIRECTION_KERNEL(
-        grid, block,
-        (query_gpu, targets_gpu, normals_gpu, directions,
-         np.int32(num_queries), np.int32(num_targets),
-         np.int32(num_neighbors), np.int32(use_normals)),
+        grid,
+        block,
+        (
+            query_gpu,
+            targets_gpu,
+            normals_gpu,
+            directions,
+            np.int32(num_queries),
+            np.int32(num_targets),
+            np.int32(num_neighbors),
+            np.int32(use_normals),
+        ),
         shared_mem=shared_mem,
     )
     return directions
 
 
-def apply_angular_noise(directions_gpu, max_angle_rad):
+def apply_angular_noise(directions_gpu, max_angle_rad, rng=None):
     """GPU Rodrigues rotation for angular perturbation of direction vectors.
 
     Args:
-        directions_gpu: (N, 3) CuPy array — unit direction vectors.
+        directions_gpu: (N, 3) CuPy array of unit direction vectors.
         max_angle_rad:  maximum rotation angle in radians.
+        rng:            optional cp.random.Generator. Falls back to the
+                        global RNG when ``None``.
 
     Returns:
-        (N, 3) CuPy float32 — rotated unit direction vectors.
+        (N, 3) CuPy float32 - rotated unit direction vectors.
     """
     n = len(directions_gpu)
     if max_angle_rad < 1e-8 or n == 0:
         return directions_gpu.copy()
 
+    if rng is None:
+        rng = cp.random.default_rng()
+
     # random angles
-    angles = cp.minimum(cp.abs(cp.random.normal(0, max_angle_rad / 3, size=n)), max_angle_rad)
+    angles = cp.minimum(
+        cp.abs(rng.standard_normal(size=n, dtype=cp.float32) * (max_angle_rad / 3)),
+        max_angle_rad,
+    )
 
     # random vectors to rotate around, perpendicular to the original direction
-    rand_vec = cp.random.randn(n, 3, dtype=cp.float32)
+    rand_vec = rng.standard_normal(size=(n, 3), dtype=cp.float32)
     dot = cp.sum(rand_vec * directions_gpu, axis=1, keepdims=True)
     perp = rand_vec - dot * directions_gpu
     perp_norm = cp.linalg.norm(perp, axis=1, keepdims=True)

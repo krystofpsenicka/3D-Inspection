@@ -34,8 +34,7 @@ import math
 import os
 import sys
 import time
-from dataclasses import dataclass, asdict
-from typing import List
+from dataclasses import asdict, dataclass
 
 import numpy as np
 
@@ -46,27 +45,32 @@ if _PROJECT_ROOT not in sys.path:
 import cupy as cp
 import open3d as o3d
 
-from experiments.common.config import ModelConfig, RESULTS_DIR
+from experiments.common.config import RESULTS_DIR, ModelConfig
 from experiments.common.runner import free_gpu_memory
+from shared.grid_utils import downsample_occupancy_grid
 from shared.mesh_loader import load_and_transform_mesh
 from shared.surface_sampler import SurfacePointSampler
 from shared.types import Side
-from shared.grid_utils import downsample_occupancy_grid
 from visibility.sampling import WeightedViewpointSampler
 from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
-from VRP.core.distance_matrix import compute_distance_matrix
-from VRP.vrp.vrp_solver import solve_vrp
-from VRP.core.types import VRPBackend, VRPResult
-from VRP.core.collision import find_trajectory_collisions
-from VRP.core.geometry import compute_start_grid
 from VRP.core.constants import (
-    MESH_PATH, MESH_POSE, MESH_TARGET_LENGTH,
-    ROBOT_RADIUS, SPACE_TIME_DT, SPACE_TIME_DWELL_S,
-    SPACE_TIME_MAX_HORIZON_S, SPACE_TIME_RESOLUTION,
+    MESH_PATH,
+    MESH_POSE,
+    MESH_TARGET_LENGTH,
+    ROBOT_RADIUS,
+    SPACE_TIME_DT,
+    SPACE_TIME_DWELL_S,
+    SPACE_TIME_MAX_HORIZON_S,
+    SPACE_TIME_RESOLUTION,
     SPLINE_SAFETY_VOXELS,
 )
+from VRP.core.distance_matrix import compute_distance_matrix
+from VRP.core.geometry import compute_start_grid
+from VRP.core.types import VRPBackend, VRPResult
 from VRP.mapf.reservation_table import ReservationTable
 from VRP.mapf.route_planner import plan_robot_route_st
+from VRP.utils.collision import find_trajectory_collisions
+from VRP.vrp.vrp_solver import solve_vrp
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +104,7 @@ def _build_setup(resolution: float = 0.20):
         min_clearance=2 * ROBOT_RADIUS,
         resolution=resolution,
     )
-    pts_np, norms_np = SurfacePointSampler().sample(
-        o3d_mesh, cfg.num_surface_points, seed=42)
+    pts_np, norms_np = SurfacePointSampler().sample(o3d_mesh, cfg.num_surface_points, seed=42)
     sampler = WeightedViewpointSampler(
         o3d_mesh,
         cp.asarray(pts_np, dtype=cp.float32),
@@ -113,8 +116,9 @@ def _build_setup(resolution: float = 0.20):
     return og, sampler, mesh_bounds_min, mesh_bounds_max
 
 
-def _plan_independently(routes, waypoint_positions_gpu, coarse_og,
-                        max_time_steps, collision_radius_vox):
+def _plan_independently(
+    routes, waypoint_positions_gpu, coarse_og, max_time_steps, collision_radius_vox
+):
     """Plan each robot through its route IGNORING inter-robot conflicts.
 
     A fresh empty reservation table is created per robot so commits made by
@@ -123,19 +127,23 @@ def _plan_independently(routes, waypoint_positions_gpu, coarse_og,
     per_robot_paths: list = []
     per_robot_times: list = []
     for route in routes:
-        fresh = ReservationTable(coarse_og.shape, max_time_steps,
-                                 collision_radius_vox)
+        fresh = ReservationTable(coarse_og.shape, max_time_steps, collision_radius_vox)
         world_xyz, coarse_t, _wp, _stats = plan_robot_route_st(
-            coarse_og, fresh, route, waypoint_positions_gpu,
-            dwell_s=SPACE_TIME_DWELL_S, dt=SPACE_TIME_DT,
-            fine_occupancy_grid=None, robot_radius=ROBOT_RADIUS,
+            coarse_og,
+            fresh,
+            route,
+            waypoint_positions_gpu,
+            dwell_s=SPACE_TIME_DWELL_S,
+            dt=SPACE_TIME_DT,
+            fine_occupancy_grid=None,
+            robot_radius=ROBOT_RADIUS,
         )
         per_robot_paths.append(world_xyz)
         per_robot_times.append(coarse_t)
     return per_robot_paths, per_robot_times
 
 
-def _align_in_time(per_robot_paths, per_robot_times) -> List[cp.ndarray]:
+def _align_in_time(per_robot_paths, per_robot_times) -> list[cp.ndarray]:
     """Build dense (T, 3) per-robot trajectories on a common coarse-time axis.
 
     Each robot's coarse path has its own time-step samples; for collision
@@ -149,7 +157,7 @@ def _align_in_time(per_robot_paths, per_robot_times) -> List[cp.ndarray]:
     common_t = cp.arange(max_t + 1, dtype=cp.float32)
 
     out: list[cp.ndarray] = []
-    for world_xyz, coarse_t in zip(per_robot_paths, per_robot_times):
+    for world_xyz, coarse_t in zip(per_robot_paths, per_robot_times, strict=False):
         if len(coarse_t) == 0:
             out.append(cp.zeros((max_t + 1, 3), dtype=cp.float32))
             continue
@@ -159,16 +167,14 @@ def _align_in_time(per_robot_paths, per_robot_times) -> List[cp.ndarray]:
         idx = cp.sort(idx)
         unique_t = t_f[idx]
         unique_xyz = world_xyz[idx]
-        traj = cp.column_stack([
-            cp.interp(common_t, unique_t, unique_xyz[:, d])
-            for d in range(3)
-        ]).astype(cp.float32)
+        traj = cp.column_stack(
+            [cp.interp(common_t, unique_t, unique_xyz[:, d]) for d in range(3)]
+        ).astype(cp.float32)
         out.append(traj)
     return out
 
 
-def measure_one(fleet_size, n_waypoints, seed, og, sampler,
-                bmin, bmax) -> Row:
+def measure_one(fleet_size, n_waypoints, seed, og, sampler, bmin, bmax) -> Row:
     cp.random.seed(seed)
     np.random.seed(seed)
 
@@ -186,17 +192,18 @@ def measure_one(fleet_size, n_waypoints, seed, og, sampler,
     dist_matrix = compute_distance_matrix(og, cp.asarray(all_positions))
 
     vrp_result: VRPResult = solve_vrp(
-        dist_matrix=dist_matrix, num_vehicles=K,
-        depots=home_indices, alpha=0.5,
-        backend=VRPBackend.CUOPT, time_limit=30,
+        dist_matrix=dist_matrix,
+        num_vehicles=K,
+        depots=home_indices,
+        alpha=0.5,
+        backend=VRPBackend.CUOPT,
+        time_limit=30,
     )
     if not any(vrp_result.routes):
-        return Row(fleet_size=K, n_waypoints=n_waypoints, seed=seed,
-                   n_pairs=K * (K - 1) // 2)
+        return Row(fleet_size=K, n_waypoints=n_waypoints, seed=seed, n_pairs=K * (K - 1) // 2)
 
     routes = [
-        [home_indices[i]] + list(r) + [home_indices[i]]
-        for i, r in enumerate(vrp_result.routes)
+        [home_indices[i]] + list(r) + [home_indices[i]] for i, r in enumerate(vrp_result.routes)
     ]
 
     coarse_og = downsample_occupancy_grid(og, coarse_res=SPACE_TIME_RESOLUTION)
@@ -205,17 +212,22 @@ def measure_one(fleet_size, n_waypoints, seed, og, sampler,
 
     wp_pos_gpu = cp.asarray(all_positions, dtype=cp.float32)
     paths, times = _plan_independently(
-        routes, wp_pos_gpu, coarse_og, max_time_steps, collision_radius_vox,
+        routes,
+        wp_pos_gpu,
+        coarse_og,
+        max_time_steps,
+        collision_radius_vox,
     )
     aligned = _align_in_time(paths, times)
     if not aligned or all(len(t) == 0 for t in aligned):
-        return Row(fleet_size=K, n_waypoints=n_waypoints, seed=seed,
-                   n_pairs=K * (K - 1) // 2)
+        return Row(fleet_size=K, n_waypoints=n_waypoints, seed=seed, n_pairs=K * (K - 1) // 2)
 
     events = find_trajectory_collisions(aligned, radius=ROBOT_RADIUS)
     pairs_in_collision = {(a, b) for (_step, a, b, _pen) in events}
     return Row(
-        fleet_size=K, n_waypoints=n_waypoints, seed=seed,
+        fleet_size=K,
+        n_waypoints=n_waypoints,
+        seed=seed,
         n_pairs=K * (K - 1) // 2,
         n_pairs_in_collision=len(pairs_in_collision),
         n_collision_events=len(events),
@@ -225,12 +237,10 @@ def measure_one(fleet_size, n_waypoints, seed, og, sampler,
 
 def main():
     p = argparse.ArgumentParser(description="MAPF conflict density measurement")
-    p.add_argument("--fleet_sizes", type=int, nargs="+",
-                   default=[2, 3, 4, 5, 6, 7, 8, 9, 10])
+    p.add_argument("--fleet_sizes", type=int, nargs="+", default=[2, 3, 4, 5, 6, 7, 8, 9, 10])
     p.add_argument("--n_waypoints", type=int, default=100)
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
-    p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR,
-                                                        "mapf_conflict_density"))
+    p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "mapf_conflict_density"))
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -253,18 +263,24 @@ def main():
             for seed in args.seeds:
                 t0 = time.perf_counter()
                 try:
-                    row = measure_one(k, args.n_waypoints, seed,
-                                      og, sampler, bmin, bmax)
+                    row = measure_one(k, args.n_waypoints, seed, og, sampler, bmin, bmax)
                 except Exception as e:
-                    logger.error("fleet=%d seed=%d failed: %s", k, seed, e,
-                                 exc_info=True)
-                    row = Row(fleet_size=k, n_waypoints=args.n_waypoints,
-                              seed=seed, n_pairs=k * (k - 1) // 2)
-                logger.info("fleet=%d seed=%d  events=%d  pairs_in_collision=%d/%d  "
-                            "(%.1fs)",
-                            k, seed, row.n_collision_events,
-                            row.n_pairs_in_collision, row.n_pairs,
-                            time.perf_counter() - t0)
+                    logger.error("fleet=%d seed=%d failed: %s", k, seed, e, exc_info=True)
+                    row = Row(
+                        fleet_size=k,
+                        n_waypoints=args.n_waypoints,
+                        seed=seed,
+                        n_pairs=k * (k - 1) // 2,
+                    )
+                logger.info(
+                    "fleet=%d seed=%d  events=%d  pairs_in_collision=%d/%d  (%.1fs)",
+                    k,
+                    seed,
+                    row.n_collision_events,
+                    row.n_pairs_in_collision,
+                    row.n_pairs,
+                    time.perf_counter() - t0,
+                )
                 rows.append(row)
                 writer.writerow(asdict(row))
                 f.flush()
@@ -277,19 +293,28 @@ def main():
 
     logger.info("=" * 64)
     logger.info("Pure-VRP conflict density (n_waypoints=%d)", args.n_waypoints)
-    logger.info("%-6s %-9s %-10s %-12s %-12s",
-                "fleet", "events", "ev/pair", "pair-coll-frac", "fleet-coll-frac")
+    logger.info(
+        "%-6s %-9s %-10s %-12s %-12s",
+        "fleet",
+        "events",
+        "ev/pair",
+        "pair-coll-frac",
+        "fleet-coll-frac",
+    )
     for k in sorted(by_fleet):
         rs = by_fleet[k]
         events_mean = float(np.mean([r.n_collision_events for r in rs]))
         ev_per_pair = events_mean / max(1, k * (k - 1) // 2)
-        pair_coll_frac = float(np.mean([
-            r.n_pairs_in_collision / max(1, r.n_pairs) for r in rs
-        ]))
-        fleet_coll_frac = float(np.mean([1.0 if r.has_collision else 0.0
-                                         for r in rs]))
-        logger.info("%-6d %-9.1f %-10.2f %-12.2f %-12.2f",
-                    k, events_mean, ev_per_pair, pair_coll_frac, fleet_coll_frac)
+        pair_coll_frac = float(np.mean([r.n_pairs_in_collision / max(1, r.n_pairs) for r in rs]))
+        fleet_coll_frac = float(np.mean([1.0 if r.has_collision else 0.0 for r in rs]))
+        logger.info(
+            "%-6d %-9.1f %-10.2f %-12.2f %-12.2f",
+            k,
+            events_mean,
+            ev_per_pair,
+            pair_coll_frac,
+            fleet_coll_frac,
+        )
 
 
 if __name__ == "__main__":
