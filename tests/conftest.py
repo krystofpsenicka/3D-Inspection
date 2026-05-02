@@ -42,3 +42,36 @@ def og(small_og):
 @pytest.fixture
 def rng():
     return np.random.RandomState(42)
+
+
+@pytest.fixture
+def cube_mesh():
+    """Unit cube TriangleMesh centered at origin (Open3D legacy mesh)."""
+    o3d = pytest.importorskip("open3d")
+    mesh = o3d.geometry.TriangleMesh.create_box(width=1.0, height=1.0, depth=1.0)
+    mesh.translate((-0.5, -0.5, -0.5))
+    return mesh
+
+
+@pytest.fixture
+def flat_target_cloud():
+    """100 points on the plane z=0 with normals = (0, 0, 1).
+
+    A 10x10 grid covering [-1, 1] x [-1, 1] -- useful as visibility targets
+    for tests that place a camera above looking down.
+    """
+    xs, ys = np.meshgrid(np.linspace(-1.0, 1.0, 10), np.linspace(-1.0, 1.0, 10))
+    pts = np.stack([xs.ravel(), ys.ravel(), np.zeros(100)], axis=1).astype(np.float64)
+    normals = np.tile(np.array([0.0, 0.0, 1.0]), (100, 1))
+    return pts, normals
+
+
+@pytest.fixture
+def random_visibility_matrix():
+    """Factory: build a deterministic random (N, M) bool visibility matrix."""
+
+    def _make(n_candidates: int, n_points: int, density: float = 0.15) -> np.ndarray:
+        local_rng = np.random.RandomState(42)
+        return local_rng.random((n_candidates, n_points)) < density
+
+    return _make

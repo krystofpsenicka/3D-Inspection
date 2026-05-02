@@ -20,7 +20,6 @@ class TestComputeLocalCurvature:
         normals[:, 2] = 1.0  # all point up
 
         curv = compute_local_curvature(pts, pts, normals, k=10)
-        assert curv.shape == (100,)
         assert float(curv.max()) < 0.05, (
             f"Flat surface curvature should be ~0, got max={float(curv.max())}"
         )

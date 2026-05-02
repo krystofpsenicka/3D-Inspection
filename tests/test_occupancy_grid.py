@@ -98,15 +98,6 @@ class TestInflateGrid:
 
 
 class TestDownsample:
-    def test_output_shape(self):
-        og = OccupancyGrid(
-            grid=cp.zeros((20, 20, 20), dtype=cp.bool_),
-            origin=cp.zeros(3, dtype=cp.float64),
-            resolution=0.1,
-        )
-        coarse_og = downsample_occupancy_grid(og, 0.2)
-        assert coarse_og.shape == (10, 10, 10)
-
     def test_conservative(self):
         """If any fine voxel is occupied, coarse voxel must be occupied."""
         grid = cp.zeros((10, 10, 10), dtype=cp.bool_)

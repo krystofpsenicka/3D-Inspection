@@ -625,8 +625,7 @@ def main():
     run_A = args.section in ("A", "both")
 
     if args.lb_only:
-        # LB is computed inside Section A's candidate-gen loop  --  force it on,
-        # skip Section B entirely.
+        # LB is computed inside Section A's candidate-gen loop  --  force it on
         run_A = True
 
     if not args.plots_only:
@@ -754,67 +753,6 @@ def main():
                                 )
                             finally:
                                 free_gpu_memory()
-
-            # # ── Section B: all input strategies, key optimizers ────────
-            # if run_B:
-            #     logger.info("--- Section B (all input strategies) ---")
-            #     for strategy in args.strategies_B:
-            #         for seed in args.seeds_B:
-            #             logger.info("  seed=%d input=%s: generating candidates",
-            #                         seed, strategy)
-            #             set_seed(seed)
-            #             target_points, normals = ctx.sample_surface()
-            #             vis_query = ctx.build_visibility_query("raycast")
-
-            #             try:
-            #                 pos_gpu, rot_gpu, _, _, _, _ = sample_strategy(
-            #                     ctx, strategy, cfg.num_candidates,
-            #                     target_points, normals, vis_query, cfg,
-            #                 )
-            #             except Exception as e:
-            #                 if args.resume and is_oom(e):
-            #                     free_gpu_memory()
-            #                     logger.error(
-            #                         "Candidate gen OOM (model=%s seed=%d strategy=%s) "
-            #                         "under --resume; exiting 1 so a restart can reclaim "
-            #                         "GPU memory.", model_name, seed, strategy,
-            #                     )
-            #                     raise SystemExit(1)
-            #                 logger.error("  Candidate gen FAILED: %s", e, exc_info=True)
-            #                 continue
-
-            #             V_gpu, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
-            #             V_np = cp.asnumpy(V_gpu)
-            #             num_points = int(len(target_points))
-
-            #             for opt_name in args.optimizers_B:
-            #                 for target in args.targets:
-            #                     rpath = os.path.join(
-            #                         raw_dir,
-            #                         f"B_model={model_name}_opt={opt_name}"
-            #                         f"_strat={strategy}_target={target}_seed={seed}")
-            #                     if args.resume and os.path.exists(rpath + ".json"):
-            #                         r = load_run_result(rpath)
-            #                         r.setdefault("section", "B")
-            #                         all_results.append(r)
-            #                         continue
-
-            #                     try:
-            #                         result = run_single(
-            #                             ctx, opt_name, strategy, target, seed,
-            #                             pos_gpu, rot_gpu, V_gpu, V_np, num_points)
-            #                         result["section"] = "B"
-            #                         all_results.append(result)
-            #                         save_run_result(result, rpath)
-            #                     except Exception as e:
-            #                         handle_row_exception(
-            #                             e,
-            #                             f"B model={model_name} opt={opt_name} "
-            #                             f"strategy={strategy} target={target} seed={seed}",
-            #                             resume=args.resume,
-            #                         )
-            #                     finally:
-            #                         free_gpu_memory()
 
     else:
         for fname in sorted(os.listdir(raw_dir)):

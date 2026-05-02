@@ -2,18 +2,21 @@
 
 ### Review
 
-- experiments
-    - 
+- Tests
 
-
-
+- Visualization
 
 - params from experiments into thesis
-- Tests
-- Visualization
+
 - run_full_pipeline.py + defaults according to thesis
-- scripts/
+
 - README.md (setup and installation, brov.usd)
+- scripts/
+
+
+- experiments
+    - remove B from 06
+
 
 
 ## Extra

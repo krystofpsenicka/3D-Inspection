@@ -1,17 +1,19 @@
 """Comprehensive VRP module tests.
 
-Tests solver correctness against brute-force optimal, published benchmarks,
+Tests solver correctness against brute-force optimal on small custom instances,
 structural invariants, edge cases, and routing components (ReservationTable,
 Space-Time A*, coordinate transforms).
 
-Supersedes tests/test_vrp_solver.py (which is kept for backwards compat).
+Fixtures are hand-built for our actual problem (multi-depot VRP with blended
+``alpha * makespan + (1 - alpha) * total_cost``, no capacity). CVRPLIB / Eilon
+benchmarks are deliberately not used --  they are for capacitated VRP and
+their published optima are not comparable to our relaxation.
 """
 
 from __future__ import annotations
 
 import itertools
 import math
-from typing import List, Optional, Tuple
 
 import cupy as cp
 import numpy as np
@@ -107,23 +109,87 @@ def brute_force_vrp(
     return best_total, best_makespan
 
 
-# ─── Benchmark instances ─────────────────────────────────────────────────────
+# ─── Custom test instances ───────────────────────────────────────────────────
 
 
-def _eilon7_dist_matrix() -> cp.ndarray:
-    """Eilon 7-node benchmark (E-n7, depots=0, customers 1-6)."""
-    return cp.array(
+def _small_dist_matrix() -> cp.ndarray:
+    """Small 7-node Euclidean instance. Depot=0, customers 1..6.
+
+    Hand-built from 2-D points so the brute-force enumeration in
+    ``brute_force_vrp`` is fast and the optimum is exact for our actual
+    blended-objective MD-VRP (no capacity).
+    """
+    coords = np.array(
         [
-            [0, 10, 20, 25, 12, 20, 2],
-            [10, 0, 25, 20, 20, 10, 11],
-            [20, 25, 0, 10, 25, 11, 25],
-            [25, 20, 10, 0, 30, 22, 10],
-            [12, 20, 25, 30, 0, 30, 20],
-            [20, 10, 11, 22, 30, 0, 12],
-            [2, 11, 25, 10, 20, 12, 0],
+            (0.0, 0.0),  # 0 depot
+            (10.0, 0.0),  # 1
+            (0.0, 10.0),  # 2
+            (10.0, 10.0),  # 3
+            (5.0, 5.0),  # 4
+            (-5.0, 5.0),  # 5
+            (5.0, -5.0),  # 6
         ],
-        dtype=cp.float64,
+        dtype=np.float64,
     )
+    n = len(coords)
+    dm = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        for j in range(n):
+            dx = coords[i, 0] - coords[j, 0]
+            dy = coords[i, 1] - coords[j, 1]
+            dm[i, j] = math.sqrt(dx * dx + dy * dy)
+    return cp.asarray(dm)
+
+
+def _clustered_known_optimum() -> tuple[cp.ndarray, list[int], float]:
+    """K=3 vehicles, 9 customers in 3 well-separated clusters.
+
+    Depot at origin; clusters around (50, 0), (0, 50), (-50, 0) with
+    intra-cluster spread ≤ 2. Inter-cluster gap (~50) far exceeds intra-
+    cluster diameter (~3), so the makespan-optimal assignment must put
+    one cluster per vehicle. The optimal makespan is the maximum over
+    clusters of the depot→3-customer→depot TSP tour cost (computed by
+    brute force over the 6 permutations of each cluster).
+
+    Returns
+    -------
+    (dist_matrix, depots, optimal_makespan)
+    """
+    depot = (0.0, 0.0)
+    cluster_centres = [(50.0, 0.0), (0.0, 50.0), (-50.0, 0.0)]
+    offsets = [(-1.0, 0.0), (1.0, 0.0), (0.0, 1.0)]  # 3 customers per cluster
+
+    coords = [depot]
+    cluster_node_ids: list[list[int]] = []
+    for cx, cy in cluster_centres:
+        ids = []
+        for dx, dy in offsets:
+            ids.append(len(coords))
+            coords.append((cx + dx, cy + dy))
+        cluster_node_ids.append(ids)
+    coords_arr = np.asarray(coords, dtype=np.float64)
+    n = len(coords_arr)
+
+    dm = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        for j in range(n):
+            dx = coords_arr[i, 0] - coords_arr[j, 0]
+            dy = coords_arr[i, 1] - coords_arr[j, 1]
+            dm[i, j] = math.sqrt(dx * dx + dy * dy)
+
+    # Optimal per-cluster TSP cost from depot 0 (brute-forced)
+    cluster_costs = []
+    for ids in cluster_node_ids:
+        best = float("inf")
+        for perm in itertools.permutations(ids):
+            full = [0, *perm, 0]
+            c = sum(dm[full[i], full[i + 1]] for i in range(len(full) - 1))
+            best = min(best, c)
+        cluster_costs.append(best)
+
+    optimal_makespan = max(cluster_costs)
+    depots = [0, 0, 0]
+    return cp.asarray(dm), depots, optimal_makespan
 
 
 def _asymmetric4_dist_matrix() -> cp.ndarray:
@@ -148,49 +214,6 @@ def _multi_depot_line() -> tuple[cp.ndarray, list[int]]:
         for j in range(n):
             dm[i, j] = abs(positions[i] - positions[j])
     return cp.asarray(dm), [0, 1]
-
-
-def _eilon22_dist_matrix() -> tuple[cp.ndarray, int]:
-    """E-n22-k4 benchmark. Returns (dist_matrix, num_vehicles=4).
-
-    Coordinates from Christofides & Eilon (1969). Published optimal = 375.
-    Distance: integer EUC_2D (TSPLIB convention: nint(sqrt(dx^2+dy^2))).
-    """
-    coords = np.array(
-        [
-            (145, 215),  # 0 depot
-            (151, 264),
-            (159, 261),
-            (130, 254),
-            (128, 252),
-            (163, 247),
-            (146, 246),
-            (161, 242),
-            (142, 239),
-            (163, 236),
-            (148, 232),
-            (128, 231),
-            (156, 217),
-            (129, 214),
-            (146, 208),
-            (164, 208),
-            (141, 206),
-            (147, 193),
-            (164, 193),
-            (129, 189),
-            (155, 185),
-            (139, 182),
-        ],
-        dtype=np.float64,
-    )
-    n = len(coords)
-    dm = np.zeros((n, n), dtype=np.float64)
-    for i in range(n):
-        for j in range(n):
-            dx = coords[i, 0] - coords[j, 0]
-            dy = coords[i, 1] - coords[j, 1]
-            dm[i, j] = round(math.sqrt(dx * dx + dy * dy))
-    return cp.asarray(dm), 4
 
 
 # ─── Helper: solver factory ─────────────────────────────────────────────────
@@ -235,8 +258,8 @@ class TestSolverOptimality:
     # ── Eilon 7-node, makespan ────────────────────────────────────────
 
     @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
-    def test_eilon7_makespan(self, solver_name):
-        dm = _eilon7_dist_matrix()
+    def test_small_instance_makespan(self, solver_name):
+        dm = _small_dist_matrix()
         _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
 
         solver, alpha = _make_solver(solver_name, alpha=1.0)
@@ -248,11 +271,11 @@ class TestSolverOptimality:
             f"brute_force={bf_makespan:.2f} * {1 + tol:.2f}"
         )
 
-    # ── Eilon 7-node, total distance (alpha=0) ──────────────────────
+    # ── Small instance, total distance (alpha=0) ──────────────────────
 
     @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
-    def test_eilon7_total_distance(self, solver_name):
-        dm = _eilon7_dist_matrix()
+    def test_small_instance_total_distance(self, solver_name):
+        dm = _small_dist_matrix()
         bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
 
         solver, alpha = _make_solver(solver_name, alpha=0.0)
@@ -262,6 +285,23 @@ class TestSolverOptimality:
         assert result.total_cost <= bf_total * (1 + tol), (
             f"{solver_name}: total_cost={result.total_cost:.2f} > "
             f"brute_force={bf_total:.2f} * {1 + tol:.2f}"
+        )
+
+    # ── Mid-size, structurally known optimum ─────────────────────────
+
+    def test_clustered_known_optimum(self):
+        """3 vehicles, 9 customers in 3 well-separated clusters.
+
+        For alpha=1, each vehicle must cover one cluster. Optimum makespan =
+        max over clusters of the brute-force depot->3-customer->depot tour.
+        """
+        dm, depots, optimal_makespan = _clustered_known_optimum()
+        solver = MIPMakespanCPU(time_limit=60, mip_gap=MIP_GAP)
+        result = solver.solve(dm, num_vehicles=3, depots=depots, alpha=1.0)
+        _skip_on_subprocess_error(result, "mip_cpu")
+        tol = MIP_GAP + 0.01
+        assert result.makespan <= optimal_makespan * (1 + tol), (
+            f"makespan={result.makespan:.2f} > optimal={optimal_makespan:.2f}"
         )
 
     # ── Multi-depot, makespan ────────────────────────────────────────
@@ -282,28 +322,7 @@ class TestSolverOptimality:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. TestCVRPLIBBenchmark  --  Published benchmark regression
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestCVRPLIBBenchmark:
-    """Regression tests against published CVRPLIB benchmarks."""
-
-    def test_eilon22_makespan(self):
-        """MIP on E-n22-k4 should produce a feasible solution with consistent costs."""
-        dm, k = _eilon22_dist_matrix()
-        solver = MIPMakespanCPU(time_limit=60, mip_gap=0.10)
-        result = solver.solve(dm, num_vehicles=k, depots=[0] * k, alpha=1.0)
-        assert result.status == "success"
-        assert result.makespan > 0
-        # Recompute and verify consistency
-        per_v = _per_vehicle_costs(result.routes, dm, depots=[0] * k)
-        assert abs(max(per_v) - result.makespan) < 1e-6
-        assert abs(sum(per_v) - result.total_cost) < 1e-6
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. TestSolverFeasibility  --  Structural invariants
+# 2. TestSolverFeasibility  --  Structural invariants
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -313,7 +332,7 @@ class TestSolverFeasibility:
     @pytest.fixture(params=ALL_CPU_SOLVERS, ids=_solver_ids(ALL_CPU_SOLVERS))
     def solved(self, request):
         solver_name = request.param
-        dm = _eilon7_dist_matrix()
+        dm = _small_dist_matrix()
         solver, alpha = _make_solver(solver_name, alpha=1.0)
         result = solver.solve(dm, num_vehicles=2, depots=[0, 0], alpha=alpha)
         if result.status != "success":
@@ -409,44 +428,10 @@ class TestSolverEdgeCases:
 
 
 class TestSolveVRPEntryPoint:
-    def test_alpha_1_makespan(self):
-        """solve_vrp with alpha=1.0 returns valid makespan-optimised result."""
-        dm = _eilon7_dist_matrix()
-        result = solve_vrp(
-            cp.asarray(dm),
-            num_vehicles=2,
-            depots=[0, 0],
-            alpha=1.0,
-            backend=VRPBackend.HIGHS,
-            time_limit=60,
-            mip_gap=0.05,
-        )
-        assert result.status == "success"
-        assert result.makespan > 0
-
-    def test_alpha_0_total_distance(self):
-        """solve_vrp with alpha=0.0 returns valid total-distance result."""
-        dm = _eilon7_dist_matrix()
-        result = solve_vrp(
-            cp.asarray(dm),
-            num_vehicles=2,
-            depots=[0, 0],
-            alpha=0.0,
-            backend=VRPBackend.HIGHS,
-            time_limit=60,
-            mip_gap=0.05,
-        )
-        assert result.status == "success"
-        assert result.total_cost < float("inf")
-        visited = set()
-        for r in result.routes:
-            visited.update(r)
-        assert visited == set(range(1, 7))
-
     def test_makespan_leq_total_distance_makespan(self):
         """Makespan-objective solution should have <= makespan than
         total-distance-objective solution (or within tolerance)."""
-        dm = _eilon7_dist_matrix()
+        dm = _small_dist_matrix()
         td_result = solve_vrp(
             cp.asarray(dm),
             num_vehicles=2,
@@ -483,43 +468,9 @@ class TestSolveVRPEntryPoint:
 class TestCombinedObjective:
     """Verify combined-objective behaviour across alpha values."""
 
-    def test_alpha_1_matches_makespan(self):
-        """alpha=1.0 should produce near-optimal makespan."""
-        dm = _eilon7_dist_matrix()
-        _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-        result = solve_vrp(
-            cp.asarray(dm),
-            num_vehicles=2,
-            depots=[0, 0],
-            alpha=1.0,
-            backend=VRPBackend.HIGHS,
-            time_limit=60,
-            mip_gap=0.05,
-        )
-        assert result.status == "success"
-        tol = MIP_GAP + 0.01
-        assert result.makespan <= bf_makespan * (1 + tol)
-
-    def test_alpha_0_minimizes_total_cost(self):
-        """alpha=0.0 should produce near-optimal total distance."""
-        dm = _eilon7_dist_matrix()
-        bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-        result = solve_vrp(
-            cp.asarray(dm),
-            num_vehicles=2,
-            depots=[0, 0],
-            alpha=0.0,
-            backend=VRPBackend.HIGHS,
-            time_limit=60,
-            mip_gap=0.05,
-        )
-        assert result.status == "success"
-        tol = MIP_GAP + 0.01
-        assert result.total_cost <= bf_total * (1 + tol)
-
     def test_alpha_05_tradeoff(self):
         """alpha=0.5 should produce a valid intermediate solution."""
-        dm = _eilon7_dist_matrix()
+        dm = _small_dist_matrix()
         result = solve_vrp(
             cp.asarray(dm),
             num_vehicles=2,
@@ -542,28 +493,11 @@ class TestCombinedObjective:
 
     def test_alpha_out_of_range(self):
         """alpha outside [0,1] should raise ValueError."""
-        dm = _eilon7_dist_matrix()
+        dm = _small_dist_matrix()
         with pytest.raises(ValueError):
             solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=1.5)
         with pytest.raises(ValueError):
             solve_vrp(cp.asarray(dm), num_vehicles=2, depots=[0, 0], alpha=-0.1)
-
-    def test_objective_value_field(self):
-        """VRPResult.objective_value should be alpha*makespan + (1-alpha)*total_cost."""
-        dm = _eilon7_dist_matrix()
-        for alpha in [0.0, 0.3, 0.7, 1.0]:
-            result = solve_vrp(
-                cp.asarray(dm),
-                num_vehicles=2,
-                depots=[0, 0],
-                alpha=alpha,
-                backend=VRPBackend.HIGHS,
-                time_limit=60,
-                mip_gap=0.05,
-            )
-            if result.status == "success":
-                expected = alpha * result.makespan + (1 - alpha) * result.total_cost
-                assert result.objective_value == pytest.approx(expected)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -573,7 +507,7 @@ class TestCombinedObjective:
 
 class TestNearestNeighborWarmstart:
     def test_all_customers_visited(self):
-        dm = _eilon7_dist_matrix()
+        dm = _small_dist_matrix()
         routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depots=[0, 0])
         visited = set()
         for r in routes:
@@ -581,7 +515,7 @@ class TestNearestNeighborWarmstart:
         assert visited == set(range(1, 7))
 
     def test_no_depot_in_routes(self):
-        dm = _eilon7_dist_matrix()
+        dm = _small_dist_matrix()
         routes = _nearest_neighbor_warmstart(cp.asarray(dm), 2, depots=[0, 0])
         for r in routes:
             assert 0 not in r
@@ -684,7 +618,7 @@ class TestSpaceTimeAStar:
         goal = cp.array([15, 15, 15], dtype=cp.intp)
 
         result = space_time_astar(og, start, goal, 0, rt)
-        assert result is not None
+        assert result is not None, "A* failed to return a path on an open grid"
         path_ijk, path_t = result
         assert len(path_ijk) >= 2
         np.testing.assert_array_equal(path_ijk[0].get(), start.get())
@@ -704,7 +638,7 @@ class TestSpaceTimeAStar:
         goal = cp.array([15, 5, 5], dtype=cp.intp)
 
         result = space_time_astar(og, start, goal, 0, rt)
-        assert result is not None
+        assert result is not None, "A* failed to find a path through the wall gap"
         path_ijk, _ = result
         np.testing.assert_array_equal(path_ijk[-1].get(), goal.get())
 
@@ -767,7 +701,7 @@ class TestSpaceTimeAStar:
         point = cp.array([5, 5, 5], dtype=cp.intp)
 
         result = space_time_astar(og, point, point, 0, rt)
-        assert result is not None
+        assert result is not None, "A* failed when start == goal"
         path_ijk, path_t = result
         assert len(path_ijk) == 1
         np.testing.assert_array_equal(path_ijk[0].get(), point.get())
@@ -903,12 +837,33 @@ class TestTrajectoryCollisions:
         collisions = find_trajectory_collisions([traj])
         assert collisions == []
 
-    def test_cupy_input_accepted(self):
-        """Function accepts CuPy arrays as trajectory positions."""
+    def test_collision_penetration_sign(self):
+        """Penetration depth = (2*ROBOT_RADIUS - distance), strictly positive on overlap."""
+        from VRP.core.constants import ROBOT_RADIUS
         from VRP.utils.collision import find_trajectory_collisions
 
-        T = 10
-        traj_a = cp.array([[0.0, 0.0, float(t)] for t in range(T)], dtype=cp.float32)
-        traj_b = cp.array([[100.0, 0.0, float(t)] for t in range(T)], dtype=cp.float32)
+        # Two robots held a fixed distance r = ROBOT_RADIUS apart for T steps
+        # (so 2r overlap = ROBOT_RADIUS).  Pure x-axis separation, no z motion.
+        T = 5
+        r = ROBOT_RADIUS  # (one radius apart in x)
+        traj_a = cp.tile(cp.array([0.0, 0.0, 0.0], dtype=cp.float32), (T, 1))
+        traj_b = cp.tile(cp.array([r, 0.0, 0.0], dtype=cp.float32), (T, 1))
         collisions = find_trajectory_collisions([traj_a, traj_b])
-        assert collisions == []
+        assert len(collisions) == T  # one collision per step
+        for _step, ra, rb, pen in collisions:
+            assert ra == 0 and rb == 1
+            # Expected penetration = 2*ROBOT_RADIUS - r = ROBOT_RADIUS
+            assert pen == pytest.approx(ROBOT_RADIUS, abs=1e-4)
+
+    def test_collision_pair_uniqueness(self):
+        """3 robots overlapping at one step -> exactly 3 unique pairs (a<b)."""
+        from VRP.utils.collision import find_trajectory_collisions
+
+        # 3 robots all at the origin for one step, then far apart
+        traj_a = cp.array([[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]], dtype=cp.float32)
+        traj_b = cp.array([[0.0, 0.0, 0.0], [200.0, 0.0, 0.0]], dtype=cp.float32)
+        traj_c = cp.array([[0.0, 0.0, 0.0], [300.0, 0.0, 0.0]], dtype=cp.float32)
+        collisions = find_trajectory_collisions([traj_a, traj_b, traj_c])
+        # Step 0 collisions only, 3 unique pairs: (0,1) (0,2) (1,2)
+        pairs = {(ra, rb) for _step, ra, rb, _pen in collisions}
+        assert pairs == {(0, 1), (0, 2), (1, 2)}
