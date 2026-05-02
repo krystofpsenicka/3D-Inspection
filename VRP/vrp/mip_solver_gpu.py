@@ -88,7 +88,6 @@ class MIPSolverGPU(VRPSolverBase):
 
         depot_set = set(depots)
         n = dist_matrix.shape[0]
-        n - len(depot_set)
 
         # PuLP needs numpy for model building
         dist_matrix_np = cp.asnumpy(dist_matrix)

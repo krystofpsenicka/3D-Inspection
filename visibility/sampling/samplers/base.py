@@ -51,11 +51,12 @@ class ViewpointSamplerBase(ABC):
         if self.num_points == 0:
             logger.warning("[ViewpointSamplerBase] No target points available.")
 
+        filled_grid = None
         if occupancy_grid is None:
             logger.info(
                 "[ViewpointSamplerBase] No occupancy grid provided -- building surface-only OG from mesh..."
             )
-            self._occupancy_grid = build_sampling_occupancy_grid(
+            self._occupancy_grid, _, filled_grid = build_sampling_occupancy_grid(
                 mesh,
                 frustum_far,
                 self.min_clearance,
@@ -75,7 +76,7 @@ class ViewpointSamplerBase(ABC):
         self._feasible_cache = {}
 
         t0 = time.perf_counter()
-        self._sdf_grid_gpu = build_sdf_grid(mesh, self._occupancy_grid)
+        self._sdf_grid_gpu = build_sdf_grid(mesh, self._occupancy_grid, filled_grid=filled_grid)
         dt = time.perf_counter() - t0
         gpu_mb = cp.get_default_memory_pool().used_bytes() / 1e6
         logger.info(

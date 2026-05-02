@@ -143,7 +143,7 @@ class PipelineContext:
             self.model.voxel_resolution,
             min_clearance,
         )
-        self._sampling_og = build_sampling_occupancy_grid(
+        self._sampling_og, _, _ = build_sampling_occupancy_grid(
             mesh=o3d_mesh,
             frustum_far=self.model.frustum.far,
             min_clearance=min_clearance,

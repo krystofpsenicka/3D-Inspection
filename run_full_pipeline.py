@@ -309,7 +309,7 @@ def main() -> None:
     from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
 
     sampling_min_clearance = 2 * _vrp_cfg.ROBOT_RADIUS
-    sampling_og = build_sampling_occupancy_grid(
+    sampling_og, _, _ = build_sampling_occupancy_grid(
         mesh=o3d_mesh,
         frustum_far=args.frustum_far,
         min_clearance=sampling_min_clearance,

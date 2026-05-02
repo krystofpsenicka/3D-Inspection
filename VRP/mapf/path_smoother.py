@@ -7,20 +7,6 @@ When a reservation table is provided, the validity checker also
 rejects states that fall inside reserved space-time cells using a
 two-stage approach: fast spatial rejection via a precomputed
 any-time-reserved map, followed by a margin-based time check.
-
-Future direction
-----------------
-Pan, J. & Manocha, D. (2012). GPU-Based Parallel Collision Detection
-    for Fast Motion Planning. IJRR.
-
-A GPU-native shortcutter could replace the OMPL loop entirely: batch
-collision-check many candidate line segments in one kernel, accept
-free shortcuts, and repeat.  This would eliminate the expensive
-per-validity-check kernel launch that the current OMPL approach
-incurs (each ``isValid`` call round-trips through CuPy / the OG).
-The same batch kernel could incorporate reservation-table lookups
-with interpolated time, giving exact space-time awareness instead
-of the nearest-neighbour approximation used here.
 """
 
 from __future__ import annotations

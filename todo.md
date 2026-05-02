@@ -7,8 +7,14 @@
 
 ### Review
 
+- experiments (remove replay)
 - Tests
 - Visualization
 - run_full_pipeline.py + defaults according to thesis
+- scripts/
 - collision.py
 - README.md (setup and installation, brov.usd)
+
+- params from experiments into thesis
+
+- cp.RawKernel -> unify (better modularity)

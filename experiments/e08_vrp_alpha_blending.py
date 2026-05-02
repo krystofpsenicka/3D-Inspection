@@ -167,18 +167,6 @@ def generate_plots(results: list[dict], output_dir: str,
     os.makedirs(fig_dir, exist_ok=True)
     lb_by_stem = lb_by_stem or {}
 
-<<<<<<< Updated upstream
-    alphas = sorted(set(r["alpha"] for r in results))
-    ok = [r for r in results if r["status"] == "success"]
-
-    makespan_means = [
-        np.mean([r["makespan"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
-        for a in alphas
-    ]
-    cost_means = [
-        np.mean([r["total_cost"] for r in ok if r["alpha"] == a]) if any(r["alpha"] == a for r in ok) else float("nan")
-        for a in alphas
-=======
     def _beta(r: dict) -> float:
         return r["beta"] if "beta" in r else r["alpha"]
 
@@ -192,7 +180,6 @@ def generate_plots(results: list[dict], output_dir: str,
     cost_means = [
         np.mean([r["total_cost"] for r in ok if _beta(r) == b]) if any(_beta(r) == b for r in ok) else float("nan")
         for b in betas
->>>>>>> Stashed changes
     ]
 
     # ── Dual y-axis: makespan vs total cost across alpha ─────────────
@@ -253,7 +240,7 @@ def main():
         o3d_mesh.compute_vertex_normals()
         _model_cfg = ModelConfig.duke_of_lancaster()
         from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
-        og_ = build_sampling_occupancy_grid(
+        og_, _, _ = build_sampling_occupancy_grid(
             mesh=o3d_mesh,
             frustum_far=_model_cfg.frustum.far,
             min_clearance=2 * ROBOT_RADIUS,

@@ -414,7 +414,6 @@ def generate_plots(results: list[dict], output_dir: str):
 
     subtitle = f"\n{_IMPLEMENTATION_CHOICES}"
     model_labels = [_display_model(m) for m in models]
-    np.arange(len(models))
 
     # ── Three-bar timing breakdown per model ────────────────────────────
     #   Bar 1 (left)   : total pipeline time as a single segment

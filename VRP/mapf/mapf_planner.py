@@ -20,76 +20,6 @@ Pipeline
        avoid it.
 5. Densify coarse paths to replay resolution and assign orientation.
 6. Optionally run collision safety checks.
-
-References
-----------
-Silver, D. (2005). Cooperative Pathfinding. AIIDE.
-    Priority-based sequential planning framework: robots are planned
-    one at a time, each committing its trajectory to a reservation
-    table so that later robots avoid it.
-
-Erdmann, M. & Lozano-Perez, T. (1987). On Multiple Moving Objects.
-    Algorithmica, 2(1), 477-521.
-    Foundational work on planning in configuration-space x time;
-    the 4-D space-time grid with a reservation table derives from
-    this lineage.
-
-Zhou, Y. & Zeng, J. (2015). Massively Parallel A* Search on a GPU.
-    AAAI.
-    GPU-parallel frontier expansion via heuristic-guided threshold
-    selection (expanding nodes where f <= f_min + delta).
-
-Li, Z. et al. (2025). GPU-accelerated Conflict-based Search for
-    Multi-agent Embodied Intelligence. Machine Intelligence Research.
-    GPU-parallel frontier expansion for multi-agent pathfinding
-    (GATSA algorithm).
-
-Design note  --  why not Conflict-Based Search (CBS)?
----------------------------------------------------
-CBS (Sharon et al., 2015) is an optimal MAPF solver: it searches a
-conflict tree where each node represents a set of inter-agent
-constraints, splitting on the first detected collision and re-planning
-only the affected agent.  This guarantees the shortest-makespan
-solution but at significant computational cost  --  CBS is exponential in
-the number of conflicts, and each conflict-tree node triggers a full
-single-agent A* re-plan.
-
-In this application the priority-based approach is preferred because:
-
-1. **Low robot density.**  A small fleet (typically 2-5 robots)
-   operates in a large 3-D volume (~80 K free voxels, i.e. ~16 K
-   voxels per robot at 5 agents).  Spatial conflicts are inherently
-   sparse, so the optimality gap between prioritised planning and
-   CBS is negligible in practice.
-
-2. **Priority-order search already covers the gap.**  The executor
-   tries multiple priority orderings (longest-first, shortest-first,
-   most-conflicted-first, plus random permutations) and keeps the
-   best result.  For 5 robots there are only 5! = 120 possible
-   orderings; the default budget of 20 trials samples ~17 % of
-   them, which is sufficient to find a near-optimal ordering.
-
-3. **The real bottleneck is VRP assignment, not conflict resolution.**
-   A suboptimal conflict resolution adds seconds of detour; a
-   suboptimal waypoint-to-vehicle assignment adds minutes of extra
-   travel.  Investing computation in CBS yields diminishing returns
-   when the upstream VRP solution dominates total cost.
-
-4. **CBS worst case is exponential.**  If robots frequently cross
-   paths (e.g. star-shaped routes through a central corridor) the
-   constraint tree can blow up.  The 4-D state space (x, y, z, t)
-   with 26-connected + wait already has a large branching factor;
-   CBS re-solves A* over this grid for every conflict-tree branch.
-   Priority-based planning degrades gracefully under the same
-   conditions.
-
-CBS would become worthwhile at 15-30+ robots or in highly constrained
-environments (narrow corridors, bottlenecks) where priority ordering
-causes significant cascading delays.  At the current scale  --  a small
-fleet in an open ship hull - the gain is not worth the complexity.
-
-Sharon, G. et al. (2015). Conflict-Based Search for Optimal
-    Multi-Agent Pathfinding. Artificial Intelligence, 219, 40-66.
 """
 
 from __future__ import annotations
@@ -242,7 +172,6 @@ class MultiAgentPathPlanner:
                 for i in range(num_robots)
             ]
         )
-        (last_steps * SPACE_TIME_DT).tolist()
         makespan_seconds = float(last_steps.max() * SPACE_TIME_DT) if num_robots > 0 else 0.0
         total_travel_seconds = float(last_steps.sum() * SPACE_TIME_DT)
 

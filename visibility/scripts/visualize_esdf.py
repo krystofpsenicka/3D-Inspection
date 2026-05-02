@@ -33,9 +33,7 @@ from visualization import EsdfVisualizer
 def _build_og_and_esdf():
     """Build sampling occupancy grid and compute ESDF.  Returns (og, raw, esdf_3d)."""
     import open3d as o3d
-    import trimesh
 
-    from shared.grid_builder_utils import voxelize_mesh
     from shared.mesh_loader import load_and_transform_mesh
     from visibility.sampling.utils.sampling_grid_builder import (
         build_sampling_occupancy_grid,
@@ -50,18 +48,11 @@ def _build_og_and_esdf():
     o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(tm.faces))
 
     print("Building sampling occupancy grid ...")
-    og = build_sampling_occupancy_grid(o3d_mesh, frustum_far=6.0, min_clearance=1.0)
-    # Pre-inflation surface voxels (for visualization shell rendering).
-    raw_tm = trimesh.Trimesh(
-        vertices=np.asarray(o3d_mesh.vertices), faces=np.asarray(o3d_mesh.triangles)
-    )
-    raw, _ = voxelize_mesh(
-        raw_tm, np.array(og.grid.shape), og.origin, og.resolution, fill_interior=False
-    )
+    og, raw, filled = build_sampling_occupancy_grid(o3d_mesh, frustum_far=6.0, min_clearance=1.0)
     print(f"Grid shape: {raw.shape}  origin: {og.origin}  res: {og.resolution}m")
 
     print("Computing SDF ...")
-    esdf = build_sdf_grid(o3d_mesh, og)
+    esdf = build_sdf_grid(o3d_mesh, og, filled_grid=filled)
     print(f"SDF range: [{esdf.min():.3f}, {esdf.max():.3f}]")
     return og, raw, esdf
 

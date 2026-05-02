@@ -21,8 +21,16 @@ def build_sampling_occupancy_grid(
     frustum_far: float,
     min_clearance: float,
     resolution: float = 0.10,
-) -> OccupancyGrid:
-    """Build a surface-only inflated OccupancyGrid for sampling/collision."""
+) -> tuple[OccupancyGrid, cp.ndarray, cp.ndarray]:
+    """Build a surface-only inflated OccupancyGrid for sampling/collision.
+
+    Returns
+    -------
+    (og, raw_grid, filled_grid)
+        *og* has the inflated grid for collision checks.
+        *raw_grid* is the surface-only voxelization (pre-inflation).
+        *filled_grid* is the interior-filled voxelization (for SDF signs).
+    """
     vertices = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
     tm = trimesh.Trimesh(vertices=vertices, faces=faces)
@@ -35,7 +43,7 @@ def build_sampling_occupancy_grid(
         resolution,
     )
 
-    raw_grid, _ = voxelize_mesh(
+    raw_grid, filled_grid = voxelize_mesh(
         tm,
         grid_shape,
         origin,
@@ -56,32 +64,39 @@ def build_sampling_occupancy_grid(
         inflation_voxels,
     )
 
-    return OccupancyGrid(grid=inflated, origin=origin, resolution=resolution)
+    og = OccupancyGrid(grid=inflated, origin=origin, resolution=resolution)
+    return og, raw_grid, filled_grid
 
 
-def build_sdf_grid(mesh: o3d.geometry.TriangleMesh, og: OccupancyGrid) -> cp.ndarray:
+def build_sdf_grid(
+    mesh: o3d.geometry.TriangleMesh,
+    og: OccupancyGrid,
+    filled_grid: cp.ndarray | None = None,
+) -> cp.ndarray:
     """Build a volumetric SDF grid for *og* via the two-EDT method.
 
-    Re-voxelizes the mesh on *og*'s grid (with flood-filled interior) so the
-    sign comes out right: positive outside, negative inside. scipy
+    If *filled_grid* (interior-filled voxelization on *og*'s grid) is
+    provided, it is used directly.  Otherwise the mesh is re-voxelized to
+    obtain it.  Positive outside, negative inside.  scipy
     distance_transform_edt requires CPU -- transfer at the boundary.
     """
     from scipy.ndimage import distance_transform_edt
 
-    vertices = np.asarray(mesh.vertices)
-    faces = np.asarray(mesh.triangles)
-    tm = trimesh.Trimesh(vertices=vertices, faces=faces)
-    grid_shape = np.array(og.grid.shape)
-    _, filled_raw_grid = voxelize_mesh(
-        tm,
-        grid_shape,
-        og.origin,
-        og.resolution,
-        fill_interior=False,
-    )
+    if filled_grid is None:
+        vertices = np.asarray(mesh.vertices)
+        faces = np.asarray(mesh.triangles)
+        tm = trimesh.Trimesh(vertices=vertices, faces=faces)
+        grid_shape = np.array(og.grid.shape)
+        _, filled_grid = voxelize_mesh(
+            tm,
+            grid_shape,
+            og.origin,
+            og.resolution,
+            fill_interior=False,
+        )
 
     t0 = time.perf_counter()
-    filled_np = cp.asnumpy(filled_raw_grid)
+    filled_np = cp.asnumpy(filled_grid)
     outside_dist = distance_transform_edt(~filled_np).astype(np.float32) * og.resolution
     inside_dist = distance_transform_edt(filled_np).astype(np.float32) * og.resolution
     sdf_grid = cp.asarray(outside_dist - inside_dist)

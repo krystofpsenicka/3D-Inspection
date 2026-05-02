@@ -98,7 +98,7 @@ def _build_setup(resolution: float = 0.20):
     o3d_mesh.compute_vertex_normals()
 
     cfg = ModelConfig.duke_of_lancaster()
-    og = build_sampling_occupancy_grid(
+    og, _, _ = build_sampling_occupancy_grid(
         mesh=o3d_mesh,
         frustum_far=cfg.frustum.far,
         min_clearance=2 * ROBOT_RADIUS,

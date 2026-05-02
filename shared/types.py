@@ -4,7 +4,7 @@ from enum import Enum
 
 
 class Side(Enum):
-    """Which side of the surface we are inspected."""
+    """Which side of the surface we are inspecting."""
 
     OUTSIDE = "outside"
     INSIDE = "inside"

@@ -36,7 +36,6 @@ class MIPSolverCPU(VRPSolverBase):
 
         depot_set = set(depots)
         n = dist_matrix.shape[0]
-        n - len(depot_set)
 
         try:
             import pulp

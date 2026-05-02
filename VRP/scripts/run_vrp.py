@@ -136,7 +136,7 @@ def main():
 
     # ── 2. Build occupancy grid (reused for sampling + pathfinding) ──
     logger.info("Building occupancy grid (res=%.2f) …", _RESOLUTION)
-    og = build_sampling_occupancy_grid(
+    og, _, _ = build_sampling_occupancy_grid(
         mesh=o3d_mesh,
         frustum_far=_FRUSTUM_FAR,
         min_clearance=2 * ROBOT_RADIUS,

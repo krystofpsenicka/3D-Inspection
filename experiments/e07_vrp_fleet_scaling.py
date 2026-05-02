@@ -408,7 +408,7 @@ def _build_setup(resolution: float = 0.20):
     _model_cfg = ModelConfig.duke_of_lancaster()
     from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
 
-    og = build_sampling_occupancy_grid(
+    og, _, _ = build_sampling_occupancy_grid(
         mesh=o3d_mesh,
         frustum_far=_model_cfg.frustum.far,
         min_clearance=2 * ROBOT_RADIUS,

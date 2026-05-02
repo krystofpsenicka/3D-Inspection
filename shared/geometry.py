@@ -43,7 +43,7 @@ def direction_to_rotmat(direction: np.ndarray) -> np.ndarray:
     axis = cross / cross_norm
     angle = np.arccos(np.clip(np.dot(forward, d), -1.0, 1.0))
 
-    # Rodrigues formula: R = I + sin(theta)K + (1 - cos(theta))K²
+    # Rodrigues formula: R = I + sin(theta)K + (1 - cos(theta))K^2
     K = np.array(
         [
             [0, -axis[2], axis[1]],
