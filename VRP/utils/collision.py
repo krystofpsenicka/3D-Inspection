@@ -64,7 +64,7 @@ def find_trajectory_collisions(
     if num_robots < 2:
         return []
 
-    stacked, lengths = _pad_trajectories_to_tensor(all_traj_positions)
+    stacked, _ = _pad_trajectories_to_tensor(all_traj_positions)
     if stacked.shape[1] == 0:
         return []
 

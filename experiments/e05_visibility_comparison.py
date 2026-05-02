@@ -40,6 +40,7 @@ import argparse
 import logging
 import os
 import sys
+from collections import defaultdict
 
 import matplotlib
 import numpy as np
@@ -311,7 +312,134 @@ def run_all_methods(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def generate_plots(results: list[dict], methods: list[str], output_dir: str):
+def _render_f1_table(
+    results: list[dict],
+    methods: list[str],
+    expected_seeds_per_cell: int,
+    fig_dir: str,
+) -> None:
+    """Aggregate per-(model, method) mean F1 over targets and seeds, log a
+    text table + sanity summary, and save a matplotlib table figure.
+
+    Mirrors what `verify_e05_f1_table.py` used to do as a standalone script,
+    so the user can compare the printed cells against Table 6.1 in chap06.tex.
+    """
+    f1_results = [r for r in results if r.get("mean_f1") is not None]
+    if not f1_results:
+        return
+
+    duke = "duke_of_lancaster"
+    models_present = sorted({r["model"] for r in f1_results})
+    table_models = ([duke] if duke in models_present else []) + sorted(
+        m for m in models_present if m != duke
+    )
+    table_methods = [m for m in methods if any(r["method"] == m for r in f1_results)]
+    targets_present = sorted({round(float(r["target_coverage"]), 4) for r in f1_results})
+
+    by_model_method: dict[tuple[str, str], list[float]] = defaultdict(list)
+    cell_counts: dict[tuple[str, str, float], int] = defaultdict(int)
+    for r in f1_results:
+        target = round(float(r["target_coverage"]), 4)
+        by_model_method[(r["model"], r["method"])].append(float(r["mean_f1"]))
+        cell_counts[(r["model"], r["method"], target)] += 1
+
+    def fmt_cell(values: list[float]) -> str:
+        if not values:
+            return "-"
+        m = float(np.mean(values))
+        s = float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
+        return f"{m:.4f}±{s:.4f} (n={len(values)})"
+
+    col_w = 22
+    logger.info("=" * 88)
+    logger.info(
+        "Per-(model, method) mean F1 over targets %s and seeds",
+        targets_present,
+    )
+    logger.info("=" * 88)
+    header = f"{'method':<14} | " + " | ".join(f"{m:^{col_w}}" for m in table_models)
+    logger.info(header)
+    logger.info("-" * len(header))
+    for method in table_methods:
+        cells = [
+            f"{fmt_cell(by_model_method.get((model, method), [])):^{col_w}}"
+            for model in table_models
+        ]
+        logger.info(f"{method:<14} | " + " | ".join(cells))
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("Sanity summary")
+    logger.info("=" * 60)
+    expected_cells = len(table_models) * len(table_methods) * len(targets_present)
+    expected_total = expected_cells * expected_seeds_per_cell
+    logger.info("Included runs : %d", len(f1_results))
+    logger.info(
+        "Expected      : %d (%d models x %d methods x %d targets x %d seeds)",
+        expected_total,
+        len(table_models),
+        len(table_methods),
+        len(targets_present),
+        expected_seeds_per_cell,
+    )
+
+    off_cells = [
+        (model, method, target, cell_counts.get((model, method, target), 0))
+        for model in table_models
+        for method in table_methods
+        for target in targets_present
+        if cell_counts.get((model, method, target), 0) != expected_seeds_per_cell
+    ]
+    if off_cells:
+        logger.warning("Cells with seed count != %d:", expected_seeds_per_cell)
+        for model, method, target, n in off_cells:
+            logger.warning("  (%s, %s, target=%s): n=%d", model, method, target, n)
+    else:
+        logger.info(
+            "All %d cells have exactly %d seeds.", expected_cells, expected_seeds_per_cell
+        )
+
+    if not table_methods or not table_models:
+        return
+
+    col_labels = [_display_model(m) for m in table_models]
+    row_labels = [_METHOD_LABELS.get(m, m) for m in table_methods]
+    cell_text = []
+    for method in table_methods:
+        row = []
+        for model in table_models:
+            vals = by_model_method.get((model, method), [])
+            if not vals:
+                row.append("—")
+            else:
+                m = float(np.mean(vals))
+                s = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
+                row.append(f"{m:.4f}±{s:.4f}\n(n={len(vals)})")
+        cell_text.append(row)
+
+    height = max(2.0, 0.7 * (len(table_methods) + 1))
+    fig, ax = plt.subplots(figsize=(DOUBLE_COL, height))
+    ax.axis("off")
+    table = ax.table(
+        cellText=cell_text,
+        rowLabels=row_labels,
+        colLabels=col_labels,
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1.0, 1.6)
+    save_figure(fig, os.path.join(fig_dir, "cross_model_e05_f1_table"))
+    logger.info("E05 F1 table figure saved")
+
+
+def generate_plots(
+    results: list[dict],
+    methods: list[str],
+    output_dir: str,
+    expected_seeds_per_cell: int,
+):
     """Generate all E3 figures."""
     setup_thesis_style()
     fig_dir = os.path.join(output_dir, "figures")
@@ -407,15 +535,8 @@ def generate_plots(results: list[dict], methods: list[str], output_dir: str):
         save_figure(fig, os.path.join(fig_dir, "cross_model_e05_timing"))
         logger.info("Cross-model timing figure saved")
 
-    # ── Print per-method mean F1 on Duke (table data for the thesis) ────
-    if duke in models:
-        f1_rows = [r for r in results if r["model"] == duke and r.get("mean_f1") is not None]
-        if f1_rows:
-            logger.info("E05 mean F1 vs gpu_raycast on Duke (averaged over targets, seeds):")
-            for m in present_methods:
-                vals = [r["mean_f1"] for r in f1_rows if r["method"] == m]
-                if vals:
-                    logger.info("  %-12s F1 = %.3f  (n=%d)", m, float(np.mean(vals)), len(vals))
+    # ── Cross-model F1 table (printed + saved as figure) ────────────────
+    _render_f1_table(results, methods, expected_seeds_per_cell, fig_dir)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -526,7 +647,7 @@ def main():
                 )
 
     if all_results:
-        generate_plots(all_results, args.methods, args.output_dir)
+        generate_plots(all_results, args.methods, args.output_dir, len(args.seeds))
 
 
 if __name__ == "__main__":

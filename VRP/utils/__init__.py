@@ -1,4 +1,4 @@
-"""VRP utility helpers: serialization, occupancy grid wrappers, collision checks."""
+"""VRP utility helpers: serialization, collision checks."""
 
 from shared.occupancy_grid import OccupancyGrid
 
