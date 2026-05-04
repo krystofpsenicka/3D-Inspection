@@ -15,6 +15,7 @@ import pytest
 cp = pytest.importorskip("cupy")
 
 from visibility.set_cover.greedy import GreedySetCover
+from visibility.set_cover.greedy_cuda import GreedySetCoverCuda
 from visibility.set_cover.lazy_greedy import LazyGreedySetCover
 
 
@@ -172,3 +173,30 @@ class TestSetCoverInvariants:
         )
         if result.num_viewpoints > 0:
             assert result.redundancy >= 1.0
+
+
+class TestGreedyCpuEqualsCuda:
+    """The CUDA greedy implementation must select the same sequence as the
+    CPU version on the same input. Both use argmax with first-tie-wins, so
+    the sequences must be bit-identical."""
+
+    def test_identical_selection_random_instance(self, random_visibility_matrix):
+        n_candidates, n_points = 25, 80
+        V_np = random_visibility_matrix(n_candidates, n_points, density=0.2)
+        positions, rotmats = _dummy_pos_rot(n_candidates)
+
+        cpu = GreedySetCover(n_points, positions, rotmats, V_np).optimize(
+            target_coverage=0.95, max_viewpoints=n_candidates
+        )
+
+        # GPU variant takes cupy arrays; visibility_map is uint8 on GPU.
+        V_cp = cp.asarray(V_np.astype(np.uint8))
+        positions_cp = cp.asarray(positions)
+        rotmats_cp = cp.asarray(rotmats)
+        gpu = GreedySetCoverCuda(n_points, positions_cp, rotmats_cp, V_cp).optimize(
+            target_coverage=0.95, max_viewpoints=n_candidates
+        )
+
+        assert cpu.num_viewpoints == gpu.num_viewpoints
+        assert cpu.total_coverage == pytest.approx(gpu.total_coverage)
+        np.testing.assert_array_equal(cpu.selected_indices, gpu.selected_indices)

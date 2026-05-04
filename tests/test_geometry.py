@@ -76,5 +76,7 @@ class TestViewpointsToRobotWaypoints:
         result = cp.asnumpy(viewpoints_to_robot_waypoints(positions, rotmats, {0, 2}))
         np.testing.assert_allclose(result[0], [1.0, 2.0, 3.0])
         np.testing.assert_allclose(result[2], [7.0, 8.0, 9.0])
-        # Index 1 is not a home -> offset applied
-        assert result[1, 0] != pytest.approx(4.0)
+        # Index 1 is not a home -> identity rotation, forward = +x, up = +z
+        assert result[1, 0] == pytest.approx(4.0 - CAMERA_OFFSET_FORWARD, abs=1e-5)
+        assert result[1, 1] == pytest.approx(5.0, abs=1e-5)
+        assert result[1, 2] == pytest.approx(6.0 - CAMERA_OFFSET_UP, abs=1e-5)

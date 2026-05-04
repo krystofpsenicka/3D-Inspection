@@ -27,15 +27,24 @@ def _open_grid(shape=(10, 10, 10), resolution=1.0) -> OccupancyGrid:
     )
 
 
+_SUBPROCESS_TOKENS = ("subprocess", "cuda", "rapids", "cugraph", "cudf")
+
+
 def _try_compute(og, waypoints) -> cp.ndarray | None:
-    """Run compute_distance_matrix; return None if subprocess setup fails."""
+    """Run compute_distance_matrix; skip cleanly only on subprocess/RAPIDS setup failures.
+
+    Other RuntimeErrors (e.g. real bugs in the production code) propagate so
+    the test fails. We only skip when the exception message clearly points
+    to the cuGraph subprocess being unavailable.
+    """
     try:
         return compute_distance_matrix(og, waypoints)
-    except (RuntimeError, OSError, BrokenPipeError) as exc:
+    except (BrokenPipeError, OSError) as exc:
+        # Pipe / fork failures are environmental, not production-code bugs.
         pytest.skip(f"cuGraph subprocess unavailable: {exc}")
-    except Exception as exc:  # noqa: BLE001 - mirror behavior of test_vrp.py
+    except RuntimeError as exc:
         msg = str(exc).lower()
-        if "subprocess" in msg or "cuda" in msg or "rapids" in msg:
+        if any(tok in msg for tok in _SUBPROCESS_TOKENS):
             pytest.skip(f"cuGraph subprocess unavailable: {exc}")
         raise
 
@@ -94,6 +103,30 @@ class TestDistanceMatrixCorrectness:
         # Allow 5% slack -- 26-neighbor SSSP will use diagonal hops near the
         # gap but the bulk of the path is still axis-aligned.
         assert D[0, 1] == pytest.approx(9.0, rel=0.05)
+
+    def test_blocked_corridor_is_unreachable(self):
+        """Pin the gap as the only path: with NO gap in the wall, distance
+        between waypoints on opposite sides must be infinite (cuGraph SSSP
+        encodes unreachable as inf).
+
+        This is the complement of test_matches_known_corridor_distance --
+        without it, the production code could route around the wall via
+        some unintended path and the corridor test would still pass with
+        ~5% slack."""
+        grid = cp.zeros((10, 10, 10), dtype=cp.bool_)
+        grid[5, :, :] = True  # solid wall, no gap
+        sealed = OccupancyGrid(grid=grid, origin=cp.zeros(3), resolution=1.0)
+        waypoints = cp.array(
+            [[0.5, 5.5, 5.5], [9.5, 5.5, 5.5]],
+            dtype=cp.float64,
+        )
+        D = cp.asnumpy(_try_compute(sealed, waypoints))
+        # cuGraph encodes unreachable as float32 max (~3.4e38), not np.inf.
+        # Either is fine; just assert the distance is impossibly large for
+        # a 10x10x10 grid (whose maximum finite path length is < 50).
+        assert D[0, 1] > 1e6, (
+            f"Sealed corridor should be unreachable, got D[0,1]={D[0, 1]}"
+        )
 
 
 class TestDistanceMatrixErrorHandling:

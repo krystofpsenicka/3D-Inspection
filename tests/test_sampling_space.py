@@ -142,3 +142,95 @@ class TestSamplingSpaceFiltering:
             max_dist=20.0,
         )
         assert len(positions) == 0
+
+
+def _surface_with_varying_curvature():
+    """A target cloud where points near x>0 have varying normals (high
+    local curvature) while points near x<0 share a single normal (~zero
+    curvature). Returns (targets, normals) on GPU."""
+    n_per_side = 50
+    rng = np.random.RandomState(42)
+    flat_pts = np.stack(
+        [
+            rng.uniform(-3.0, -0.5, n_per_side),
+            rng.uniform(-2.0, 2.0, n_per_side),
+            rng.uniform(-2.0, 2.0, n_per_side),
+        ],
+        axis=1,
+    )
+    flat_normals = np.tile([1.0, 0.0, 0.0], (n_per_side, 1))
+
+    curved_pts = np.stack(
+        [
+            rng.uniform(0.5, 3.0, n_per_side),
+            rng.uniform(-2.0, 2.0, n_per_side),
+            rng.uniform(-2.0, 2.0, n_per_side),
+        ],
+        axis=1,
+    )
+    curved_normals = rng.randn(n_per_side, 3)
+    curved_normals /= np.linalg.norm(curved_normals, axis=1, keepdims=True)
+
+    targets = cp.asarray(np.vstack([flat_pts, curved_pts]), dtype=cp.float32)
+    normals = cp.asarray(np.vstack([flat_normals, curved_normals]), dtype=cp.float32)
+    return targets, normals
+
+
+class TestSamplingSpaceCurvatureWeighting:
+    """Branches that the default-args tests skip: curvature_weighting=True
+    and explicit position_weight."""
+
+    def _common_kwargs(self):
+        og = _open_og(shape=(8, 8, 8), resolution=1.0)
+        sdf = _make_layered_sdf((8, 8, 8), [1.0] * 8)  # uniform feasible SDF
+        return og, sdf
+
+    def test_position_weight_zero_matches_no_weighting(self):
+        """position_weight=0 makes the curvature term vanish: weights must
+        equal those from curvature_weighting=False."""
+        og, sdf = self._common_kwargs()
+        targets, normals = _surface_with_varying_curvature()
+
+        _, w_off, _ = build_sampling_space(
+            og, sdf, targets, normals,
+            free_space_resolution=2.0, side=Side.OUTSIDE,
+            min_dist=0.0, max_dist=10.0,
+            curvature_weighting=False,
+        )
+        _, w_zero, _ = build_sampling_space(
+            og, sdf, targets, normals,
+            free_space_resolution=2.0, side=Side.OUTSIDE,
+            min_dist=0.0, max_dist=10.0,
+            curvature_weighting=True,
+            position_weight=0.0,
+        )
+        np.testing.assert_allclose(cp.asnumpy(w_off), cp.asnumpy(w_zero), atol=1e-6)
+
+    def test_curvature_weighting_changes_distribution(self):
+        """Non-zero position_weight + non-uniform curvature must shift the
+        weight distribution away from uniform (vs. the no-weighting baseline)."""
+        og, sdf = self._common_kwargs()
+        targets, normals = _surface_with_varying_curvature()
+
+        _, w_off, _ = build_sampling_space(
+            og, sdf, targets, normals,
+            free_space_resolution=2.0, side=Side.OUTSIDE,
+            min_dist=0.0, max_dist=10.0,
+            curvature_weighting=False,
+        )
+        _, w_on, _ = build_sampling_space(
+            og, sdf, targets, normals,
+            free_space_resolution=2.0, side=Side.OUTSIDE,
+            min_dist=0.0, max_dist=10.0,
+            curvature_weighting=True,
+            position_weight=2.0,
+        )
+
+        # Both must still be probability distributions
+        assert float(cp.asnumpy(w_on).sum()) == pytest.approx(1.0, abs=1e-5)
+        # And they must differ noticeably -- if they're equal, the curvature
+        # branch is a silent no-op.
+        diff = float(cp.max(cp.abs(w_on - w_off)))
+        assert diff > 1e-4, (
+            f"curvature weighting did not change weights (max diff {diff:.2e})"
+        )

@@ -20,17 +20,6 @@ export OptiX_INSTALL_DIR=/home/troja_robot_lab/NVIDIA-OptiX-SDK-8.0.0  # default
 
 ## Setup
 
-### Option A — Quick setup (recommended)
-
-Reuses the existing `isaaclab` conda environment's torch and IsaacSim installation via symlinks, avoiding a ~14 GB re-download:
-
-```bash
-git clone <repo-url>
-cd 3D-Inspection
-bash scripts/setup_env.sh
-conda activate inspection
-```
-
 ### Option B — Fresh setup (no existing IsaacSim)
 
 ```bash
@@ -74,22 +63,6 @@ python VRP/scripts/run_vrp.py --num_robots 2 --random_waypoints 5 --solver highs
 
 # Tests
 python -m pytest tests/ -v
-```
-
----
-
-## Optional: Restore the `isaaclab` environment
-
-After creating the `inspection` env, you can remove the RAPIDS and cuRobo packages that were installed in `isaaclab` to free up space and restore it to its original state:
-
-```bash
-conda activate isaaclab
-pip uninstall -y \
-    cugraph-cu12 libcugraph-cu12 pylibcugraph-cu12 dask-cuda dask-cudf-cu12 \
-    cuopt-cu12 \
-    cudf-cu12 libcudf-cu12 \
-    cupy-cuda12x \
-    curobo nvidia-curobo 2>/dev/null || true
 ```
 
 ---

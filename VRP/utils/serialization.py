@@ -7,6 +7,8 @@ import os
 
 import numpy as np
 
+from VRP.core.types import ExecutionResult
+
 
 def save_solution(result: ExecutionResult, path: str) -> None:  # noqa: F821
     """Save an ExecutionResult to NPZ + JSON."""

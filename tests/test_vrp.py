@@ -255,36 +255,46 @@ ALL_CPU_SOLVERS = ["mip_cpu", "mip_gpu"]
 class TestSolverOptimality:
     """Verify solvers find solutions within tolerance of brute-force optimal."""
 
-    # ── Eilon 7-node, makespan ────────────────────────────────────────
-
+    # ── Brute-force-optimal small instances (single-depot + multi-depot) ──
+    #
+    # All three of (small + alpha=1, small + alpha=0, multi-depot + alpha=1)
+    # share the same shape: build instance -> brute-force optimum on the
+    # relevant objective -> solve -> assert solver result is within MIP_GAP.
+    #
+    # ``objective`` is the field on ``VRPResult`` to compare; brute force
+    # returns (total, makespan) so we index accordingly.
+    @pytest.mark.parametrize(
+        "instance_name,alpha,objective",
+        [
+            ("small", 1.0, "makespan"),
+            ("small", 0.0, "total_cost"),
+            ("multi_depot", 1.0, "makespan"),
+        ],
+        ids=["small-makespan", "small-total_cost", "multi_depot-makespan"],
+    )
     @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
-    def test_small_instance_makespan(self, solver_name):
-        dm = _small_dist_matrix()
-        _, bf_makespan = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
+    def test_solver_within_mip_gap_of_brute_force(
+        self, solver_name, instance_name, alpha, objective
+    ):
+        if instance_name == "small":
+            dm = _small_dist_matrix()
+            depots = [0, 0]
+        elif instance_name == "multi_depot":
+            dm, depots = _multi_depot_line()
+        else:
+            raise AssertionError(f"unknown instance {instance_name}")
 
-        solver, alpha = _make_solver(solver_name, alpha=1.0)
-        result = solver.solve(dm, num_vehicles=2, depots=[0, 0], alpha=alpha)
+        bf_total, bf_makespan = brute_force_vrp(dm, 2, depots, max_stops_per_vehicle=4)
+        bf_value = bf_makespan if objective == "makespan" else bf_total
+
+        solver, _ = _make_solver(solver_name, alpha=alpha)
+        result = solver.solve(dm, num_vehicles=2, depots=depots, alpha=alpha)
         _skip_on_subprocess_error(result, solver_name)
         tol = MIP_GAP + 0.01  # MIP gap + small numerical margin
-        assert result.makespan <= bf_makespan * (1 + tol), (
-            f"{solver_name}: makespan={result.makespan:.2f} > "
-            f"brute_force={bf_makespan:.2f} * {1 + tol:.2f}"
-        )
-
-    # ── Small instance, total distance (alpha=0) ──────────────────────
-
-    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
-    def test_small_instance_total_distance(self, solver_name):
-        dm = _small_dist_matrix()
-        bf_total, _ = brute_force_vrp(dm, 2, [0, 0], max_stops_per_vehicle=4)
-
-        solver, alpha = _make_solver(solver_name, alpha=0.0)
-        result = solver.solve(dm, num_vehicles=2, depots=[0, 0], alpha=alpha)
-        _skip_on_subprocess_error(result, solver_name)
-        tol = MIP_GAP + 0.01
-        assert result.total_cost <= bf_total * (1 + tol), (
-            f"{solver_name}: total_cost={result.total_cost:.2f} > "
-            f"brute_force={bf_total:.2f} * {1 + tol:.2f}"
+        actual = getattr(result, objective)
+        assert actual <= bf_value * (1 + tol), (
+            f"{solver_name} on {instance_name} ({objective}): "
+            f"got {actual:.2f}, brute_force={bf_value:.2f} * {1 + tol:.2f}"
         )
 
     # ── Mid-size, structurally known optimum ─────────────────────────
@@ -302,22 +312,6 @@ class TestSolverOptimality:
         tol = MIP_GAP + 0.01
         assert result.makespan <= optimal_makespan * (1 + tol), (
             f"makespan={result.makespan:.2f} > optimal={optimal_makespan:.2f}"
-        )
-
-    # ── Multi-depot, makespan ────────────────────────────────────────
-
-    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
-    def test_multi_depot_makespan(self, solver_name):
-        dm, depots = _multi_depot_line()
-        _, bf_makespan = brute_force_vrp(dm, 2, depots, max_stops_per_vehicle=4)
-
-        solver, alpha = _make_solver(solver_name, alpha=1.0)
-        result = solver.solve(dm, num_vehicles=2, depots=depots, alpha=alpha)
-        _skip_on_subprocess_error(result, solver_name)
-        tol = MIP_GAP + 0.01
-        assert result.makespan <= bf_makespan * (1 + tol), (
-            f"{solver_name}: makespan={result.makespan:.2f} > "
-            f"brute_force={bf_makespan:.2f} * {1 + tol:.2f}"
         )
 
 
@@ -531,339 +525,9 @@ class TestNearestNeighborWarmstart:
             assert 0 not in r and 1 not in r
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 8. TestReservationTable  --  Collision avoidance core
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestReservationTable:
-    def _make_table(self, shape=(10, 10, 10), T=20, radius=0.0):
-        from VRP.mapf.reservation_table import ReservationTable
-
-        return ReservationTable(shape, T, robot_collision_radius=radius)
-
-    def test_commit_and_query(self):
-        rt = self._make_table()
-        positions = cp.array([[3, 4, 5], [3, 5, 5]], dtype=cp.intp)
-        times = cp.array([0, 1], dtype=cp.intp)
-        rt.commit_trajectory(positions, times)
-
-        assert rt.is_reserved(3, 4, 5, 0) is True
-        assert rt.is_reserved(3, 5, 5, 1) is True
-        assert rt.is_reserved(3, 4, 5, 1) is False  # different time
-        assert rt.is_reserved(0, 0, 0, 0) is False  # uncommitted cell
-
-    def test_sphere_inflation(self):
-        """Sphere with radius=1.75 covers all 27 cells in the 3x3x3 cube."""
-        rt = self._make_table(shape=(10, 10, 10), T=10, radius=1.75)
-        positions = cp.array([[5, 5, 5]], dtype=cp.intp)
-        times = cp.array([3], dtype=cp.intp)
-        rt.commit_trajectory(positions, times)
-
-        # All 27 cells in the 3x3x3 cube should be reserved
-        # (corner distance = sqrt(3) ~ 1.73 < 1.75)
-        count = 0
-        for dx in range(-1, 2):
-            for dy in range(-1, 2):
-                for dz in range(-1, 2):
-                    if rt.is_reserved(5 + dx, 5 + dy, 5 + dz, 3):
-                        count += 1
-        assert count == 27, f"Expected 27 reserved cells, got {count}"
-
-        # Outside the sphere should be free
-        assert rt.is_reserved(5, 5, 5, 4) is False  # different time
-        assert rt.is_reserved(3, 5, 5, 3) is False  # outside sphere
-
-    def test_boundary_no_crash(self):
-        """Commit near grid boundary with inflation doesn't crash."""
-        rt = self._make_table(shape=(5, 5, 5), T=5, radius=2.5)
-        # Point at corner: (0, 0, 0)  --  sphere extends outside grid
-        positions = cp.array([[0, 0, 0]], dtype=cp.intp)
-        times = cp.array([0], dtype=cp.intp)
-        rt.commit_trajectory(positions, times)  # should not crash
-        assert rt.is_reserved(0, 0, 0, 0) is True
-
-    def test_time_beyond_horizon(self):
-        """is_reserved(x,y,z, t>=T) returns False."""
-        rt = self._make_table(T=10)
-        positions = cp.array([[5, 5, 5]], dtype=cp.intp)
-        times = cp.array([5], dtype=cp.intp)
-        rt.commit_trajectory(positions, times)
-
-        assert rt.is_reserved(5, 5, 5, 5) is True
-        assert rt.is_reserved(5, 5, 5, 10) is False  # at horizon
-        assert rt.is_reserved(5, 5, 5, 100) is False  # way beyond
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 9. TestSpaceTimeAStar  --  Pathfinding
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestSpaceTimeAStar:
-    def _make_og_and_table(self, shape=(20, 20, 20), T=100):
-        from shared.occupancy_grid import OccupancyGrid
-        from VRP.mapf.reservation_table import ReservationTable
-
-        grid = cp.zeros(shape, dtype=cp.bool_)
-        og = OccupancyGrid(grid=grid, origin=cp.zeros(3, dtype=cp.float64), resolution=1.0)
-        rt = ReservationTable(shape, T, robot_collision_radius=0.0)
-        return og, rt
-
-    def test_open_grid_finds_path(self):
-        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-
-        og, rt = self._make_og_and_table()
-        start = cp.array([2, 2, 2], dtype=cp.intp)
-        goal = cp.array([15, 15, 15], dtype=cp.intp)
-
-        result = space_time_astar(og, start, goal, 0, rt)
-        assert result is not None, "A* failed to return a path on an open grid"
-        path_ijk, path_t = result
-        assert len(path_ijk) >= 2
-        np.testing.assert_array_equal(path_ijk[0].get(), start.get())
-        np.testing.assert_array_equal(path_ijk[-1].get(), goal.get())
-
-    def test_navigates_around_wall(self):
-        """A* finds a path through a gap in a wall."""
-        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-
-        og, rt = self._make_og_and_table()
-        # Build a wall at x=10 for all y except y=10
-        for y in range(20):
-            if y != 10:
-                og.grid[10, y, :] = True
-
-        start = cp.array([5, 5, 5], dtype=cp.intp)
-        goal = cp.array([15, 5, 5], dtype=cp.intp)
-
-        result = space_time_astar(og, start, goal, 0, rt)
-        assert result is not None, "A* failed to find a path through the wall gap"
-        path_ijk, _ = result
-        np.testing.assert_array_equal(path_ijk[-1].get(), goal.get())
-
-    def test_blocked_goal_returns_none(self):
-        """Occupied goal -> None."""
-        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-
-        og, rt = self._make_og_and_table()
-        og.grid[15, 15, 15] = True
-
-        start = cp.array([2, 2, 2], dtype=cp.intp)
-        goal = cp.array([15, 15, 15], dtype=cp.intp)
-
-        result = space_time_astar(og, start, goal, 0, rt)
-        assert result is None
-
-    def test_avoids_reserved_cells(self):
-        """A* detours around time-reserved cells."""
-        from shared.occupancy_grid import OccupancyGrid
-        from VRP.mapf.reservation_table import ReservationTable
-        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-
-        grid = cp.zeros((10, 10, 1), dtype=cp.bool_)
-        og = OccupancyGrid(grid=grid, origin=cp.zeros(3, dtype=cp.float64), resolution=1.0)
-        rt = ReservationTable((10, 10, 1), 50, robot_collision_radius=0.0)
-
-        start = cp.array([0, 5, 0], dtype=cp.intp)
-        goal = cp.array([9, 5, 0], dtype=cp.intp)
-
-        # Reserve the direct path at the times A* would traverse it
-        for x in range(1, 9):
-            positions = cp.array([[x, 5, 0]], dtype=cp.intp)
-            times = cp.array([x], dtype=cp.intp)
-            rt.commit_trajectory(positions, times)
-
-        result = space_time_astar(og, start, goal, 0, rt)
-        assert result is not None
-        path_ijk, path_t = result
-        path_ijk_np = path_ijk.get()
-        path_t_np = path_t.get()
-        np.testing.assert_array_equal(path_ijk_np[-1], goal.get())
-
-        # Verify no path cell collides with reservations
-        for i in range(len(path_ijk_np)):
-            assert (
-                not rt.is_reserved(
-                    int(path_ijk_np[i, 0]),
-                    int(path_ijk_np[i, 1]),
-                    int(path_ijk_np[i, 2]),
-                    int(path_t_np[i]),
-                )
-                or i == 0
-            )  # start position at t=0 is not reserved
-
-    def test_same_start_goal(self):
-        """Returns single-point path when start == goal."""
-        from VRP.mapf.space_time_search import space_time_astar_gpu as space_time_astar
-
-        og, rt = self._make_og_and_table()
-        point = cp.array([5, 5, 5], dtype=cp.intp)
-
-        result = space_time_astar(og, point, point, 0, rt)
-        assert result is not None, "A* failed when start == goal"
-        path_ijk, path_t = result
-        assert len(path_ijk) == 1
-        np.testing.assert_array_equal(path_ijk[0].get(), point.get())
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 10. TestCoordinateTransforms
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestCoordinateTransforms:
-    def test_round_trip(self):
-        """world -> voxel -> world is within res/2 per axis."""
-        from shared.occupancy_grid import OccupancyGrid
-
-        res = 0.5
-        og = OccupancyGrid(
-            grid=cp.zeros((100, 100, 100), dtype=cp.bool_),
-            origin=cp.array([0.0, 0.0, 0.0], dtype=cp.float64),
-            resolution=res,
-        )
-        xyz = cp.array([[1.3, 2.7, 0.4]], dtype=cp.float64)
-
-        ijk = og.world_to_voxel(xyz)
-        recovered = og.voxel_to_world(ijk).get()[0]
-
-        diff = np.abs(recovered - xyz.get()[0])
-        assert np.all(diff <= res), f"Round-trip error too large: diff={diff}, max allowed={res}"
-
-    def test_known_values(self):
-        """(1.0, 2.0, 3.0) at res=0.5 -> voxel (2, 4, 6) -> world (1.25, 2.25, 3.25)."""
-        from shared.occupancy_grid import OccupancyGrid
-
-        res = 0.5
-        og = OccupancyGrid(
-            grid=cp.zeros((100, 100, 100), dtype=cp.bool_),
-            origin=cp.array([0.0, 0.0, 0.0], dtype=cp.float64),
-            resolution=res,
-        )
-        xyz = cp.array([[1.0, 2.0, 3.0]], dtype=cp.float64)
-
-        ijk = og.world_to_voxel(xyz)
-        np.testing.assert_array_equal(ijk.get()[0], [2, 4, 6])
-
-        world = og.voxel_to_world(ijk)
-        np.testing.assert_allclose(world.get()[0], [1.25, 2.25, 3.25])
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 11. TestHelperFunctions
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestHelperFunctions:
-    def test_cost_uses_forward_direction(self):
-        """Asymmetric matrix: cost(0->1->2->0) uses d[0,1]+d[1,2]+d[2,0]."""
-        dm = cp.array(
-            [
-                [0, 1, 99],
-                [99, 0, 2],
-                [3, 99, 0],
-            ],
-            dtype=cp.float64,
-        )
-        cost = _compute_route_cost([[1, 2]], dm, depots=[0])
-        # 0->1 + 1->2 + 2->0 = 1 + 2 + 3 = 6
-        assert abs(cost - 6.0) < 1e-6
-
-    def test_per_vehicle_costs_multi_depot(self):
-        """Each vehicle's cost computed from its own depot."""
-        dm = cp.array(
-            [
-                [0, 10, 20, 30],
-                [10, 0, 15, 25],
-                [20, 15, 0, 5],
-                [30, 25, 5, 0],
-            ],
-            dtype=cp.float64,
-        )
-        # Vehicle 0: depots=0, route=[2] -> 0->2->0 = 20+20 = 40
-        # Vehicle 1: depots=1, route=[3] -> 1->3->1 = 25+25 = 50
-        per_v = _per_vehicle_costs([[2], [3]], dm, depots=[0, 1])
-        assert abs(per_v[0] - 40.0) < 1e-6
-        assert abs(per_v[1] - 50.0) < 1e-6
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 11. TestTrajectoryCollisions  --  GPU-vectorized AABB collision detection
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestTrajectoryCollisions:
-    def test_no_collision_parallel_paths(self):
-        """Two robots moving in parallel far apart produce no collisions."""
-        from VRP.utils.collision import find_trajectory_collisions
-
-        T = 50
-        traj_a = cp.array([[0.0, 0.0, float(t) * 0.1] for t in range(T)], dtype=cp.float32)
-        traj_b = cp.array([[5.0, 5.0, float(t) * 0.1] for t in range(T)], dtype=cp.float32)
-        collisions = find_trajectory_collisions([traj_a, traj_b])
-        assert collisions == []
-
-    def test_head_on_collision_detected(self):
-        """Two robots crossing the same point detect overlap."""
-        from VRP.utils.collision import find_trajectory_collisions
-
-        T = 20
-        # Robot A moves along +X, Robot B moves along -X; they cross at x=0
-        traj_a = cp.array([[float(t) - 10.0, 0.0, 0.0] for t in range(T)], dtype=cp.float32)
-        traj_b = cp.array([[10.0 - float(t), 0.0, 0.0] for t in range(T)], dtype=cp.float32)
-        collisions = find_trajectory_collisions([traj_a, traj_b])
-        assert len(collisions) > 0
-        # Verify tuple format: (step, robot_a, robot_b, penetration)
-        for _step, ra, rb, pen in collisions:
-            assert ra == 0 and rb == 1
-            assert pen > 0.0
-
-    def test_padding_shorter_trajectory(self):
-        """Robots with different trajectory lengths are padded correctly."""
-        from VRP.utils.collision import find_trajectory_collisions
-
-        # Robot A: 10 steps far away; Robot B: 5 steps far away
-        traj_a = cp.array([[100.0, 0.0, 0.0]] * 10, dtype=cp.float32)
-        traj_b = cp.array([[-100.0, 0.0, 0.0]] * 5, dtype=cp.float32)
-        collisions = find_trajectory_collisions([traj_a, traj_b])
-        assert collisions == []
-
-    def test_single_robot_no_collision(self):
-        """A single robot cannot collide with itself."""
-        from VRP.utils.collision import find_trajectory_collisions
-
-        traj = cp.array([[0.0, 0.0, float(t)] for t in range(10)], dtype=cp.float32)
-        collisions = find_trajectory_collisions([traj])
-        assert collisions == []
-
-    def test_collision_penetration_sign(self):
-        """Penetration depth = (2*ROBOT_RADIUS - distance), strictly positive on overlap."""
-        from VRP.core.constants import ROBOT_RADIUS
-        from VRP.utils.collision import find_trajectory_collisions
-
-        # Two robots held a fixed distance r = ROBOT_RADIUS apart for T steps
-        # (so 2r overlap = ROBOT_RADIUS).  Pure x-axis separation, no z motion.
-        T = 5
-        r = ROBOT_RADIUS  # (one radius apart in x)
-        traj_a = cp.tile(cp.array([0.0, 0.0, 0.0], dtype=cp.float32), (T, 1))
-        traj_b = cp.tile(cp.array([r, 0.0, 0.0], dtype=cp.float32), (T, 1))
-        collisions = find_trajectory_collisions([traj_a, traj_b])
-        assert len(collisions) == T  # one collision per step
-        for _step, ra, rb, pen in collisions:
-            assert ra == 0 and rb == 1
-            # Expected penetration = 2*ROBOT_RADIUS - r = ROBOT_RADIUS
-            assert pen == pytest.approx(ROBOT_RADIUS, abs=1e-4)
-
-    def test_collision_pair_uniqueness(self):
-        """3 robots overlapping at one step -> exactly 3 unique pairs (a<b)."""
-        from VRP.utils.collision import find_trajectory_collisions
-
-        # 3 robots all at the origin for one step, then far apart
-        traj_a = cp.array([[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]], dtype=cp.float32)
-        traj_b = cp.array([[0.0, 0.0, 0.0], [200.0, 0.0, 0.0]], dtype=cp.float32)
-        traj_c = cp.array([[0.0, 0.0, 0.0], [300.0, 0.0, 0.0]], dtype=cp.float32)
-        collisions = find_trajectory_collisions([traj_a, traj_b, traj_c])
-        # Step 0 collisions only, 3 unique pairs: (0,1) (0,2) (1,2)
-        pairs = {(ra, rb) for _step, ra, rb, _pen in collisions}
-        assert pairs == {(0, 1), (0, 2), (1, 2)}
+# NOTE: Tests for ReservationTable, SpaceTimeAStar, coordinate transforms,
+# route-cost helpers, and TrajectoryCollisions live in their own files:
+#   - tests/test_reservation_table.py
+#   - tests/test_space_time_astar.py
+#   - tests/test_vrp_helpers.py
+#   - tests/test_trajectory_collisions.py

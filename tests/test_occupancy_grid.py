@@ -34,6 +34,30 @@ class TestFreeOccupied:
         total = int(np.prod(og.grid.shape))
         assert og.num_free + og.num_occupied == total
 
+    def test_is_valid_voxel_in_bounds(self, og):
+        assert og.is_valid_voxel(cp.array([0, 0, 0]))
+        assert og.is_valid_voxel(cp.array([19, 19, 19]))
+
+    def test_is_valid_voxel_out_of_bounds(self, og):
+        # Negative and beyond-shape indices must be rejected
+        assert not og.is_valid_voxel(cp.array([-1, 0, 0]))
+        assert not og.is_valid_voxel(cp.array([20, 0, 0]))
+        assert not og.is_valid_voxel(cp.array([0, 0, 25]))
+
+    def test_is_free_world_returns_false_for_oob(self, og):
+        # World point well outside the grid (origin=0, resolution=0.5, shape=20 -> max=10m)
+        far_outside = cp.array([100.0, 0.0, 0.0])
+        assert not og.is_free_world(far_outside)
+
+    def test_is_free_world_batch_mixed_inside_outside_occupied(self, og):
+        # voxel (0,0,0) free, voxel (10,10,10) occupied, far point out of bounds
+        free_corner = og.voxel_to_world(cp.array([0, 0, 0]))
+        occupied = og.voxel_to_world(cp.array([10, 10, 10]))
+        oob = cp.array([100.0, 100.0, 100.0])
+        pts = cp.stack([free_corner, occupied, oob])
+        result = cp.asnumpy(og.is_free_world_batch(pts))
+        assert result.tolist() == [True, False, False]
+
 
 # ── Flat index ─────────────────────────────────────────────────────────────
 
@@ -51,8 +75,11 @@ class TestFlatIndex:
 
 class TestSaveLoad:
     def test_npz_round_trip(self, og, tmp_path):
-        path = str(tmp_path / "test_og.pkl")
+        path = str(tmp_path / "test_og.npz")
         og.save(path)
+        # save() strips the extension and writes <stem>.npz + <stem>.json
+        assert (tmp_path / "test_og.npz").exists()
+        assert (tmp_path / "test_og.json").exists()
         loaded = OccupancyGrid.load(path)
         assert cp.array_equal(loaded.grid, og.grid)
         assert cp.allclose(loaded.origin, og.origin)

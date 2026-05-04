@@ -12,6 +12,7 @@ import pytest
 
 cp = pytest.importorskip("cupy")
 
+from shared.occupancy_grid import OccupancyGrid
 from VRP.mapf.reservation_table import ReservationTable
 from VRP.mapf.route_planner import plan_robot_route_st
 
@@ -59,3 +60,54 @@ class TestPlanRobotRoute:
 
         # The schedule must contain a dwell window for each non-start route node
         assert len(wp_schedule) == len(route) - 1
+
+        # Schedule must visit waypoints in route order. Each entry is
+        # (t_dwell_start, t_dwell_end, node_idx).
+        scheduled_nodes = [entry[2] for entry in wp_schedule]
+        assert scheduled_nodes == route[1:], (
+            f"waypoint schedule order {scheduled_nodes} != route[1:] {route[1:]}"
+        )
+
+        # Dwell windows must be non-empty and monotonically increasing in time
+        prev_end = -1
+        for t_start, t_end, _ in wp_schedule:
+            assert t_start > prev_end
+            assert t_end >= t_start
+            prev_end = t_end
+
+    def test_unreachable_goal_returns_empty_or_short_trajectory(self):
+        """A sealed-wall grid with waypoints on opposite sides should not
+        produce a trajectory that crosses the wall. The planner must either
+        return an empty trajectory or stop at the wall -- it must not silently
+        teleport the robot through the obstacle.
+        """
+        grid = cp.zeros((10, 10, 10), dtype=cp.bool_)
+        grid[5, :, :] = True  # solid wall, no gap
+        sealed = OccupancyGrid(grid=grid, origin=cp.zeros(3), resolution=1.0)
+
+        waypoint_positions = cp.array(
+            [[0.5, 5.5, 5.5], [9.5, 5.5, 5.5]],
+            dtype=cp.float64,
+        )
+        route = [0, 1]
+        reservation = ReservationTable(
+            sealed.shape, max_time_steps=200, robot_collision_radius=0.0
+        )
+
+        world_xyz, _t, _sched, _stats = plan_robot_route_st(
+            sealed,
+            reservation,
+            route,
+            waypoint_positions,
+            dwell_s=1.0,
+            fine_occupancy_grid=None,
+            robot_radius=0.0,
+        )
+
+        # Whatever the planner returns, NO sample may be inside the wall.
+        if len(world_xyz) > 0:
+            free_mask = sealed.is_free_world_batch(world_xyz)
+            n_collisions = int(cp.sum(~free_mask))
+            assert n_collisions == 0, (
+                f"sealed-grid planner produced {n_collisions} samples inside the wall"
+            )

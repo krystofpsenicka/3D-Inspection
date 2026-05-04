@@ -67,3 +67,31 @@ class TestSimplifyPathOmpl:
         )
         np.testing.assert_allclose(smoothed[0], cp.asnumpy(coarse[0]), atol=1e-3)
         np.testing.assert_allclose(smoothed[-1], cp.asnumpy(coarse[-1]), atol=1e-3)
+
+    def test_smoothed_path_not_longer_than_input(self, corridor_og):
+        """OMPL shortcutPath + smoothBSpline must not lengthen the path.
+
+        A no-op smoother would also pass collision-free + endpoints-unchanged
+        tests. This invariant catches a smoother that injects extra detour
+        waypoints or returns the input unchanged when it could shortcut.
+        """
+        coarse = cp.array(
+            [
+                [0.5, 5.5, 5.5],
+                [4.5, 5.5, 5.5],
+                [5.5, 5.5, 5.5],
+                [9.5, 5.5, 5.5],
+            ],
+            dtype=cp.float64,
+        )
+        coarse_np = cp.asnumpy(coarse)
+        coarse_len = float(np.sum(np.linalg.norm(np.diff(coarse_np, axis=0), axis=1)))
+
+        smoothed = cp.asnumpy(
+            simplify_path_ompl(coarse, corridor_og, robot_radius=0.1, max_time=0.5)
+        )
+        smoothed_len = float(np.sum(np.linalg.norm(np.diff(smoothed, axis=0), axis=1)))
+        # Allow tiny slack for B-spline rounding around the gap
+        assert smoothed_len <= coarse_len + 1e-3, (
+            f"smoothed length {smoothed_len:.4f} exceeds coarse length {coarse_len:.4f}"
+        )

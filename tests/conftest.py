@@ -6,6 +6,18 @@ import pytest
 
 from shared.occupancy_grid import OccupancyGrid
 
+# Shared tolerances.
+ATOL_F32 = 1e-6  # float32 has ~7-digit precision; 1e-7 is below eps after a few ops
+ATOL_F64 = 1e-9
+RTOL_PATH = 0.05
+
+
+@pytest.fixture(autouse=True)
+def _seed_cupy_rng():
+    """Seed cupy's global RNG before every test so ``cp.random.*`` calls
+    are reproducible across runs."""
+    cp.random.seed(0)
+
 
 @pytest.fixture
 def small_og():
@@ -46,7 +58,7 @@ def rng():
 
 @pytest.fixture
 def cube_mesh():
-    """Unit cube TriangleMesh centered at origin (Open3D legacy mesh)."""
+    """Unit cube TriangleMesh centered at origin."""
     o3d = pytest.importorskip("open3d")
     mesh = o3d.geometry.TriangleMesh.create_box(width=1.0, height=1.0, depth=1.0)
     mesh.translate((-0.5, -0.5, -0.5))
@@ -68,10 +80,19 @@ def flat_target_cloud():
 
 @pytest.fixture
 def random_visibility_matrix():
-    """Factory: build a deterministic random (N, M) bool visibility matrix."""
+    """Factory: build a deterministic random (N, M) bool visibility matrix.
 
-    def _make(n_candidates: int, n_points: int, density: float = 0.15) -> np.ndarray:
-        local_rng = np.random.RandomState(42)
+    Each call uses its own RandomState so different calls within a test
+    produce different matrices.
+    """
+
+    def _make(
+        n_candidates: int,
+        n_points: int,
+        density: float = 0.15,
+        seed: int = 42,
+    ) -> np.ndarray:
+        local_rng = np.random.RandomState(seed)
         return local_rng.random((n_candidates, n_points)) < density
 
     return _make

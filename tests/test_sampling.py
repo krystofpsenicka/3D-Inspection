@@ -69,7 +69,8 @@ class TestApplyAngularNoise:
         dirs /= cp.linalg.norm(dirs, axis=1, keepdims=True)
 
         rotated = apply_angular_noise(dirs, 0.0)
-        assert cp.allclose(dirs, rotated, atol=1e-7)
+        # float32 unit vectors: 1e-7 is below machine eps after Rodrigues ops
+        assert cp.allclose(dirs, rotated, atol=1e-6)
 
 
 class TestKnnCentroidDirection:
