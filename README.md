@@ -1,5 +1,9 @@
 # 3D Inspection
 
+<p align="center">
+  <img src="models/isaac_duke.png" alt="Isaac Sim replay of multi-agent 3D inspection of the Duke of Lancaster wreck" width="100%">
+</p>
+
 GPU-accelerated 3D inspection path planning: visibility, VRP, space-time multi-agent path-finding, Isaac Sim simulation.
 
 Full pipeline: [`scripts/run_full_pipeline.py`](scripts/run_full_pipeline.py); replay: [`scripts/visualize_full_pipeline.py`](scripts/visualize_full_pipeline.py). Module reference, configuration, CLI flags: [`docs.md`](docs.md).
