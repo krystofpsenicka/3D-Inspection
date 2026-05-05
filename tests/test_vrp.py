@@ -1,13 +1,10 @@
 """Comprehensive VRP module tests.
 
 Tests solver correctness against brute-force optimal on small custom instances,
-structural invariants, edge cases, and routing components (ReservationTable,
-Space-Time A*, coordinate transforms).
+structural invariants, and edge cases.
 
 Fixtures are hand-built for our actual problem (multi-depot VRP with blended
-``alpha * makespan + (1 - alpha) * total_cost``, no capacity). CVRPLIB / Eilon
-benchmarks are deliberately not used --  they are for capacitated VRP and
-their published optima are not comparable to our relaxation.
+``alpha * makespan + (1 - alpha) * total_cost``, no capacity).
 """
 
 from __future__ import annotations
@@ -243,8 +240,7 @@ def _solver_ids(solvers):
 
 
 # Solver groups
-MAKESPAN_SOLVERS = ["mip_cpu", "mip_gpu"]
-ALL_CPU_SOLVERS = ["mip_cpu", "mip_gpu"]
+ALL_SOLVERS = ["mip_cpu", "mip_gpu"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -272,7 +268,7 @@ class TestSolverOptimality:
         ],
         ids=["small-makespan", "small-total_cost", "multi_depot-makespan"],
     )
-    @pytest.mark.parametrize("solver_name", MAKESPAN_SOLVERS, ids=_solver_ids(MAKESPAN_SOLVERS))
+    @pytest.mark.parametrize("solver_name", ALL_SOLVERS, ids=_solver_ids(ALL_SOLVERS))
     def test_solver_within_mip_gap_of_brute_force(
         self, solver_name, instance_name, alpha, objective
     ):
@@ -323,7 +319,7 @@ class TestSolverOptimality:
 class TestSolverFeasibility:
     """Run MIP solver and verify structural invariants."""
 
-    @pytest.fixture(params=ALL_CPU_SOLVERS, ids=_solver_ids(ALL_CPU_SOLVERS))
+    @pytest.fixture(params=ALL_SOLVERS, ids=_solver_ids(ALL_SOLVERS))
     def solved(self, request):
         solver_name = request.param
         dm = _small_dist_matrix()
@@ -523,11 +519,3 @@ class TestNearestNeighborWarmstart:
         assert visited == {2, 3, 4, 5}
         for r in routes:
             assert 0 not in r and 1 not in r
-
-
-# NOTE: Tests for ReservationTable, SpaceTimeAStar, coordinate transforms,
-# route-cost helpers, and TrajectoryCollisions live in their own files:
-#   - tests/test_reservation_table.py
-#   - tests/test_space_time_astar.py
-#   - tests/test_vrp_helpers.py
-#   - tests/test_trajectory_collisions.py

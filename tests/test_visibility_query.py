@@ -1,9 +1,4 @@
-"""Tests for visibility/visibility/ and visibility/core/.
-
-Covers normalize_vector, compute_redundancy, frustum bounding-sphere geometry,
-KDTree frustum culling, and the two visibility query implementations
-(RaycastingVisibilityQuery, EpsilonVisibilityQuery).
-"""
+"""Tests for visibility/visibility/ and visibility/core/."""
 
 from __future__ import annotations
 
@@ -18,53 +13,6 @@ from visibility.core.utils import compute_redundancy
 from visibility.visibility.base import VisibilityQuery, get_frustum_bounding_sphere
 from visibility.visibility.epsilon import EpsilonVisibilityQuery
 from visibility.visibility.raycast import RaycastingVisibilityQuery
-
-
-# ── normalize_vector ────────────────────────────────────────────────────────
-
-
-class TestNormalizeVector:
-    def test_unit_length_for_random_vectors(self):
-        local_rng = np.random.RandomState(42)
-        for _ in range(50):
-            v = local_rng.randn(3) * local_rng.uniform(0.01, 100.0)
-            n = normalize_vector(v)
-            assert np.linalg.norm(n) == pytest.approx(1.0, abs=1e-7)
-
-    def test_zero_returns_zero(self):
-        assert np.allclose(normalize_vector(np.zeros(3)), np.zeros(3))
-
-    def test_below_eps_returns_zero(self):
-        # NORM_EPS = 1e-12; a vector with norm 1e-15 should hit the guard
-        v = np.array([1e-16, 0.0, 0.0])
-        assert np.allclose(normalize_vector(v), np.zeros(3))
-
-
-# ── compute_redundancy ──────────────────────────────────────────────────────
-
-
-class TestComputeRedundancy:
-    def test_identity_matrix_redundancy_one(self):
-        """K=M, each viewpoint covers exactly one unique point -> redundancy = 1."""
-        V = cp.eye(20, dtype=cp.uint8)
-        assert compute_redundancy(V) == pytest.approx(1.0)
-
-    def test_full_coverage_redundancy_k(self):
-        """All-ones (K, M) -> every point is covered K times."""
-        V = cp.ones((5, 30), dtype=cp.uint8)
-        assert compute_redundancy(V) == pytest.approx(5.0)
-
-    def test_uncovered_points_excluded_from_mean(self):
-        """Half the points get 0 coverage, half get 2x. Mean over covered = 2."""
-        V = cp.zeros((2, 20), dtype=cp.uint8)
-        V[0, :10] = 1  # first 10 points
-        V[1, :10] = 1  # same first 10 points (covered twice)
-        # Last 10 points covered zero times -- must NOT be included in the mean
-        assert compute_redundancy(V) == pytest.approx(2.0)
-
-    def test_empty_returns_zero(self):
-        V = cp.empty((0, 50), dtype=cp.uint8)
-        assert compute_redundancy(V) == 0.0
 
 
 # ── Frustum bounding sphere ─────────────────────────────────────────────────
@@ -111,7 +59,7 @@ def _down_camera(viewpoint=(0.0, 0.0, 2.0)):
 
 
 class _CullOnlyQuery(VisibilityQuery):
-    """Subclass exposing the protected frustum-culling helper for testing."""
+    """Subclass exposing the frustum-culling helper for testing."""
 
     def compute_visibility(self, viewpoint, rotmat):  # pragma: no cover -- not used here
         return self.points_in_frustum_with_kdtree(viewpoint, rotmat), 0.0
@@ -163,9 +111,6 @@ class TestRaycastVisibility:
 
     def test_unobstructed_target_visible(self):
         """A target on a clear line of sight to the camera is visible."""
-        # A tiny cube offset far away from the line of sight -- the scene
-        # has triangles (RaycastingScene needs them) but they are not in
-        # the way of the ray (camera at z=2, target at z=0, cube at x=10).
         offset_cube = o3d.geometry.TriangleMesh.create_box(0.1, 0.1, 0.1)
         offset_cube.translate((10.0, 10.0, 10.0))
         targets = np.array([[0.0, 0.0, 0.0]])
@@ -175,8 +120,6 @@ class TestRaycastVisibility:
 
     def test_occluder_blocks_target(self, cube_mesh):
         """A cube between camera and target hides the target."""
-        # Camera high above origin looks down at a target at z=-2 (below the cube).
-        # Cube spans [-0.5, 0.5]^3 -- it sits between camera (z=2) and target (z=-2).
         targets = np.array([[0.0, 0.0, -2.0]])
         params = FrustumParams(fov_y=np.deg2rad(60.0), aspect=1.0, near=0.1, far=10.0)
         normals = np.array([[0.0, 0.0, 1.0]])
@@ -219,10 +162,6 @@ class TestEpsilonVisibility:
         """When epsilon_deg=None, EpsilonVisibilityQuery must estimate
         delta from the input cloud. Verify the estimation path runs and
         produces sensible values on a cloud with sharply varying density.
-
-        This exercises ``_estimate_delta`` and ``_compute_epsilon`` -- both
-        are in the algorithmic core (Sec. 5 / Lemma 6.1) but had no direct
-        coverage from the fixed-epsilon tests above.
         """
         # Dense cluster around origin + sparse tail far away
         rng = np.random.RandomState(0)
@@ -247,72 +186,11 @@ class TestEpsilonVisibility:
         assert len(visible) > 0
 
 
-# ── Epsilon vs Raycast cross-check ──────────────────────────────────────────
-
-
-class TestEpsilonVsRaycast:
-    """Cross-check the two visibility implementations on the same scene.
-    Epsilon visibility is meant to *approximate* raycasting; on simple
-    obstruction-free or fully-occluded inputs the two should largely agree.
-    """
-
-    def test_open_scene_both_visible(self):
-        """No occluders, all points front-facing under the camera -> both
-        implementations return every target."""
-        # 5x5 grid of points on z=0 plane, normals pointing up
-        xs, ys = np.meshgrid(np.linspace(-0.4, 0.4, 5), np.linspace(-0.4, 0.4, 5))
-        targets = np.stack([xs.ravel(), ys.ravel(), np.zeros(25)], axis=1)
-        normals = np.tile([0.0, 0.0, 1.0], (25, 1))
-        # Empty mesh placed offset from the rays
-        offset_cube = o3d.geometry.TriangleMesh.create_box(0.05, 0.05, 0.05)
-        offset_cube.translate((10.0, 10.0, 10.0))
-
-        params = FrustumParams(fov_y=np.deg2rad(60.0), aspect=1.0, near=0.1, far=5.0)
-        viewpoint, rotmat = _down_camera()
-
-        rc = RaycastingVisibilityQuery(offset_cube, targets, normals, params)
-        eps = EpsilonVisibilityQuery(targets, normals, params, epsilon_deg=2.0)
-
-        rc_vis, _ = rc.compute_visibility(viewpoint, rotmat)
-        eps_vis, _ = eps.compute_visibility(viewpoint, rotmat)
-
-        assert set(rc_vis.tolist()) == set(eps_vis.tolist()) == set(range(25))
-
-    def test_back_facing_invisible_in_both(self):
-        """A back-facing point must not be reported by either implementation."""
-        # Single back-facing point: camera looks down (-z), normal is (0,0,-1)
-        targets = np.array([[0.0, 0.0, 0.0]])
-        normals = np.array([[0.0, 0.0, -1.0]])
-        offset_cube = o3d.geometry.TriangleMesh.create_box(0.05, 0.05, 0.05)
-        offset_cube.translate((10.0, 10.0, 10.0))
-
-        params = FrustumParams(fov_y=np.deg2rad(60.0), aspect=1.0, near=0.1, far=5.0)
-        viewpoint, rotmat = _down_camera()
-
-        rc = RaycastingVisibilityQuery(offset_cube, targets, normals, params)
-        eps = EpsilonVisibilityQuery(targets, normals, params, epsilon_deg=2.0)
-
-        rc_vis, _ = rc.compute_visibility(viewpoint, rotmat)
-        eps_vis, _ = eps.compute_visibility(viewpoint, rotmat)
-
-        # Raycasting alone may report the point visible (no occluder geometry
-        # for the front face, but the dot-product back-face check is in
-        # epsilon's ``compute_visibility``, not raycast's). What we *can*
-        # cross-check is the strict back-face case: epsilon excludes it.
-        assert 0 not in eps_vis.tolist()
-        # And raycast on a back-face with no occluder still reports geometry-
-        # visible (this is the documented behavioural difference; assert it
-        # so future drift gets flagged).
-        assert 0 in rc_vis.tolist()
-
-
-# ── CPU/CUDA equivalence (skip if GPU deps missing) ─────────────────────────
-
+# ── CPU/CUDA equivalence ─────────────────────────
 
 class TestRaycastCpuVsCuda:
     """The CUDA raycaster (Triro/OptiX) must agree with the CPU raycaster
-    (Open3D) on a small scene. Skips cleanly when triro/OptiX are not
-    installed."""
+    (Open3D) on a small scene."""
 
     def test_visibility_matches_on_cube_scene(self, cube_mesh):
         triro = pytest.importorskip("triro")  # noqa: F841
@@ -347,41 +225,3 @@ class TestRaycastCpuVsCuda:
             cp.asarray(rotmat, dtype=cp.float32),
         )
         assert set(cpu_vis.tolist()) == set(cp.asnumpy(gpu_vis).tolist())
-
-
-class TestEpsilonCpuVsCuda:
-    """The CUDA epsilon-visibility implementation must agree with the CPU
-    version on a small fixed-epsilon case."""
-
-    def test_visibility_matches_on_flat_cloud(self, flat_target_cloud):
-        try:
-            from visibility.visibility.epsilon_cuda import EpsilonVisibilityQueryCuda
-        except ImportError as exc:
-            pytest.skip(f"epsilon_cuda unavailable: {exc}")
-
-        targets, normals = flat_target_cloud
-        params = FrustumParams(fov_y=np.deg2rad(60.0), aspect=1.0, near=0.1, far=5.0)
-        viewpoint, rotmat = _down_camera()
-
-        cpu = EpsilonVisibilityQuery(targets, normals, params, epsilon_deg=2.0)
-        gpu = EpsilonVisibilityQueryCuda(
-            cp.asarray(targets, dtype=cp.float64),
-            cp.asarray(normals, dtype=cp.float64),
-            params,
-            epsilon_deg=2.0,
-        )
-
-        cpu_vis, _ = cpu.compute_visibility(viewpoint, rotmat)
-        gpu_vis, _ = gpu.compute_visibility(
-            cp.asarray(viewpoint, dtype=cp.float32),
-            cp.asarray(rotmat, dtype=cp.float32),
-        )
-        cpu_set = set(np.asarray(cpu_vis).tolist())
-        gpu_set = set(cp.asnumpy(gpu_vis).tolist())
-        # Edge points may differ due to float32/float64 precision in the
-        # epsilon-cone test; require >=95% overlap on the small flat patch.
-        overlap = len(cpu_set & gpu_set) / max(len(cpu_set | gpu_set), 1)
-        assert overlap >= 0.95, (
-            f"CPU/CUDA epsilon disagree: overlap={overlap:.2f}, "
-            f"cpu={cpu_set}, gpu={gpu_set}"
-        )

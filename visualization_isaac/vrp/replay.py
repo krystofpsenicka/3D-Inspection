@@ -1,8 +1,8 @@
 """Stage-builder for multi-robot trajectory replay scenes (Isaac Sim).
 
 Extracts reusable scene-building operations from the VRP replay pipeline.
-The lifecycle orchestration (SimulationApp, World, replay loop) lives in
-``visualization_isaac.vrp.isaac_replay``.
+The lifecycle orchestration (SimulationApp, World, render loop) lives in
+``visualization_isaac.app`` / ``visualization_isaac.phases``.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ class ReplayVisualizer:
 
         mesh = load_and_transform_mesh(mesh_path, mesh_target_length, mesh_pose)
         prim_path = f"{base_path}/inspection_mesh"
-        create_mesh_prim(stage, prim_path, mesh, color=(0.6, 0.65, 0.7), opacity=0.8)
+        create_mesh_prim(stage, prim_path, mesh, color=(0.55, 0.55, 0.55), opacity=1.0)
         paths.append(prim_path)
         logger.info("Added mesh obstacle: %s", prim_path)
         return paths
@@ -270,3 +270,60 @@ class ReplayVisualizer:
         ps.GetGravityDirectionAttr().Set(Gf.Vec3f(0, 0, 0))
         ps.GetGravityMagnitudeAttr().Set(0.0)
         return scene_path
+
+    # ── No-joints USD-reference robots (replay only) ─────────────────
+
+    def add_brov_robots(
+        self,
+        stage,
+        base_path: str,
+        num_robots: int,
+        brov_usd_path: str,
+    ) -> list:
+        """Reference the BROV USD as a single Xform per robot (no joints).
+
+        Each robot gets its own ``Xform`` prim that references *brov_usd_path*.
+        Position and orientation are seeded so subsequent ``set_prim_pose``
+        calls reuse the existing ``xformOp:translate`` / ``xformOp:orient``
+        attributes.
+
+        Returns
+        -------
+        List of ``Usd.Prim`` handles for the robot roots.
+        """
+        from pxr import UsdGeom
+
+        if not os.path.isfile(brov_usd_path):
+            logger.warning("BROV USD not found at %s — skipping robot spawn.", brov_usd_path)
+            return []
+
+        prims = []
+        for i in range(num_robots):
+            prim_path = f"{base_path}/robot_{i}"
+            UsdGeom.Xform.Define(stage, prim_path)
+            prim = stage.GetPrimAtPath(prim_path)
+            prim.GetReferences().AddReference(brov_usd_path)
+            set_prim_pose(
+                prim,
+                np.zeros(3, dtype=np.float64),
+                np.array([1, 0, 0, 0], dtype=np.float64),
+            )
+            prims.append(prim)
+            logger.info("Spawned BROV robot %d at %s (Xform reference, no joints)", i, prim_path)
+        return prims
+
+    def step_replay(self, robot_prims: list, frame_idx: int) -> None:
+        """Set every robot's transform to ``traj_poses[i][frame_idx]``.
+
+        ``frame_idx`` is clamped per-robot to the trajectory length.
+        """
+        for i, prim in enumerate(robot_prims):
+            if i >= len(self.traj_poses):
+                continue
+            traj = self.traj_poses[i]
+            if len(traj) == 0:
+                continue
+            k = int(min(frame_idx, len(traj) - 1))
+            xyz = traj[k, :3]
+            qwxyz = traj[k, 3:]
+            set_prim_pose(prim, xyz, qwxyz)

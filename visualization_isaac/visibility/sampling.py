@@ -16,6 +16,14 @@ from .model import ModelVisualizer
 logger = logging.getLogger(__name__)
 
 
+def _to_numpy(x):
+    if x is None:
+        return None
+    if hasattr(x, "get"):
+        return x.get()
+    return np.asarray(x)
+
+
 class SamplingVisualizer:
     """Stage-builder for sampling heatmaps and resampling progression.
 
@@ -54,7 +62,7 @@ class SamplingVisualizer:
         inside_weights: np.ndarray,
         outside_colormap: str = "Reds",
         inside_colormap: str = "Blues",
-        point_size: float = 3.0,
+        point_size: float = 0.02,
     ) -> list[str]:
         """Add free-space sampling heatmap prims.
 
@@ -65,7 +73,7 @@ class SamplingVisualizer:
         paths: list[str] = []
 
         model_vis = ModelVisualizer(self.mesh)
-        paths.append(model_vis.add_wireframe(stage, f"{base_path}/wireframe"))
+        paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
 
         for tag, positions, weights, cmap_name in [
             ("outside", outside_positions, outside_weights, outside_colormap),
@@ -101,7 +109,7 @@ class SamplingVisualizer:
     # ------------------------------------------------------------------
 
     def add_resampling_phase1(
-        self, stage, base_path: str, normal_vis_map, normal_candidates, point_size: float = 4.0
+        self, stage, base_path: str, normal_vis_map, normal_candidates, point_size: float = 0.05
     ) -> list[str]:
         """Add phase-1 (normal candidates) geometry.
 
@@ -112,7 +120,7 @@ class SamplingVisualizer:
         paths: list[str] = []
 
         model_vis = ModelVisualizer(self.mesh)
-        paths.append(model_vis.add_wireframe(stage, f"{base_path}/wireframe"))
+        paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
 
         n_normal = len(normal_candidates)
         raw_blues = plt.cm.Blues(np.linspace(0.4, 0.9, max(1, n_normal)))
@@ -172,7 +180,7 @@ class SamplingVisualizer:
         targeted_candidates,
         targeted_vis_map,
         cumulative_covered: set[int],
-        point_size: float = 4.0,
+        point_size: float = 0.02,
     ) -> list[str]:
         """Add geometry for a single targeted-VP step.
 
@@ -193,7 +201,7 @@ class SamplingVisualizer:
         paths: list[str] = []
 
         model_vis = ModelVisualizer(self.mesh)
-        paths.append(model_vis.add_wireframe(stage, f"{base_path}/wireframe"))
+        paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
 
         # Normal candidates as small blue spheres
         for i in range(len(normal_candidates)):
@@ -291,7 +299,7 @@ class SamplingVisualizer:
         normal_candidates,
         targeted_vis_map,
         targeted_candidates,
-        point_size: float = 4.0,
+        point_size: float = 0.02,
     ) -> list[str]:
         """Add phase-3 (final combined) geometry.
 
@@ -306,7 +314,7 @@ class SamplingVisualizer:
         paths: list[str] = []
 
         model_vis = ModelVisualizer(self.mesh)
-        paths.append(model_vis.add_wireframe(stage, f"{base_path}/wireframe"))
+        paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
 
         n_normal = len(normal_candidates)
         all_candidates = list(normal_candidates) + list(targeted_candidates)
@@ -364,5 +372,101 @@ class SamplingVisualizer:
             len(targeted_candidates),
             final_coverage_pct,
         )
+
+        return paths
+
+    # ------------------------------------------------------------------
+    # Generic sampler-agnostic candidate visualization
+    # ------------------------------------------------------------------
+
+    def add_candidates(
+        self,
+        stage,
+        base_path: str,
+        positions: np.ndarray,
+        rotmats: np.ndarray,
+        visibility_map: np.ndarray | None = None,
+        sphere_radius: float = 0.10,
+        point_size: float = 0.02,
+        candidate_color: tuple = (0.2, 0.55, 1.0),
+    ) -> list[str]:
+        """Render mesh + per-candidate frustum (and optional visibility colouring).
+
+        ``positions``: ``(N, 3)`` -- candidate camera positions.
+        ``rotmats``:   ``(N, 3, 3)`` -- candidate rotation matrices.
+        ``visibility_map``: optional ``(N, M)`` bool/uint8 -- if given, target
+            points are coloured by their first-covering candidate (tab20),
+            uncovered points stay red.
+
+        Both NumPy and CuPy arrays are accepted.
+        """
+        paths: list[str] = []
+        model_vis = ModelVisualizer(self.mesh, self.target_points)
+        paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
+
+        positions = _to_numpy(positions)
+        rotmats = _to_numpy(rotmats)
+        n = len(positions)
+        if n == 0:
+            logger.warning("[SamplingVisualizer] add_candidates: no candidates supplied.")
+            return paths
+
+        colors = generate_tab20_colors(max(n, 1)) if visibility_map is not None else None
+
+        # Frustums + spheres
+        for i, (pos, R) in enumerate(zip(positions, rotmats, strict=False)):
+            color = tuple(colors[i % len(colors)]) if colors is not None else candidate_color
+            paths += add_viewpoint_geometry(
+                stage,
+                f"{base_path}/cand_{i}",
+                pos,
+                R,
+                self.frustum_params,
+                color=color,
+                sphere_radius=sphere_radius,
+            )
+
+        # Point colouring
+        if visibility_map is not None:
+            V = _to_numpy(visibility_map).astype(bool)
+            first_cover = np.full(self.num_points, -1, dtype=np.int64)
+            if V.size:
+                covers = np.argmax(V, axis=0)
+                any_cover = V.any(axis=0)
+                first_cover[any_cover] = covers[any_cover]
+            pt_colors = np.full((self.num_points, 3), [0.4, 0.4, 0.4], dtype=np.float64)
+            uncovered = first_cover == -1
+            pt_colors[uncovered] = [1.0, 0.0, 0.0]
+            for i, c in enumerate(colors[:n]):
+                mask = first_cover == i
+                if np.any(mask):
+                    pt_colors[mask] = list(c)
+            paths.append(
+                create_points_prim(
+                    stage,
+                    f"{base_path}/points",
+                    self.target_points,
+                    colors=pt_colors,
+                    point_size=point_size,
+                )
+            )
+            covered = int((~uncovered).sum())
+            logger.info(
+                "[SamplingVisualizer] add_candidates: %d candidates, %d/%d points covered.",
+                n,
+                covered,
+                self.num_points,
+            )
+        else:
+            paths.append(
+                create_points_prim(
+                    stage,
+                    f"{base_path}/points",
+                    self.target_points,
+                    colors=(0.5, 0.5, 0.5),
+                    point_size=point_size,
+                )
+            )
+            logger.info("[SamplingVisualizer] add_candidates: %d candidates (no visibility).", n)
 
         return paths

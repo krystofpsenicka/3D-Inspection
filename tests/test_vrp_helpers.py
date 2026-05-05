@@ -1,8 +1,4 @@
-"""Tests for VRP coordinate transforms and per-route cost helpers.
-
-Split out of test_vrp.py to keep solver tests separate from
-data-structure / coordinate utilities.
-"""
+"""Tests for VRP coordinate transforms and per-route cost helpers."""
 
 from __future__ import annotations
 

@@ -1,10 +1,22 @@
 """Isaac Sim visualization module  --  USD stage-builder counterpart of ``visualization/``.
 
-Every public method adds prims to a caller-provided ``Usd.Stage`` and returns
-the list of created prim paths.  No SimulationApp management, no render loops.
+Every ``add_*`` method on the visualizer classes adds prims to a caller-provided
+``Usd.Stage`` and returns the list of created prim paths. ``IsaacApp`` and
+``PhaseController`` provide application lifecycle and phase progression.
 """
 
-from ._helpers import generate_tab20_colors
+from ._helpers import generate_tab20_colors, rotmat_to_quat_wxyz
+from .app import (
+    IsaacApp,
+    IsaacContext,
+    add_distant_light,
+    add_dome_light,
+    add_ground_plane,
+    add_zero_gravity,
+    frame_viewport,
+    set_camera_lookat,
+)
+from .phases import Phase, PhaseController
 from .visibility import (
     EsdfVisualizer,
     ModelVisualizer,
@@ -14,4 +26,31 @@ from .visibility import (
     add_frustum_lineset,
     add_viewpoint_geometry,
 )
-from .vrp import ReplayVisualizer
+from .vrp import ROBOT_COLORS, ReplayVisualizer, VRPVisualizer, convert_trajectories, traj8_to_pose
+
+__all__ = [
+    "IsaacApp",
+    "IsaacContext",
+    "Phase",
+    "PhaseController",
+    "ModelVisualizer",
+    "SamplingVisualizer",
+    "SetCoverVisualizer",
+    "VisibilityVisualizer",
+    "EsdfVisualizer",
+    "ReplayVisualizer",
+    "VRPVisualizer",
+    "ROBOT_COLORS",
+    "convert_trajectories",
+    "traj8_to_pose",
+    "add_frustum_lineset",
+    "add_viewpoint_geometry",
+    "add_dome_light",
+    "add_distant_light",
+    "add_ground_plane",
+    "add_zero_gravity",
+    "frame_viewport",
+    "set_camera_lookat",
+    "generate_tab20_colors",
+    "rotmat_to_quat_wxyz",
+]

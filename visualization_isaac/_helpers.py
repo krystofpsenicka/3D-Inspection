@@ -23,3 +23,10 @@ def generate_tab20_colors(n: int) -> list[tuple]:
             continue
         colors.append((r, g, b))
     return colors
+
+
+def rotmat_to_quat_wxyz(rotmat: np.ndarray) -> np.ndarray:
+    """Convert a 3x3 rotation matrix to a [qw, qx, qy, qz] quaternion."""
+    from scipy.spatial.transform import Rotation as R
+
+    return R.from_matrix(np.asarray(rotmat)).as_quat(scalar_first=True).astype(np.float64)

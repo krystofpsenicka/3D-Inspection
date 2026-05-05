@@ -13,8 +13,8 @@ def add_frustum_lineset(
     viewpoint: np.ndarray,
     rotation: np.ndarray,
     params: FrustumParams,
-    color: tuple = (1.0, 1.0, 0.0),
-    width: float = 2.0,
+    color: tuple = (0.2, 0.55, 1.0),
+    width: float = 0.02,
 ) -> str:
     """Create a frustum wireframe as a ``BasisCurves`` prim.
 
@@ -121,7 +121,7 @@ def add_viewpoint_geometry(
     arrow_lines = np.array([[0, 1]])
     paths.append(
         create_lineset_prim(
-            stage, f"{base_path}/arrow", points=arrow_pts, lines=arrow_lines, color=color, width=2.0
+            stage, f"{base_path}/arrow", points=arrow_pts, lines=arrow_lines, color=color, width=0.02
         )
     )
 

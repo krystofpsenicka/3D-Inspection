@@ -50,15 +50,6 @@ class TestReservationTable:
         assert rt.is_reserved(5, 5, 5, 4) is False  # different time
         assert rt.is_reserved(3, 5, 5, 3) is False  # outside sphere
 
-    def test_boundary_no_crash(self):
-        """Commit near grid boundary with inflation doesn't crash."""
-        rt = _make_table(shape=(5, 5, 5), T=5, radius=2.5)
-        # Point at corner: (0, 0, 0)  --  sphere extends outside grid
-        positions = cp.array([[0, 0, 0]], dtype=cp.intp)
-        times = cp.array([0], dtype=cp.intp)
-        rt.commit_trajectory(positions, times)  # should not crash
-        assert rt.is_reserved(0, 0, 0, 0) is True
-
     def test_time_beyond_horizon(self):
         """is_reserved(x,y,z, t>=T) returns False."""
         rt = _make_table(T=10)

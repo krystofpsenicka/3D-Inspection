@@ -1,328 +1,283 @@
-"""
-Visualize free-space sampling probability heatmap.
+"""Visualise sampler variants in Isaac Sim.
 
-Shows feasible viewpoint regions as 3D point clouds colored by sampling
-probability, overlaid on a wireframe mesh. Supports normal, curvature-weighted,
-and targeted resampling modes.
+Each sampler variant is run on a small fresh problem (or, if ``--input
+<pipeline_dir>`` is given, on the saved candidates) and shown as four phases:
 
-Usage:
-    python -m visibility.scripts.visualize_sampling [mesh_path]
-           [--num-points 2000] [--collision-radius 0.5]
-           [--mode normal|curvature|resampling]
+  1. mesh + target pointcloud
+  2. free-space sampling heatmap (outside + inside)
+  3. emitted candidates with frustums
+  4. visibility-coloured points
+
+Press ``N`` to advance, ``Q`` to quit.
+
+Usage::
+
+    python -m visibility.scripts.visualize_sampling --sampler weighted
+    python -m visibility.scripts.visualize_sampling --sampler optimizing --num-candidates 30
+    python -m visibility.scripts.visualize_sampling --input outputs/full_pipeline
 """
+
+from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 import cupy as cp
 import numpy as np
-import open3d as o3d
-
-from shared.surface_sampler import SurfacePointSampler
-from shared.types import Side
-from visibility.core import FrustumParams
-from visibility.sampling import CMAESBackend, OptimizingSampler, TargetedViewpointSampler
-from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
-from visualization import SamplingVisualizer, VisibilityVisualizer
 
 
-def _V_to_vis_map(V_gpu):
-    """Convert (N, M) uint8 GPU matrix to {i: np.ndarray} dict for visualization."""
-    vis_map = {}
-    for i in range(len(V_gpu)):
-        indices = cp.where(V_gpu[i])[0].get()
-        if len(indices) > 0:
-            vis_map[i] = indices
-        else:
-            vis_map[i] = np.array([], dtype=np.int64)
-    return vis_map
-
-
-def load_mesh(mesh_path: str | None) -> o3d.geometry.TriangleMesh:
-    if mesh_path is None:
-        print("No mesh path provided — using default sphere (r=5).")
-        mesh = o3d.geometry.TriangleMesh.create_sphere(radius=5.0)
-    else:
-        print(f"Loading mesh from: {mesh_path}")
-        mesh = o3d.io.read_triangle_mesh(mesh_path)
-    mesh.compute_vertex_normals()
-    return mesh
-
-
-def print_coverage_summary(visibility_map, num_target_points, vis_time, label="Visibility"):
-    all_covered = set()
-    for visible_indices in visibility_map.values():
-        all_covered.update(visible_indices.tolist())
-    total_coverage = len(all_covered) / num_target_points * 100
-
-    print(f"\n--- {label} Summary ---")
-    for i, visible_indices in visibility_map.items():
-        print(f"  Viewpoint {i}: {len(visible_indices)} visible points")
-    print(f"  Total coverage: {len(all_covered)} / {num_target_points} ({total_coverage:.1f}%)")
-    print(f"  Computation time: {vis_time:.2f}s")
-    return all_covered, total_coverage
-
-
-def main():
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-    parser = argparse.ArgumentParser(
-        description="Visualize free-space sampling probability heatmap."
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("mesh_path", nargs="?", default=None, help="Optional mesh override.")
+    p.add_argument(
+        "--sampler",
+        choices=["weighted", "targeted", "optimizing"],
+        default="weighted",
     )
-    parser.add_argument(
-        "mesh_path", nargs="?", default=None, help="Path to mesh file (default: sphere r=5)"
-    )
-    parser.add_argument(
-        "--num-points",
-        type=int,
-        default=100000,
-        help="Number of surface points to sample (default: 100000)",
-    )
-    parser.add_argument(
-        "--collision-radius",
+    p.add_argument("--num-candidates", type=int, default=30)
+    p.add_argument("--num-points", type=int, default=20000)
+    p.add_argument("--side", choices=["outside", "inside"], default="outside")
+    p.add_argument("--collision-radius", type=float, default=0.5)
+    p.add_argument("--frustum-far", type=float, default=7.0)
+    p.add_argument("--frustum-near", type=float, default=0.01)
+    p.add_argument("--frustum-fov-deg", type=float, default=45.0)
+    p.add_argument("--frustum-aspect", type=float, default=1.0)
+    p.add_argument("--curvature-weighting", action="store_true")
+    p.add_argument("--phase-duration", type=float, default=None)
+    p.add_argument("--headless", action="store_true")
+    p.add_argument(
+        "--mesh-target-length",
         type=float,
-        default=0.5,
-        help="Collision radius for viewpoint sampling (default: 0.5)",
+        default=50.0,
+        help="Scale mesh so longest axis equals this length (metres).",
     )
-    parser.add_argument(
-        "--point-size", type=float, default=3.0, help="Point size for visualization (default: 3.0)"
-    )
-    parser.add_argument(
-        "--num-viewpoints",
-        type=int,
-        default=10,
-        help="Number of viewpoints to sample (default: 10)",
-    )
-    parser.add_argument(
-        "--side",
-        choices=["outside", "inside"],
-        default="outside",
-        help="Which side of the mesh to sample from (default: outside)",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["normal", "curvature", "resampling"],
-        default="normal",
-        help="Sampling mode to visualize",
-    )
-    parser.add_argument(
-        "--resample-fraction",
+    p.add_argument(
+        "--mesh-pose",
         type=float,
-        default=0.25,
-        help="Fraction of candidates for targeted resampling (default: 0.25)",
+        nargs=7,
+        default=[0.0, 0.0, 1.5, 0.7071067811865476, -0.7071067811865476, 0.0, 0.0],
+        metavar=("X", "Y", "Z", "QW", "QX", "QY", "QZ"),
+        help="World-frame pose applied to mesh after scaling.",
     )
-    parser.add_argument(
-        "--resampling-strategy",
-        choices=["random", "optimal"],
-        default="random",
-        help="Targeted resampling strategy",
+    p.add_argument(
+        "--input",
+        default=None,
+        help="Pipeline directory written by run_full_pipeline (load instead of fresh run).",
     )
-    args = parser.parse_args()
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p.parse_args()
 
+
+def _trimesh_to_o3d(mesh_tm):
+    import open3d as o3d
+
+    mesh_o3d = o3d.geometry.TriangleMesh()
+    mesh_o3d.vertices = o3d.utility.Vector3dVector(np.asarray(mesh_tm.vertices))
+    mesh_o3d.triangles = o3d.utility.Vector3iVector(np.asarray(mesh_tm.faces))
+    mesh_o3d.compute_vertex_normals()
+    return mesh_o3d
+
+
+def _load_or_build_mesh(args) -> tuple:
+    """Return (mesh_o3d, mesh_trimesh, saved_data) using shared.mesh_loader for scale/pose."""
+    from shared.mesh_loader import load_and_transform_mesh
+
+    if args.input:
+        from VRP.utils.serialization import load_pipeline
+
+        data = load_pipeline(args.input)
+        mesh_tm = load_and_transform_mesh(
+            data["mesh_path"], data["mesh_target_length"], data["mesh_pose"]
+        )
+        return _trimesh_to_o3d(mesh_tm), mesh_tm, data
+
+    mesh_path = args.mesh_path or os.path.join(
+        REPO_ROOT, "models", "duke_of_lancaster_uk_clipped.glb"
+    )
+    mesh_tm = load_and_transform_mesh(mesh_path, args.mesh_target_length, args.mesh_pose)
+    return _trimesh_to_o3d(mesh_tm), mesh_tm, None
+
+
+def main() -> None:
+    args = parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)-8s %(name)s: %(message)s",
+    )
+
+    from shared.surface_sampler import SurfacePointSampler
+    from shared.types import Side
+    from visibility.core.types import FrustumParams
+    from visibility.sampling import (
+        CMAESBackend,
+        OptimizingSampler,
+        TargetedViewpointSampler,
+        WeightedViewpointSampler,
+    )
+    from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
+
+    mesh_o3d, mesh_tm, saved = _load_or_build_mesh(args)
     side = Side(args.side)
-    curvature_weighting = args.mode == "curvature"
 
-    # --- Setup (same pattern as other scripts) ---
-    mesh = load_mesh(args.mesh_path)
+    # Surface sampling -- either reuse saved or generate fresh.
+    if saved is not None and args.input:
+        target_points = saved["target_points"]
+        normals = saved["normals"]
+    else:
+        target_points, normals = SurfacePointSampler().sample(mesh_o3d, args.num_points)
 
-    surface_sampler = SurfacePointSampler()
-    target_points, normals = surface_sampler.sample(mesh, args.num_points)
+    target_points_gpu = cp.asarray(target_points, dtype=cp.float32)
+    normals_gpu = cp.asarray(normals, dtype=cp.float32)
+    if side == Side.INSIDE:
+        normals_gpu = -normals_gpu
 
-    frustum_params = FrustumParams(fov_y=np.deg2rad(45), aspect=1.0, near=0.01, far=7.0)
+    frustum_params = FrustumParams(
+        fov_y=np.deg2rad(args.frustum_fov_deg),
+        aspect=args.frustum_aspect,
+        near=args.frustum_near,
+        far=args.frustum_far,
+    )
 
-    # --- Build sampler and get feasible data ---
-    sampler = TargetedViewpointSampler(
-        mesh,
-        target_points,
-        normals,
-        frustum_params.far,
+    # Build sampler
+    sampler_kwargs = dict(
+        mesh=mesh_o3d,
+        target_points=target_points_gpu,
+        normals=normals_gpu,
+        frustum_far=args.frustum_far,
         collision_radius=args.collision_radius,
     )
+    if args.sampler == "weighted":
+        sampler = WeightedViewpointSampler(**sampler_kwargs)
+    elif args.sampler == "targeted":
+        sampler = TargetedViewpointSampler(**sampler_kwargs)
+    else:  # optimizing
+        sampler = OptimizingSampler(
+            backend=CMAESBackend(),
+            random_sampler=WeightedViewpointSampler(**sampler_kwargs),
+            **sampler_kwargs,
+        )
 
-    print("\nBuilding feasible regions...")
+    # Sample candidates
+    if args.sampler == "weighted":
+        pos_gpu, rot_gpu = sampler.sample(
+            args.num_candidates, side=side, curvature_weighting=args.curvature_weighting,
+        )
+    elif args.sampler == "targeted":
+        pos_gpu, rot_gpu = sampler.sample(
+            cp.arange(len(target_points_gpu)),
+            args.num_candidates,
+            side=side,
+            curvature_weighting=args.curvature_weighting,
+        )
+    else:
+        # Optimising sampler: warm-start from a small uniform pool, then optimise.
+        warm_sampler = sampler.random_sampler
+        warm_n = max(args.num_candidates // 2, 5)
+        warm_pos, warm_rot = warm_sampler.sample(warm_n, side=side)
+        query_pre = RaycastingVisibilityQueryCuda(
+            mesh=mesh_o3d,
+            target_points=target_points_gpu,
+            normals=normals_gpu,
+            frustum_params=frustum_params,
+        )
+        V_warm, _ = query_pre.compute_visibility_batch(warm_pos, warm_rot)
+        coverage_count = V_warm.astype(cp.int32).sum(axis=0)
+        opt_pos, opt_rot, _ = sampler.sample_optimized(
+            args.num_candidates - warm_n,
+            coverage_count,
+            query_pre,
+            existing_pos_gpu=warm_pos,
+            existing_rot_gpu=warm_rot,
+            side=side,
+        )
+        if len(opt_pos) > 0:
+            pos_gpu = cp.concatenate([warm_pos, opt_pos])
+            rot_gpu = cp.concatenate([warm_rot, opt_rot])
+        else:
+            pos_gpu, rot_gpu = warm_pos, warm_rot
+
+    # Visibility for the candidates
+    vis_query = RaycastingVisibilityQueryCuda(
+        mesh=mesh_o3d,
+        target_points=target_points_gpu,
+        normals=normals_gpu,
+        frustum_params=frustum_params,
+    )
+    V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
+
+    pos_np = cp.asnumpy(pos_gpu)
+    rot_np = cp.asnumpy(rot_gpu)
+    V_np = cp.asnumpy(V)
+
+    # Free-space heatmap inputs (both sides)
     outside_pos_gpu, outside_w_gpu, _ = sampler.get_feasible_sampling_data(
-        side=Side.OUTSIDE, curvature_weighting=curvature_weighting
+        side=Side.OUTSIDE, curvature_weighting=args.curvature_weighting
     )
     inside_pos_gpu, inside_w_gpu, _ = sampler.get_feasible_sampling_data(
-        side=Side.INSIDE, curvature_weighting=curvature_weighting
+        side=Side.INSIDE, curvature_weighting=args.curvature_weighting
     )
-    outside_pos, outside_w = cp.asnumpy(outside_pos_gpu), cp.asnumpy(outside_w_gpu)
-    inside_pos, inside_w = cp.asnumpy(inside_pos_gpu), cp.asnumpy(inside_w_gpu)
+    outside_pos = cp.asnumpy(outside_pos_gpu)
+    outside_w = cp.asnumpy(outside_w_gpu)
+    inside_pos = cp.asnumpy(inside_pos_gpu)
+    inside_w = cp.asnumpy(inside_w_gpu)
 
-    print(f"  Outside: {len(outside_pos)} feasible positions")
-    print(f"  Inside:  {len(inside_pos)} feasible positions")
+    # Free GPU memory used by the sampler / query before launching Isaac.
+    del sampler, vis_query
+    cp.get_default_memory_pool().free_all_blocks()
 
-    # --- Visualize free-space heatmap (Window 1) ---
-    mode_labels = {
-        "normal": "SDF\u00b2",
-        "curvature": "Curvature-Weighted",
-        "resampling": "SDF\u00b2",
-    }
-    window_name = f"Free-Space Sampling Heatmap ({mode_labels[args.mode]})"
-
-    sampling_viz = SamplingVisualizer(mesh, target_points, normals, frustum_params)
-    sampling_viz.visualize_free_space(
-        outside_pos,
-        outside_w,
-        inside_pos,
-        inside_w,
-        point_size=args.point_size,
-        window_name=window_name,
+    # ── Isaac Sim ──────────────────────────────────────────────────────
+    from visualization_isaac import (
+        IsaacApp,
+        ModelVisualizer,
+        Phase,
+        PhaseController,
+        SamplingVisualizer,
+        add_dome_light,
     )
 
-    if args.mode in ("normal", "curvature"):
-        # --- Normal / Curvature: sample and show all VPs (Window 2) ---
-        print(f"\nSampling {args.num_viewpoints} viewpoints from {args.side} (mode={args.mode})...")
-        pos_gpu, rot_gpu = sampler.sample(
-            cp.arange(len(target_points)),
-            num_candidates=args.num_viewpoints,
-            side=side,
-            curvature_weighting=curvature_weighting,
-        )
+    target_points_np = np.asarray(target_points)
+    normals_np = np.asarray(normals)
 
-        if len(pos_gpu) == 0:
-            print("No valid viewpoints sampled — skipping visibility visualization.")
-            return
+    with IsaacApp(headless=args.headless) as ctx:
+        add_dome_light(ctx.stage)
 
-        print(f"  Sampled {len(pos_gpu)} valid viewpoints.")
+        model_vis = ModelVisualizer(mesh_tm, target_points_np, normals_np)
+        sampling_vis = SamplingVisualizer(mesh_tm, target_points_np, normals_np, frustum_params)
 
-        vis_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
-        V, vis_time = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
-        visibility_map = _V_to_vis_map(V)
+        def enter_mesh(stage, parent):
+            model_vis.add_mesh(stage, f"{parent}/mesh")
+            model_vis.add_points(stage, f"{parent}/points", color=(0.85, 0.85, 0.85))
 
-        # Transfer for visualization
-        pos_cpu = cp.asnumpy(pos_gpu)
-        rot_cpu = cp.asnumpy(rot_gpu)
-        candidates = list(zip(pos_cpu, rot_cpu, strict=False))
-
-        print_coverage_summary(visibility_map, len(target_points), vis_time)
-        vis_viz = VisibilityVisualizer(mesh, target_points, frustum_params)
-        vis_viz.visualize_all(visibility_map, candidates)
-
-    else:
-        # --- Resampling mode: two-phase sampling ---
-        n_targeted = int(args.num_viewpoints * args.resample_fraction)
-        n_normal = args.num_viewpoints - n_targeted
-
-        print(
-            f"\nResampling mode: {n_normal} normal + {n_targeted} targeted VPs "
-            f"(strategy={args.resampling_strategy})"
-        )
-
-        # Phase 1: sample normal candidates
-        print(f"  Sampling {n_normal} normal viewpoints from {args.side}...")
-        normal_pos_gpu, normal_rot_gpu = sampler.sample(
-            cp.arange(len(target_points)), num_candidates=n_normal, side=side
-        )
-
-        if len(normal_pos_gpu) == 0:
-            print("No valid normal viewpoints sampled — aborting.")
-            return
-
-        print(f"  Sampled {len(normal_pos_gpu)} normal viewpoints.")
-
-        vis_query = RaycastingVisibilityQueryCuda(mesh, target_points, normals, frustum_params)
-        V_normal, normal_time = vis_query.compute_visibility_batch(normal_pos_gpu, normal_rot_gpu)
-        normal_vis_map = _V_to_vis_map(V_normal)
-
-        # Transfer for visualization
-        normal_pos_cpu = cp.asnumpy(normal_pos_gpu)
-        normal_rot_cpu = cp.asnumpy(normal_rot_gpu)
-        normal_candidates = list(zip(normal_pos_cpu, normal_rot_cpu, strict=False))
-
-        normal_covered, normal_coverage = print_coverage_summary(
-            normal_vis_map, len(target_points), normal_time, label="Normal VPs"
-        )
-
-        # Phase 2: identify uncovered and sample targeted candidates
-        all_indices = set(range(len(target_points)))
-        uncovered_indices = cp.array(sorted(all_indices - normal_covered), dtype=int)
-        print(f"\n  {len(uncovered_indices)} uncovered points remaining.")
-
-        if len(uncovered_indices) == 0 or n_targeted == 0:
-            print("  No targeted resampling needed.")
-            VisibilityVisualizer(mesh, target_points, frustum_params).visualize_all(
-                normal_vis_map, normal_candidates
-            )
-            return
-
-        if args.resampling_strategy == "optimal":
-            # Build per-point coverage counts for optimisation
-            coverage_count_gpu = V_normal.astype(cp.int32).sum(axis=0)
-
-            opt_sampler = OptimizingSampler(
-                mesh,
-                target_points,
-                normals,
-                frustum_params.far,
-                collision_radius=args.collision_radius,
-                backend=CMAESBackend(),
-            )
-            targeted_pos_gpu, targeted_rot_gpu, _ = opt_sampler.sample_optimized(
-                n_targeted,
-                coverage_count_gpu,
-                vis_query,
-                existing_pos_gpu=normal_pos_gpu,
-                existing_rot_gpu=normal_rot_gpu,
-                side=side,
-                verbose=True,
+        def enter_freespace(stage, parent):
+            sampling_vis.add_free_space(
+                stage, parent, outside_pos, outside_w, inside_pos, inside_w,
+                point_size=0.05,
             )
 
-            if len(targeted_pos_gpu) == 0:
-                print("  No valid targeted viewpoints found via optimisation.")
-                visualizer.visualize_all_visibility_results(normal_vis_map, normal_candidates)
-                return
+        def enter_candidates(stage, parent):
+            sampling_vis.add_candidates(stage, parent, pos_np, rot_np)
 
-            V_targeted, _ = vis_query.compute_visibility_batch(targeted_pos_gpu, targeted_rot_gpu)
-            targeted_vis_map = _V_to_vis_map(V_targeted)
+        def enter_visibility(stage, parent):
+            sampling_vis.add_candidates(stage, parent, pos_np, rot_np, visibility_map=V_np)
 
+        D = args.phase_duration
+        phases = [
+            Phase("mesh_and_points", enter=enter_mesh, duration=D),
+            Phase("free_space_heatmap", enter=enter_freespace, duration=D),
+            Phase("candidates", enter=enter_candidates, duration=D),
+            Phase("visibility_coloured", enter=enter_visibility, duration=D),
+        ]
+        controller = PhaseController(ctx, phases)
+        if args.headless:
+            controller.headless_play()
         else:
-            # Random proximity-weighted targeted sampling
-            print(f"  Sampling {n_targeted} targeted viewpoints...")
-            targeted_pos_gpu, targeted_rot_gpu = sampler.sample(
-                uncovered_indices, n_targeted, side=side
-            )
-
-            if len(targeted_pos_gpu) == 0:
-                print("  No valid targeted viewpoints sampled.")
-                visualizer.visualize_all_visibility_results(normal_vis_map, normal_candidates)
-                return
-
-            print(f"  Sampled {len(targeted_pos_gpu)} targeted viewpoints.")
-
-            V_targeted, _ = vis_query.compute_visibility_batch(targeted_pos_gpu, targeted_rot_gpu)
-            targeted_vis_map = _V_to_vis_map(V_targeted)
-
-        # Transfer targeted arrays to CPU for visualization
-        targeted_pos_cpu = cp.asnumpy(targeted_pos_gpu)
-        targeted_rot_cpu = cp.asnumpy(targeted_rot_gpu)
-        targeted_candidates = list(zip(targeted_pos_cpu, targeted_rot_cpu, strict=False))
-
-        # Coverage summary for targeted VPs
-        targeted_covered = set()
-        for vis_indices in targeted_vis_map.values():
-            targeted_covered.update(
-                vis_indices.tolist() if hasattr(vis_indices, "tolist") else list(vis_indices)
-            )
-        print("\n--- Targeted VPs Summary ---")
-        for i, vis_indices in targeted_vis_map.items():
-            vis_arr = vis_indices if hasattr(vis_indices, "__len__") else []
-            print(f"  Viewpoint {i}: {len(vis_arr)} visible points")
-        print(f"  Total targeted: {len(targeted_covered)} unique points")
-
-        # Combined summary
-        combined_covered = set(normal_covered)
-        combined_covered.update(targeted_covered)
-        combined_coverage = len(combined_covered) / len(target_points) * 100
-        print(
-            f"\n  Combined coverage: {len(combined_covered)} / {len(target_points)} "
-            f"({combined_coverage:.1f}%)"
-        )
-
-        # Visualize resampling progression
-        sampling_viz.visualize_resampling_progression(
-            normal_vis_map, normal_candidates, targeted_vis_map, targeted_candidates
-        )
+            controller.run()
 
 
 if __name__ == "__main__":

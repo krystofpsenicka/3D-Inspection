@@ -47,7 +47,7 @@ class TestOrientationDwellWindow:
         traj_np = cp.asnumpy(traj)
         t_np = cp.asnumpy(t_dense)
 
-        # Inside the dwell window (with a small margin to avoid boundary)
+        # Inside the dwell window (with a small margin)
         inside = (t_np > 2.05) & (t_np < 3.95)
         np.testing.assert_allclose(traj_np[inside, 3], target_yaw, atol=1e-6)
 
@@ -86,7 +86,7 @@ class TestOrientationTransitionContinuity:
         yaw_in_trans = traj_np[in_transition, 3]
         diffs = np.abs(np.diff(yaw_in_trans))
         # Each step's change is at most the total Δyaw / number of transition samples
-        # (+ a small safety margin for cosine curvature). A step jump would have one
+        # (+ a small safety margin). A step jump would have one
         # diff equal to the full Δyaw -- well above this bound.
         max_acceptable = (yaw_b - yaw_a) / max(in_transition.sum() // 2, 1)
         assert diffs.max() < max_acceptable, (

@@ -1,7 +1,6 @@
 """Tests for VRP/core/distance_matrix.py.
 
-The cuGraph SSSP runs in a one-shot subprocess. Tests skip cleanly if
-RAPIDS isn't available; otherwise we verify the matrix obeys the
+We verify the matrix obeys the
 expected metric properties on small grid graphs.
 """
 
@@ -100,8 +99,7 @@ class TestDistanceMatrixCorrectness:
             dtype=cp.float64,
         )
         D = cp.asnumpy(_try_compute(corridor_og, waypoints))
-        # Allow 5% slack -- 26-neighbor SSSP will use diagonal hops near the
-        # gap but the bulk of the path is still axis-aligned.
+        # Allow 5% slack.
         assert D[0, 1] == pytest.approx(9.0, rel=0.05)
 
     def test_blocked_corridor_is_unreachable(self):

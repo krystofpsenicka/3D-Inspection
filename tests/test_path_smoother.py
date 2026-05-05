@@ -2,7 +2,7 @@
 
 OMPL is a black box; only one strict property is worth asserting -- the
 smoothed path remains collision-free against the OG it was validated
-against. If this fails, the entire MAPF pipeline is unsound.
+against.
 """
 
 from __future__ import annotations
@@ -26,7 +26,8 @@ class TestSimplifyPathOmpl:
         """
         coarse = cp.array(
             [
-                [0.5, 5.5, 5.5],
+                [0.5, 3.5, 5.5],
+                [4.5, 3.5, 5.5],
                 [4.5, 5.5, 5.5],
                 [5.5, 5.5, 5.5],  # gap voxel
                 [9.5, 5.5, 5.5],
@@ -69,12 +70,7 @@ class TestSimplifyPathOmpl:
         np.testing.assert_allclose(smoothed[-1], cp.asnumpy(coarse[-1]), atol=1e-3)
 
     def test_smoothed_path_not_longer_than_input(self, corridor_og):
-        """OMPL shortcutPath + smoothBSpline must not lengthen the path.
-
-        A no-op smoother would also pass collision-free + endpoints-unchanged
-        tests. This invariant catches a smoother that injects extra detour
-        waypoints or returns the input unchanged when it could shortcut.
-        """
+        """OMPL shortcutPath + smoothBSpline must not lengthen the path."""
         coarse = cp.array(
             [
                 [0.5, 5.5, 5.5],

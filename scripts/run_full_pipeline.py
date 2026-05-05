@@ -4,8 +4,8 @@ Full Inspection Pipeline - Computation Script
 ==============================================
 
 Runs the complete 3D-Inspection -> VRP pipeline end-to-end and saves all
-intermediate data so the visualisation script can replay the process in
-Isaac Sim phase-by-phase.
+intermediate data into a directory so the visualisation script can replay the
+process in Isaac Sim phase-by-phase.
 
 Pipeline stages
 ---------------
@@ -18,15 +18,15 @@ Pipeline stages
 6. Convert selected viewpoints to VRP waypoints [x,y,z,qw,qx,qy,qz].
 7. Build occupancy grid (50 m mesh), compute distance matrix, solve VRP.
 8. Execute routes via Space-Time A* -> ``ExecutionResult``.
-9. Pickle everything to ``pipeline_data.pkl``.
+9. Save everything via ``VRP.utils.serialization.save_pipeline``.
 
 Usage
 -----
 ::
 
-    python run_full_pipeline.py                         # defaults
-    python run_full_pipeline.py --output my_data.pkl    # custom output
-    python run_full_pipeline.py --num_robots 3          # 3 AUVs
+    python -m scripts.run_full_pipeline                          # outputs/full_pipeline
+    python -m scripts.run_full_pipeline --output my_dir/         # custom directory
+    python -m scripts.run_full_pipeline --num_robots 3           # 3 AUVs
 """
 
 from __future__ import annotations
@@ -41,14 +41,9 @@ import cupy as cp
 import numpy as np
 
 # ── Ensure repo root is on sys.path ──────────────────────────────────────────
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
-
-# ── Also make visibility package importable ──────────────────────────────────
-VISIBILITY_DIR = os.path.join(REPO_ROOT, "visibility")
-if VISIBILITY_DIR not in sys.path:
-    sys.path.insert(0, os.path.dirname(VISIBILITY_DIR))
 
 # The GLB file stores vertices in Y-up convention (glTF standard).
 # Isaac Sim's GLB->USD converter implicitly prepends a Y-up->Z-up rotation
@@ -84,7 +79,10 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
-        "--output", "-o", default="pipeline_data.pkl", help="Path for the output pickle file."
+        "--output",
+        "-o",
+        default=os.path.join(REPO_ROOT, "outputs", "full_pipeline"),
+        help="Directory to write pipeline artefacts (overwritten on each run).",
     )
     p.add_argument("--num_robots", "-n", type=int, default=5, help="Number of AUV robots for VRP.")
     p.add_argument(
@@ -125,7 +123,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--alpha",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Objective blending: 1.0=makespan, 0.0=total distance.",
     )
     p.add_argument("--seed", type=int, default=42, help="Random seed.")
@@ -137,9 +135,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--resample_fraction",
         type=float,
-        default=0.5,
+        default=0.0,
         help="Fraction of candidates generated via targeted resampling "
-        "(0.0 = disabled, 0.25 = 25%% targeted). Default: 0.0",
+        "(0.0 = disabled, 0.25 = 25%% targeted).",
     )
     p.add_argument(
         "--resampling_strategy",
@@ -152,7 +150,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Coverage redundancy: sample until each point is covered "
-        "by at least k viewpoints (Glorieux 2020). Default: 1.",
+        "by at least k viewpoints (Glorieux 2020).",
     )
     p.add_argument(
         "--side",
@@ -162,57 +160,6 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _save_pipeline_data(pipeline_data: dict, path: str) -> None:
-    """Save pipeline output as NPZ (arrays) + JSON (metadata).
-
-    ExecutionResult is saved separately via :func:`VRP.utils.save_solution`.
-    """
-    import json as _json
-
-    from VRP.utils.serialization import save_solution
-
-    base = path.rsplit(".", 1)[0] if "." in path else path
-    os.makedirs(os.path.dirname(os.path.abspath(base)) or ".", exist_ok=True)
-
-    # Save ExecutionResult separately
-    save_solution(pipeline_data["exec_result"], base + "_exec")
-
-    # Collect numpy arrays
-    arrays = {}
-    json_meta = {}
-    skip_keys = {"exec_result", "optimization_result"}
-    for k, v in pipeline_data.items():
-        if k in skip_keys:
-            continue
-        if isinstance(v, np.ndarray):
-            arrays[k] = v
-        elif isinstance(v, list) and v and isinstance(v[0], np.ndarray):
-            arrays[k] = np.array(v)
-        else:
-            json_meta[k] = v
-
-    # Save optimization_result fields we need
-    opt = pipeline_data.get("optimization_result")
-    if opt is not None:
-        json_meta["optimization_result"] = {
-            "selected_indices": opt.selected_indices if hasattr(opt, "selected_indices") else [],
-            "total_coverage": opt.total_coverage,
-            "num_viewpoints": opt.num_viewpoints,
-            "per_vp_coverage": (opt.visibility_map.sum(axis=1) / opt.num_viewpoints).get().tolist()
-            if opt.num_viewpoints > 0
-            else [],
-        }
-
-    np.savez_compressed(base + ".npz", **arrays)
-    with open(base + ".json", "w") as f:
-        _json.dump(json_meta, f, default=str)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -245,6 +192,7 @@ def main() -> None:
     logger.info("  Candidates    : %d", args.num_candidates)
     logger.info("  Coverage      : %.0f%%", args.target_coverage * 100)
     logger.info("  Robots        : %d", args.num_robots)
+    logger.info("  Output dir    : %s", args.output)
     logger.info(
         "  Frustum       : near=%.2f far=%.1f fov=%.0f° aspect=%.1f",
         args.frustum_near,
@@ -276,7 +224,6 @@ def main() -> None:
         mesh_bounds_max.round(2),
     )
 
-    # Convert to Open3D TriangleMesh (for visibility pipeline)
     o3d_mesh = o3d.geometry.TriangleMesh()
     o3d_mesh.vertices = o3d.utility.Vector3dVector(np.asarray(raw_tm.vertices))
     o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(raw_tm.faces))
@@ -294,7 +241,6 @@ def main() -> None:
         args.num_surface_points,
         seed=args.seed,
     )
-    # CPU -> GPU immediately (Open3D returns numpy)
     target_points = cp.asarray(target_points_np, dtype=cp.float32)
     normals = cp.asarray(normals_np, dtype=cp.float32)
     if side == Side.INSIDE:
@@ -323,7 +269,7 @@ def main() -> None:
     )
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 3 - Generate candidate viewpoints + filter below mesh
+    # STAGE 3 - Sampler + visibility query
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[3/9] Generating %d candidate viewpoints …", args.num_candidates)
     if args.curvature_weighting:
@@ -350,9 +296,6 @@ def main() -> None:
         occupancy_grid=sampling_og,
     )
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 4 - Build visibility query
-    # ══════════════════════════════════════════════════════════════════════
     logger.info("[4/9] Building raycast visibility query …")
 
     from visibility.core.types import FrustumParams, OptimizationResult
@@ -373,13 +316,12 @@ def main() -> None:
     )
 
     # ══════════════════════════════════════════════════════════════════════
-    # STAGE 5 - Greedy set cover at target coverage
+    # STAGE 5 - Greedy set cover
     # ══════════════════════════════════════════════════════════════════════
     if args.resample_fraction > 0:
         n_targeted = int(args.num_candidates * args.resample_fraction)
         n_uniform = args.num_candidates - n_targeted
 
-        # Phase 1: uniform sampling
         logger.info(
             "[3–5/9] Sampling %d uniform + %d targeted (%s) …",
             n_uniform,
@@ -394,14 +336,12 @@ def main() -> None:
         )
         V, _ = raycast_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
-        # Phase 2: build per-point coverage counts and identify under-covered
         coverage_count_gpu = V.astype(cp.int32).sum(axis=0)
         under_k_mask = coverage_count_gpu < args.k_coverage
         uncovered = cp.where(under_k_mask)[0]
 
         if len(uncovered) > 0 and n_targeted > 0:
             if args.resampling_strategy == "optimal":
-                # Optimisation-based iterative resampling
                 opt_sampler = OptimizingSampler(
                     mesh=o3d_mesh,
                     target_points=target_points,
@@ -426,7 +366,6 @@ def main() -> None:
                     pos_gpu = cp.concatenate([pos_gpu, opt_pos_gpu])
                     rot_gpu = cp.concatenate([rot_gpu, opt_rot_gpu])
             else:
-                # Random targeted sampling (iterative for k-coverage tracking)
                 targeted_pos_gpu, targeted_rot_gpu = sampler.sample(
                     uncovered,
                     n_targeted,
@@ -482,7 +421,6 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[6/9] Preparing %d selected viewpoints for VRP …", opt_result.num_viewpoints)
 
-    # Use optimization result directly  --  positions + rotation matrices, all GPU
     selected_positions = opt_result.positions  # (K, 3) CuPy
     selected_rotmats = opt_result.rotations  # (K, 3, 3) CuPy
     logger.info("  Selected positions shape: %s", selected_positions.shape)
@@ -495,7 +433,6 @@ def main() -> None:
     from VRP.core.distance_matrix import compute_distance_matrix
     from VRP.core.geometry import compute_start_grid as _compute_start_grid
 
-    # Reuse mesh bounds from Stage 1 (already loaded as raw_tm)
     mesh_bmin = mesh_bounds_min
     mesh_bmax = mesh_bounds_max
     robot_start_xyzs = _compute_start_grid(args.num_robots, mesh_bmin, mesh_bmax)
@@ -508,13 +445,12 @@ def main() -> None:
     )
     waypoint_positions = cp.vstack([home_positions, selected_positions.astype(cp.float32)])
 
-    # Build a side-aware routing occupancy grid.
     from shared.grid_builder_utils import build_occupancy_grid as _build_routing_og
 
     _all_waypoints_np = cp.asnumpy(waypoint_positions).astype(np.float32)
     extra_margin = max(3, int(np.ceil(_vrp_cfg.ROBOT_RADIUS / _vrp_cfg.VOXEL_RESOLUTION)))
     og = _build_routing_og(
-        mesh=o3d_mesh,
+        mesh=raw_tm,
         padding=1.0,
         inflation_voxels=_vrp_cfg.INFLATION_VOXELS,
         resolution=_vrp_cfg.VOXEL_RESOLUTION,
@@ -531,7 +467,6 @@ def main() -> None:
         side == Side.INSIDE,
     )
 
-    # Assemble VRP node arrays: positions + rotmats (all GPU)
     K = args.num_robots
     home_rotmats = cp.tile(cp.eye(3, dtype=cp.float32), (K, 1, 1))
 
@@ -540,16 +475,11 @@ def main() -> None:
     N_insp = opt_result.num_viewpoints
     logger.info("  VRP nodes: %d (%d homes + %d inspection)", len(waypoint_positions), K, N_insp)
 
-    # cuGraph graph memory scales with free-voxel count (~12 B/edge x 26 adj).
-    # Find the finest integer downsampling factor that keeps free voxels under
-    # budget so the distance matrix is as accurate as VRAM allows.
     from shared.grid_utils import downsample_occupancy_grid
 
-    _MAX_FREE_VOXELS = 5_000_000  # ~1.6 GB edge list → safe on 8-GB cards
+    _MAX_FREE_VOXELS = 5_000_000
 
     def _pick_distmatrix_og(fine_og, max_free: int):
-        """Return the finest downsampled OG with <= max_free free voxels."""
-        # Check if the original grid already fits under budget
         free_count = int((~fine_og.grid).sum())
         logger.info(
             "  Dist-matrix OG candidate: factor=1 res=%.2fm grid=%s free=%d",
@@ -559,7 +489,6 @@ def main() -> None:
         )
         if free_count <= max_free:
             return fine_og, 1, free_count
-        # Otherwise search for the coarsest factor that fits
         for factor in range(2, 32):
             target_res = fine_og.resolution * factor
             coarse_og = downsample_occupancy_grid(fine_og, target_res)
@@ -601,7 +530,7 @@ def main() -> None:
     vrp_result: VRPResult = solve_vrp(
         dist_matrix=dist_matrix,
         num_vehicles=args.num_robots,
-        depot=home_indices,
+        depots=home_indices,
         alpha=args.alpha,
         backend=vrp_backend,
     )
@@ -612,7 +541,6 @@ def main() -> None:
         vrp_result.solver,
     )
 
-    # Wrap routes with home nodes
     routes = [
         [home_indices[i]] + list(r) + [home_indices[i]] for i, r in enumerate(vrp_result.routes)
     ]
@@ -635,11 +563,8 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     logger.info("[9/9] Saving pipeline data to %s …", args.output)
 
-    # Map: for each robot, which *inspection* waypoint indices it visits (0-based
-    # into opt_result.positions / opt_result.rotations).
     robot_inspection_wp_indices: list[list[int]] = []
     for i, route in enumerate(vrp_result.routes):
-        # route entries are global indices; subtract K to get inspection index
         insp_idxs = [int(node - K) for node in route if node >= K]
         robot_inspection_wp_indices.append(insp_idxs)
 
@@ -651,14 +576,13 @@ def main() -> None:
         "mesh_path": MESH_PATH,
         "mesh_bounds_min": mesh_bounds_min,
         "mesh_bounds_max": mesh_bounds_max,
-        # Pointcloud (GPU -> CPU for serialization)
+        # Pointcloud
         "target_points": cp.asnumpy(target_points),
         "normals": cp.asnumpy(normals),
-        # Candidates
+        # Candidates (full set + full visibility matrix)
         "all_positions": cp.asnumpy(pos_gpu),
         "all_rotmats": cp.asnumpy(rot_gpu),
-        # Visibility
-        "visibility_map": cp.asnumpy(opt_result.visibility_map),
+        "full_visibility_map": cp.asnumpy(V),
         # Frustum
         "frustum_params": {
             "fov_deg": args.frustum_fov_deg,
@@ -669,21 +593,29 @@ def main() -> None:
         },
         # Set cover
         "optimization_result": opt_result,
-        # VRP waypoints (positions + rotmats instead of 7-DOF)
         "selected_positions": cp.asnumpy(selected_positions),
         "selected_rotmats": cp.asnumpy(selected_rotmats),
         # VRP
-        "vrp_routes": vrp_result.routes,  # raw routes (no home)
-        "vrp_routes_with_homes": routes,  # routes with home book-ends
+        "vrp_routes": [list(r) for r in vrp_result.routes],
+        "vrp_routes_with_homes": [list(r) for r in routes],
         "num_robots": args.num_robots,
         "home_indices": home_indices,
-        "robot_start_xyzs": robot_start_xyzs,
+        "robot_start_xyzs": [np.asarray(xyz, dtype=np.float32) for xyz in robot_start_xyzs],
         "robot_inspection_wp_indices": robot_inspection_wp_indices,
+        "vrp_status": vrp_result.status,
+        "vrp_total_cost": float(vrp_result.total_cost),
+        "vrp_makespan": float(vrp_result.makespan),
+        "vrp_solver": vrp_result.solver,
+        "alpha": args.alpha,
         # Trajectories
         "exec_result": exec_result,
+        # CLI snapshot
+        "args": vars(args),
     }
 
-    _save_pipeline_data(pipeline_data, args.output)
+    from VRP.utils.serialization import save_pipeline
+
+    save_pipeline(pipeline_data, args.output)
 
     elapsed = time.perf_counter() - t0
     logger.info("=" * 70)

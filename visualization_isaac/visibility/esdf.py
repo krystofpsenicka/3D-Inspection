@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 import trimesh
@@ -24,6 +25,38 @@ INFLATED_COLOR = (0.0, 0.7, 0.3)
 COORD_FRAME_SIZE = 2.0
 
 
+@dataclass
+class _PreparedPoints:
+    positions: np.ndarray  # (N, 3)
+    colors: np.ndarray | tuple  # (N, 3) or (3,)
+    n_total: int  # before subsampling
+
+
+@dataclass
+class _PreparedScene:
+    band: _PreparedPoints | None
+    occupied: _PreparedPoints | None
+    inflated: _PreparedPoints | None
+    esdf_band: float
+
+
+def _subsample(ijk: np.ndarray, max_points: int, seed: int) -> np.ndarray:
+    if len(ijk) <= max_points:
+        return ijk
+    rng = np.random.RandomState(seed)
+    return ijk[rng.choice(len(ijk), max_points, replace=False)]
+
+
+def _to_numpy(arr):
+    """Move a CuPy/Torch/etc. array to a NumPy array; pass numpy through."""
+    if isinstance(arr, np.ndarray):
+        return arr
+    get = getattr(arr, "get", None)
+    if callable(get):
+        return get()
+    return np.asarray(arr)
+
+
 class EsdfVisualizer:
     """Stage-builder for ESDF voxel grid visualization.
 
@@ -33,6 +66,15 @@ class EsdfVisualizer:
     raw_grid : Pre-inflation boolean occupancy grid.
     esdf : 3-D float array of signed distances.
     scaled_mesh : Optional trimesh (already scaled/posed) for overlays.
+
+    Notes
+    -----
+    Heavy numpy work (mask, argwhere, sub-sampling, colour mapping) belongs
+    in :meth:`prepare`, which should be called **before** the IsaacApp
+    context manager opens. Once Kit is running it auto-shuts the app down
+    if the main thread does not pump ``app.update()`` for ~1-2 seconds, so
+    the data must be ready when ``add_3d`` is invoked from a phase enter
+    callback.
     """
 
     def __init__(
@@ -46,26 +88,74 @@ class EsdfVisualizer:
         self.raw = raw_grid
         self.esdf = esdf
         self.scaled_mesh = scaled_mesh
+        self._prepared: _PreparedScene | None = None
+
+    def prepare(
+        self,
+        esdf_band: float = 2.0,
+        show_occupied: bool = False,
+        show_inflated: bool = False,
+        max_points: int = 300_000,
+    ) -> None:
+        """Pre-compute all voxel arrays before the SimulationApp launches."""
+        # The ESDF/raw grids and the grid origin may live on the GPU (CuPy).
+        # Move to CPU once; Isaac Sim's USD APIs only consume host memory,
+        # and matplotlib's colour map cannot consume CuPy arrays implicitly.
+        esdf_np = _to_numpy(self.esdf)
+        raw_np = _to_numpy(self.raw)
+        origin_np = np.asarray(_to_numpy(self.og.origin), dtype=np.float64)
+        resolution = float(self.og.resolution)
+
+        # Band: voxels with |signed-distance| < band_radius, coloured by value.
+        mask = np.abs(esdf_np) < esdf_band
+        ijk = np.argwhere(mask)
+        if len(ijk) > 0:
+            n_total = len(ijk)
+            ijk_s = _subsample(ijk, max_points, seed=42)
+            centres = origin_np + (ijk_s.astype(np.float64) + 0.5) * resolution
+            values = esdf_np[ijk_s[:, 0], ijk_s[:, 1], ijk_s[:, 2]]
+            colors = esdf_to_rgb(values, vmin=-esdf_band, vmax=esdf_band * 0.5)
+            band = _PreparedPoints(positions=centres, colors=colors, n_total=n_total)
+        else:
+            band = None
+
+        occupied = None
+        if show_occupied:
+            occ_ijk = np.argwhere(raw_np)
+            n_total = len(occ_ijk)
+            occ_ijk = _subsample(occ_ijk, max_points, seed=42)
+            pts = origin_np + (occ_ijk.astype(np.float64) + 0.5) * resolution
+            occupied = _PreparedPoints(positions=pts, colors=OCCUPIED_COLOR, n_total=n_total)
+
+        inflated = None
+        if show_inflated:
+            grid_np = _to_numpy(self.og.grid)
+            shell = grid_np & ~raw_np
+            shell_ijk = np.argwhere(shell)
+            n_total = len(shell_ijk)
+            shell_ijk = _subsample(shell_ijk, max_points, seed=99)
+            pts = origin_np + (shell_ijk.astype(np.float64) + 0.5) * resolution
+            inflated = _PreparedPoints(positions=pts, colors=INFLATED_COLOR, n_total=n_total)
+
+        self._prepared = _PreparedScene(
+            band=band, occupied=occupied, inflated=inflated, esdf_band=esdf_band
+        )
 
     def add_3d(
         self,
         stage,
         base_path: str,
-        esdf_band: float = 2.0,
-        show_occupied: bool = False,
-        show_inflated: bool = False,
         show_mesh: bool = True,
-        max_points: int = 300_000,
     ) -> list[str]:
-        """Add ESDF 3D visualization prims to *stage*.
+        """Author the prepared prims under ``base_path``.
 
-        Returns
-        -------
-        List of created prim paths.
+        :meth:`prepare` must have been called first.
         """
+        if self._prepared is None:
+            raise RuntimeError("EsdfVisualizer.prepare() must be called before add_3d()")
+        prep = self._prepared
         paths: list[str] = []
 
-        # 1. Mesh (grey)
         if show_mesh and self.scaled_mesh is not None:
             paths.append(
                 create_mesh_prim(stage, f"{base_path}/mesh", self.scaled_mesh, color=MESH_COLOR)
@@ -76,50 +166,43 @@ class EsdfVisualizer:
                 len(self.scaled_mesh.faces),
             )
 
-        # 2. Near-surface ESDF voxels coloured by distance
-        mask = np.abs(self.esdf) < esdf_band
-        ijk = np.argwhere(mask)
-        if len(ijk) > 0:
-            if len(ijk) > max_points:
-                rng = np.random.RandomState(42)
-                ijk = ijk[rng.choice(len(ijk), max_points, replace=False)]
-            centres = self.og.origin + (ijk.astype(np.float64) + 0.5) * self.og.resolution
-            values = self.esdf[ijk[:, 0], ijk[:, 1], ijk[:, 2]]
-            colors = esdf_to_rgb(values, vmin=-esdf_band, vmax=esdf_band * 0.5)
-
+        if prep.band is not None:
             paths.append(
-                create_points_prim(stage, f"{base_path}/esdf_band", centres, colors=colors)
+                create_points_prim(
+                    stage, f"{base_path}/esdf_band", prep.band.positions, colors=prep.band.colors
+                )
             )
-            logger.info("ESDF band |d| < %.1fm: %d points", esdf_band, len(ijk))
+            logger.info(
+                "ESDF band |d| < %.1fm: %d points (of %d)",
+                prep.esdf_band, len(prep.band.positions), prep.band.n_total,
+            )
         else:
             logger.warning("No voxels fall within ESDF band")
 
-        # 3. Raw occupied voxels
-        if show_occupied:
-            occ_ijk = np.argwhere(self.raw)
-            if len(occ_ijk) > max_points:
-                rng = np.random.RandomState(42)
-                occ_ijk = occ_ijk[rng.choice(len(occ_ijk), max_points, replace=False)]
-            pts = self.og.origin + (occ_ijk.astype(np.float64) + 0.5) * self.og.resolution
+        if prep.occupied is not None:
             paths.append(
-                create_points_prim(stage, f"{base_path}/occupied", pts, colors=OCCUPIED_COLOR)
+                create_points_prim(
+                    stage, f"{base_path}/occupied",
+                    prep.occupied.positions, colors=prep.occupied.colors,
+                )
             )
-            logger.info("Occupied voxels: %d points", len(occ_ijk))
+            logger.info(
+                "Occupied voxels: %d points (of %d)",
+                len(prep.occupied.positions), prep.occupied.n_total,
+            )
 
-        # 4. Inflation shell
-        if show_inflated:
-            shell = self.og.grid & ~self.raw
-            shell_ijk = np.argwhere(shell)
-            if len(shell_ijk) > max_points:
-                rng = np.random.RandomState(99)
-                shell_ijk = shell_ijk[rng.choice(len(shell_ijk), max_points, replace=False)]
-            pts = self.og.origin + (shell_ijk.astype(np.float64) + 0.5) * self.og.resolution
+        if prep.inflated is not None:
             paths.append(
-                create_points_prim(stage, f"{base_path}/inflated", pts, colors=INFLATED_COLOR)
+                create_points_prim(
+                    stage, f"{base_path}/inflated",
+                    prep.inflated.positions, colors=prep.inflated.colors,
+                )
             )
-            logger.info("Inflation shell: %d points", len(shell_ijk))
+            logger.info(
+                "Inflation shell: %d points (of %d)",
+                len(prep.inflated.positions), prep.inflated.n_total,
+            )
 
-        # 5. Coordinate frame
         paths.append(
             create_coordinate_frame_prim(stage, f"{base_path}/coord_frame", size=COORD_FRAME_SIZE)
         )

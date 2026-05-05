@@ -10,6 +10,45 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
+
+# ---------------------------------------------------------------------------
+# Vt helpers -- numpy -> pxr.Vt without per-element Python object construction
+# ---------------------------------------------------------------------------
+
+
+def _vec3f_array(arr):
+    """Build a ``Vt.Vec3fArray`` from a ``(N, 3)`` numpy array in one C++ copy.
+
+    The legacy ``Vt.Vec3fArray([Gf.Vec3f(*v) for v in arr])`` path allocates
+    one Python object per row, which blocks the Kit main loop for several
+    seconds on meshes/point-clouds with hundreds of thousands of rows.
+    """
+    from pxr import Vt
+
+    arr = np.ascontiguousarray(np.asarray(arr, dtype=np.float32))
+    if hasattr(Vt.Vec3fArray, "FromNumpy"):
+        return Vt.Vec3fArray.FromNumpy(arr)
+    return Vt.Vec3fArray(arr)
+
+
+def _float_array(arr):
+    from pxr import Vt
+
+    arr = np.ascontiguousarray(np.asarray(arr, dtype=np.float32))
+    if hasattr(Vt.FloatArray, "FromNumpy"):
+        return Vt.FloatArray.FromNumpy(arr)
+    return Vt.FloatArray(arr)
+
+
+def _int_array(arr):
+    from pxr import Vt
+
+    arr = np.ascontiguousarray(np.asarray(arr, dtype=np.int32))
+    if hasattr(Vt.IntArray, "FromNumpy"):
+        return Vt.IntArray.FromNumpy(arr)
+    return Vt.IntArray(arr)
+
+
 # ---------------------------------------------------------------------------
 # Mesh
 # ---------------------------------------------------------------------------
@@ -19,7 +58,7 @@ def create_mesh_prim(
     stage,
     path: str,
     mesh: trimesh.Trimesh,
-    color: tuple = (0.8, 0.8, 0.8),
+    color: tuple = (0.55, 0.55, 0.55),
     opacity: float = 1.0,
 ) -> str:
     """Create a ``UsdGeom.Mesh`` prim from a trimesh.
@@ -40,16 +79,15 @@ def create_mesh_prim(
 
     usd_mesh = UsdGeom.Mesh.Define(stage, path)
 
-    vertices = mesh.vertices.astype(np.float64)
-    usd_mesh.GetPointsAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*v) for v in vertices]))
+    vertices = np.asarray(mesh.vertices)
+    usd_mesh.GetPointsAttr().Set(_vec3f_array(vertices))
 
-    faces = mesh.faces.astype(int)
-    usd_mesh.GetFaceVertexCountsAttr().Set(Vt.IntArray([3] * len(faces)))
-    usd_mesh.GetFaceVertexIndicesAttr().Set(Vt.IntArray(faces.flatten().tolist()))
+    faces = np.asarray(mesh.faces, dtype=np.int32)
+    usd_mesh.GetFaceVertexCountsAttr().Set(_int_array(np.full(len(faces), 3, dtype=np.int32)))
+    usd_mesh.GetFaceVertexIndicesAttr().Set(_int_array(faces.reshape(-1)))
 
     if mesh.vertex_normals is not None and len(mesh.vertex_normals) == len(vertices):
-        normals = mesh.vertex_normals.astype(np.float64)
-        usd_mesh.GetNormalsAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*n) for n in normals]))
+        usd_mesh.GetNormalsAttr().Set(_vec3f_array(mesh.vertex_normals))
         usd_mesh.SetNormalsInterpolation("vertex")
 
     usd_mesh.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*color)]))
@@ -70,7 +108,7 @@ def create_points_prim(
     path: str,
     positions: np.ndarray,
     colors: np.ndarray | tuple | None = None,
-    point_size: float = 4.0,
+    point_size: float = 0.02,
 ) -> str:
     """Create a ``UsdGeom.Points`` prim.
 
@@ -87,27 +125,27 @@ def create_points_prim(
     -------
     The prim path string.
     """
-    from pxr import Gf, UsdGeom, Vt
+    from pxr import UsdGeom, Vt
 
     pts_prim = UsdGeom.Points.Define(stage, path)
 
-    positions = np.asarray(positions, dtype=np.float64)
-    pts_prim.GetPointsAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*p) for p in positions]))
+    positions = np.asarray(positions)
+    n = len(positions)
+    pts_prim.GetPointsAttr().Set(_vec3f_array(positions))
 
-    widths = Vt.FloatArray([point_size] * len(positions))
-    pts_prim.GetWidthsAttr().Set(widths)
+    pts_prim.GetWidthsAttr().Set(_float_array(np.full(n, point_size, dtype=np.float32)))
 
     if colors is None:
-        colors_arr = Vt.Vec3fArray([Gf.Vec3f(1, 1, 1)] * len(positions))
+        colors_np = np.broadcast_to(np.array([1.0, 1.0, 1.0], dtype=np.float32), (n, 3))
     elif (
         isinstance(colors, (tuple, list)) and len(colors) == 3 and not hasattr(colors[0], "__len__")
     ):
-        colors_arr = Vt.Vec3fArray([Gf.Vec3f(*colors)] * len(positions))
+        colors_np = np.broadcast_to(np.asarray(colors, dtype=np.float32), (n, 3))
     else:
-        colors = np.asarray(colors, dtype=np.float64)
-        colors_arr = Vt.Vec3fArray([Gf.Vec3f(*c) for c in colors])
+        colors_np = np.asarray(colors, dtype=np.float32)
 
-    pts_prim.GetDisplayColorAttr().Set(colors_arr)
+    pts_prim.GetDisplayColorAttr().Set(_vec3f_array(colors_np))
+    pts_prim.GetDisplayOpacityAttr().Set(Vt.FloatArray([1.0]))
 
     return path
 
@@ -123,7 +161,7 @@ def create_lineset_prim(
     points: np.ndarray,
     lines: np.ndarray,
     color: tuple = (1.0, 1.0, 1.0),
-    width: float = 2.0,
+    width: float = 0.02,
 ) -> str:
     """Create a ``UsdGeom.BasisCurves`` prim for line segments.
 
@@ -145,21 +183,23 @@ def create_lineset_prim(
     curves = UsdGeom.BasisCurves.Define(stage, path)
     curves.GetTypeAttr().Set("linear")
 
-    lines = np.asarray(lines, dtype=int)
-    points = np.asarray(points, dtype=np.float64)
+    lines = np.asarray(lines, dtype=np.int32)
+    points = np.asarray(points)
 
-    # Flatten: for each segment, emit the two endpoint positions.
-    seg_pts = []
-    for i0, i1 in lines:
-        seg_pts.append(Gf.Vec3f(*points[i0]))
-        seg_pts.append(Gf.Vec3f(*points[i1]))
+    # For each segment emit the two endpoint positions as a flat (2L, 3) array.
+    seg_pts = points[lines.reshape(-1)]
+    n_seg_pts = len(seg_pts)
 
-    curves.GetPointsAttr().Set(Vt.Vec3fArray(seg_pts))
-    curves.GetCurveVertexCountsAttr().Set(Vt.IntArray([2] * len(lines)))
+    curves.GetPointsAttr().Set(_vec3f_array(seg_pts))
+    curves.GetCurveVertexCountsAttr().Set(_int_array(np.full(len(lines), 2, dtype=np.int32)))
 
-    curves.GetWidthsAttr().Set(Vt.FloatArray([width] * len(seg_pts)))
+    curves.GetWidthsAttr().Set(_float_array(np.full(n_seg_pts, width, dtype=np.float32)))
+    curves.GetWidthsAttr().SetMetadata("interpolation", "vertex")
 
     curves.GetDisplayColorAttr().Set(Vt.Vec3fArray([Gf.Vec3f(*color)]))
+    # Force opaque rendering so RTX doesn't apply alpha-coverage softening
+    # at the silhouette (the source of the "halo through mesh" look).
+    curves.GetDisplayOpacityAttr().Set(Vt.FloatArray([1.0]))
 
     return path
 
@@ -349,7 +389,7 @@ def create_wireframe_from_trimesh(
     path: str,
     mesh: trimesh.Trimesh,
     color: tuple = (0.7, 0.7, 0.7),
-    width: float = 1.0,
+    width: float = 0.003,
 ) -> str:
     """Create a wireframe ``BasisCurves`` prim from the unique edges of a trimesh.
 

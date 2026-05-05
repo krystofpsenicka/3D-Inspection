@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "3d-inspection"
@@ -20,14 +20,18 @@ dependencies = [
     # OptiX raycasting — requires OptiX SDK >= 7.7 (see README) and torch
     # not on PyPI: pip install git+https://github.com/lcp29/trimesh-ray-optix.git
     "triro",
+    # OMPL Python bindings (2.0+); used by VRP/mapf/path_smoother.py
+    "ompl>=2.0",
 ]
 
 [project.optional-dependencies]
 rapids = [
     "cupy-cuda12x",
-    "cudf-cu12>=26.2",
-    "cugraph-cu12>=26.2",
-    "cuopt-cu12>=26.2",
+    # Pinned to 26.2.* — RAPIDS 26.4 pulls numba 0.64, which conflicts with
+    # isaacsim-core's numba==0.59.1 pin (and breaks under coverage 7.4.x).
+    "cudf-cu12==26.2.*",
+    "cugraph-cu12==26.2.*",
+    "cuopt-cu12==26.2.*",
 ]
 isaac = [
     # PyTorch — install with:
@@ -37,7 +41,6 @@ isaac = [
     "torchaudio",
     # IsaacSim + IsaacLab — install with:
     #   pip install "isaacsim[all]==5.0.0.0" isaaclab==2.2.0 --extra-index-url https://pypi.nvidia.com
-    # (or use scripts/setup_env.sh to symlink from an existing isaaclab installation)
     "isaacsim==5.0.0.0",
     "isaaclab==2.2.0",
 ]

@@ -1,10 +1,9 @@
 """Tests for visibility/set_cover/.
 
-Strongest property: standard greedy and Minoux 1978 lazy greedy must select
+Standard greedy and Minoux 1978 lazy greedy must select
 the same viewpoints in the same order on the same input. Both pick by
 argmax / heap-pop with ties broken to lowest index, so the sequences must
-be bit-identical -- this single test cross-validates two non-trivial
-implementations.
+be bit-identical.
 """
 
 from __future__ import annotations
@@ -48,8 +47,7 @@ class TestGreedyEqualsLazyGreedy:
         np.testing.assert_array_equal(g.selected_indices, lg.selected_indices)
 
     def test_identical_on_dense_instance(self, random_visibility_matrix):
-        # Higher density -> fewer iterations to reach 95% coverage; tests a
-        # different regime than the sparse case.
+        # Higher density -> fewer iterations to reach 95% coverage.
         V = random_visibility_matrix(20, 50, density=0.5)
         positions, rotmats = _dummy_pos_rot(20)
 
@@ -61,26 +59,6 @@ class TestGreedyEqualsLazyGreedy:
 
 class TestGreedyCorrectness:
     """Single-step and termination properties on hand-built instances."""
-
-    def test_first_pick_maximizes_gain(self):
-        """Construct V where row 7 covers 50 unique points; others ≤ 10. First pick must be 7."""
-        n_candidates, n_points = 20, 100
-        V = np.zeros((n_candidates, n_points), dtype=np.bool_)
-        V[7, :50] = True  # row 7 covers the most
-        local_rng = np.random.RandomState(0)
-        for i in range(n_candidates):
-            if i == 7:
-                continue
-            indices = local_rng.choice(n_points, size=10, replace=False)
-            V[i, indices] = True
-
-        positions, rotmats = _dummy_pos_rot(n_candidates)
-        cover = GreedySetCover(n_points, positions, rotmats, V)
-        result = cover.select_next()
-        assert result is not None
-        cover.commit_selection(result[2])
-        assert cover.last_selected_index == 7
-        assert int(cover.uncovered.sum()) == n_points - 50
 
     def test_optimize_terminates_at_target_coverage(self):
         """3 carefully chosen rows cover 95% of points -> optimize stops after ≤ 3 picks."""

@@ -147,7 +147,7 @@ class TestSamplingSpaceFiltering:
 def _surface_with_varying_curvature():
     """A target cloud where points near x>0 have varying normals (high
     local curvature) while points near x<0 share a single normal (~zero
-    curvature). Returns (targets, normals) on GPU."""
+    curvature)."""
     n_per_side = 50
     rng = np.random.RandomState(42)
     flat_pts = np.stack(

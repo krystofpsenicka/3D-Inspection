@@ -1,7 +1,7 @@
 """Tests for VRP/mapf/route_planner.py:plan_robot_route_st.
 
 Most of the planner's components (Space-Time A*, ReservationTable) have
-their own tests in test_vrp.py. The integration property worth verifying
+their own tests. The integration property worth verifying
 here is that the full planner produces collision-free trajectories
 end-to-end on a non-trivial obstacle.
 """

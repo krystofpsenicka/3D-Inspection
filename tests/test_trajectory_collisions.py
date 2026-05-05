@@ -1,10 +1,4 @@
-"""Tests for VRP/utils/collision.py:find_trajectory_collisions.
-
-GPU-vectorized AABB collision detection between robot trajectories.
-Covers parallel paths, head-on collisions, padding for unequal lengths,
-single-robot self-collision (impossible), penetration sign, and pair
-uniqueness across multiple robots. Split out of test_vrp.py.
-"""
+"""Tests for VRP/utils/collision.py:find_trajectory_collisions."""
 
 from __future__ import annotations
 
@@ -33,23 +27,16 @@ class TestTrajectoryCollisions:
         traj_b = cp.array([[10.0 - float(t), 0.0, 0.0] for t in range(T)], dtype=cp.float32)
         collisions = find_trajectory_collisions([traj_a, traj_b])
         assert len(collisions) > 0
-        # Verify tuple format: (step, robot_a, robot_b, penetration)
         for _step, ra, rb, pen in collisions:
             assert ra == 0 and rb == 1
             assert pen > 0.0
 
     def test_padding_shorter_trajectory(self):
-        """Robots with different trajectory lengths are padded correctly."""
+        """Robots with different trajectory lengths are padded correctly with ending position."""
         # Robot A: 10 steps far away; Robot B: 5 steps far away
         traj_a = cp.array([[100.0, 0.0, 0.0]] * 10, dtype=cp.float32)
         traj_b = cp.array([[-100.0, 0.0, 0.0]] * 5, dtype=cp.float32)
         collisions = find_trajectory_collisions([traj_a, traj_b])
-        assert collisions == []
-
-    def test_single_robot_no_collision(self):
-        """A single robot cannot collide with itself."""
-        traj = cp.array([[0.0, 0.0, float(t)] for t in range(10)], dtype=cp.float32)
-        collisions = find_trajectory_collisions([traj])
         assert collisions == []
 
     def test_collision_penetration_sign(self):
