@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import math
 
+import cupy as cp
 import numpy as np
 import pytest
-
-cp = pytest.importorskip("cupy")
-pytest.importorskip("cugraph")
 
 from shared.occupancy_grid import OccupancyGrid
 from VRP.core.distance_matrix import compute_distance_matrix
@@ -26,28 +24,6 @@ def _open_grid(shape=(10, 10, 10), resolution=1.0) -> OccupancyGrid:
     )
 
 
-_SUBPROCESS_TOKENS = ("subprocess", "cuda", "rapids", "cugraph", "cudf")
-
-
-def _try_compute(og, waypoints) -> cp.ndarray | None:
-    """Run compute_distance_matrix; skip cleanly only on subprocess/RAPIDS setup failures.
-
-    Other RuntimeErrors (e.g. real bugs in the production code) propagate so
-    the test fails. We only skip when the exception message clearly points
-    to the cuGraph subprocess being unavailable.
-    """
-    try:
-        return compute_distance_matrix(og, waypoints)
-    except (BrokenPipeError, OSError) as exc:
-        # Pipe / fork failures are environmental, not production-code bugs.
-        pytest.skip(f"cuGraph subprocess unavailable: {exc}")
-    except RuntimeError as exc:
-        msg = str(exc).lower()
-        if any(tok in msg for tok in _SUBPROCESS_TOKENS):
-            pytest.skip(f"cuGraph subprocess unavailable: {exc}")
-        raise
-
-
 class TestDistanceMatrixInvariants:
     """Metric properties on a fully-open grid graph."""
 
@@ -57,7 +33,7 @@ class TestDistanceMatrixInvariants:
             [[0.5, 0.5, 0.5], [3.5, 1.5, 4.5], [1.5, 7.5, 2.5], [4.5, 4.5, 0.5]],
             dtype=cp.float64,
         )
-        D = _try_compute(corridor_og, waypoints)
+        D = compute_distance_matrix(corridor_og, waypoints)
         D_np = cp.asnumpy(D)
         for i in range(len(waypoints)):
             assert D_np[i, i] == pytest.approx(0.0, abs=1e-6)
@@ -68,7 +44,7 @@ class TestDistanceMatrixInvariants:
             [[0.5, 0.5, 0.5], [3.5, 1.5, 4.5], [7.5, 8.5, 2.5], [1.5, 9.5, 0.5]],
             dtype=cp.float64,
         )
-        D = cp.asnumpy(_try_compute(og, waypoints))
+        D = cp.asnumpy(compute_distance_matrix(og, waypoints))
         np.testing.assert_allclose(D, D.T, atol=1e-5)
 
     def test_triangle_inequality(self):
@@ -76,7 +52,7 @@ class TestDistanceMatrixInvariants:
         local_rng = np.random.RandomState(42)
         waypoints_np = local_rng.uniform(0.5, 9.5, size=(5, 3))
         waypoints = cp.asarray(waypoints_np, dtype=cp.float64)
-        D = cp.asnumpy(_try_compute(og, waypoints))
+        D = cp.asnumpy(compute_distance_matrix(og, waypoints))
         n = len(waypoints)
         for i in range(n):
             for j in range(n):
@@ -98,7 +74,7 @@ class TestDistanceMatrixCorrectness:
             [[0.5, 5.5, 5.5], [9.5, 5.5, 5.5]],
             dtype=cp.float64,
         )
-        D = cp.asnumpy(_try_compute(corridor_og, waypoints))
+        D = cp.asnumpy(compute_distance_matrix(corridor_og, waypoints))
         # Allow 5% slack.
         assert D[0, 1] == pytest.approx(9.0, rel=0.05)
 
@@ -118,7 +94,7 @@ class TestDistanceMatrixCorrectness:
             [[0.5, 5.5, 5.5], [9.5, 5.5, 5.5]],
             dtype=cp.float64,
         )
-        D = cp.asnumpy(_try_compute(sealed, waypoints))
+        D = cp.asnumpy(compute_distance_matrix(sealed, waypoints))
         # cuGraph encodes unreachable as float32 max (~3.4e38), not np.inf.
         # Either is fine; just assert the distance is impossibly large for
         # a 10x10x10 grid (whose maximum finite path length is < 50).
@@ -134,7 +110,7 @@ class TestDistanceMatrixErrorHandling:
         # origin=0. Voxel (10,10,10) is at world (5.0, 5.0, 5.0).
         waypoints = cp.array([[5.0, 5.0, 5.0], [0.5, 0.5, 0.5]], dtype=cp.float64)
         with pytest.raises(Exception) as exc_info:
-            _try_compute(small_og, waypoints)
+            compute_distance_matrix(small_og, waypoints)
         # The subprocess wraps and re-raises; the message should mention
         # "occupied" / "out-of-bounds" / "free" or be a RuntimeError that
         # the subprocess pipeline produces from the ValueError.

@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import math
 
+import cupy as cp
 import numpy as np
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from VRP.mapf.orientation import apply_heading_orientation
 

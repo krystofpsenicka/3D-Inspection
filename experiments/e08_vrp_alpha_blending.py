@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-"""E7: VRP Alpha Blending
+"""E7: VRP Alpha Blending — sweep alpha (makespan vs. total-distance weighting), measure tradeoff.
 
-Sweeps alpha parameter (makespan vs total-distance objective weighting)
-and measures the tradeoff.
-
-Usage:
     conda run -n isaaclab python -m experiments.e08_vrp_alpha_blending
 """
 
@@ -34,7 +30,6 @@ from experiments.common.plotting import (
     setup_thesis_style, save_figure, dual_yaxis, THESIS_COL,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -75,8 +70,7 @@ N_ROBOTS = 5
 
 
 def _build_instance(alpha: float, seed: int, og, sampler, bmin, bmax):
-    """Deterministic instance construction (shared between the full run and
-    the LB-only recompute path)."""
+    """Deterministic instance construction (shared by full run and LB-only recompute)."""
     np.random.seed(seed)
     cp.random.seed(seed)
 
@@ -97,8 +91,7 @@ def _build_instance(alpha: float, seed: int, og, sampler, bmin, bmax):
 
 def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
                mesh_bounds_max):
-    """Run VRP with the given alpha on one frozen instance. Returns
-    ``(main_result, lb_dict)``; ``lb_dict`` is None on VRP failure."""
+    """``lb_dict`` is None on VRP failure."""
     K, home_indices, dist_matrix = _build_instance(
         alpha, seed, og, sampler, mesh_bounds_min, mesh_bounds_max)
 
@@ -116,7 +109,7 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
         total_cost = vrp_result.total_cost
         status = vrp_result.status
 
-        # LB sidecar (no MAPF in this experiment  --  VRP-only LBs).
+        # No MAPF in this experiment — VRP-only LBs.
         try:
             lb = compute_all_lbs(
                 dist_matrix, home_indices, K, N_WAYPOINTS, alpha,
@@ -150,8 +143,7 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
 
 def _recompute_lb_only(alpha: float, seed: int, og, sampler, bmin, bmax,
                        *, include_cuopt: bool = False) -> dict:
-    """Recompute analytical LBs for a given (alpha, seed) and optionally
-    also extract a cuOpt dual bound via a short solve."""
+    """Recompute analytical LBs and optionally also extract a cuOpt dual bound via short solve."""
     K, home_indices, dist_matrix = _build_instance(
         alpha, seed, og, sampler, bmin, bmax)
     return recompute_lbs(
@@ -182,7 +174,6 @@ def generate_plots(results: list[dict], output_dir: str,
         for b in betas
     ]
 
-    # ── Dual y-axis: makespan vs total cost across alpha ─────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     dual_yaxis(ax, alphas, makespan_means, cost_means,
                "Makespan", "Total cost",
@@ -201,17 +192,14 @@ def main():
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e08_vrp_alpha_blending"))
     p.add_argument("--plots_only", action="store_true")
     p.add_argument("--resume", action="store_true",
-                   help="Skip rows whose result JSON already exists; exit "
-                        "non-zero on CUDA OOM so an outer restart loop can "
-                        "reclaim GPU memory.")
+                   help="Skip rows whose result JSON exists; exit non-zero on CUDA OOM "
+                        "so an outer restart loop can reclaim GPU memory.")
     p.add_argument("--compute_lbs_only", action="store_true",
-                   help="Skip full VRP solves; recompute analytical LBs for "
-                        "each existing main-result JSON and write sidecar "
-                        "JSONs into raw_lb/.")
+                   help="Skip full VRP solves; recompute analytical LBs for each existing "
+                        "main-result JSON and write sidecars into raw_lb/.")
     p.add_argument("--include_cuopt_bound", action="store_true",
-                   help="In --compute_lbs_only mode, also run a short cuOpt "
-                        "solve per instance to extract the MIP dual bound. "
-                        "Expensive; off by default.")
+                   help="In --compute_lbs_only mode, also run a short cuOpt solve per instance "
+                        "to extract the MIP dual bound. Expensive; off by default.")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -259,7 +247,6 @@ def main():
         )
         return og_, sampler_, bmin_, bmax_
 
-    # ── LB-only mode: recompute analytical LBs for existing main results ──
     if args.compute_lbs_only:
         if not os.path.isdir(raw_dir):
             logger.error("No raw/ directory at %s; nothing to augment.", raw_dir)

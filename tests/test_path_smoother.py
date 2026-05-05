@@ -7,34 +7,47 @@ against.
 
 from __future__ import annotations
 
+import cupy as cp
 import numpy as np
-import pytest
 
-cp = pytest.importorskip("cupy")
-pytest.importorskip("ompl")
-
+from shared.grid_utils import inflate_grid
+from shared.occupancy_grid import OccupancyGrid
 from VRP.mapf.path_smoother import simplify_path_ompl
 
 
 class TestSimplifyPathOmpl:
     def test_smoothed_path_collision_free(self, corridor_og):
-        """A coarse zig-zag path through the gap, smoothed, must stay collision-free.
+        """A coarse zig-zag path through an inflated corridor, smoothed,
+        must stay collision-free against the inflated grid.
 
-        Coarse path: (0.5, 5.5, 5.5) -> (4.5, 5.5, 5.5) -> (5.5, 5.5, 5.5)
-        -> (9.5, 5.5, 5.5). The straight line from start to end clips through
-        the wall, so the smoother must keep the path through the gap.
+        Production callers pre-inflate the occupancy grid by
+        ``robot_radius`` so the smoother's point-in-voxel validity check
+        is sound for a robot of that radius; this test mirrors that.
+        The corridor's 1-voxel gap is widened to 3x3 first so it
+        survives a 1-voxel inflation as a 1-voxel passage.
         """
+        robot_radius = 0.1
+        resolution = float(corridor_og.resolution)
+        inflation_voxels = int(np.ceil(robot_radius / resolution))
+
+        grid = corridor_og.grid.copy()
+        grid[5, 4:7, 4:7] = False  # widen the gap so it survives inflation
+        og = OccupancyGrid(
+            grid=inflate_grid(grid, inflation_voxels),
+            origin=corridor_og.origin,
+            resolution=resolution,
+        )
+
         coarse = cp.array(
             [
-                [0.5, 3.5, 5.5],
-                [4.5, 3.5, 5.5],
+                [0.5, 5.5, 5.5],
                 [4.5, 5.5, 5.5],
                 [5.5, 5.5, 5.5],  # gap voxel
                 [9.5, 5.5, 5.5],
             ],
             dtype=cp.float64,
         )
-        smoothed = simplify_path_ompl(coarse, corridor_og, robot_radius=0.1, max_time=0.5)
+        smoothed = simplify_path_ompl(coarse, og, robot_radius=robot_radius, max_time=0.5)
 
         # Sample densely along the smoothed polyline and check every sample is free
         smoothed_np = cp.asnumpy(smoothed)
@@ -46,7 +59,7 @@ class TestSimplifyPathOmpl:
             for t in np.linspace(0.0, 1.0, n):
                 samples.append(p0 + t * (p1 - p0))
         samples_gpu = cp.asarray(np.stack(samples))
-        free_mask = corridor_og.is_free_world_batch(samples_gpu)
+        free_mask = og.is_free_world_batch(samples_gpu)
         n_collisions = int(cp.sum(~free_mask))
         assert n_collisions == 0, (
             f"smoothed path has {n_collisions}/{len(samples)} samples inside the wall"

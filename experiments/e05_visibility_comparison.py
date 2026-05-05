@@ -1,37 +1,13 @@
 #!/usr/bin/env python3
-"""E3: Visibility Method Comparison
+"""E3: Visibility Method Comparison — gpu/cpu × raycast/epsilon across coverage targets.
 
-Compares four visibility implementations across coverage targets:
-  gpu_raycast   --  GPU ray-casting (ground truth, always correct)
-  gpu_epsilon   --  GPU epsilon-visibility (approximate, fast)
-  cpu_raycast   --  CPU ray-casting (ground truth, baseline speed)
-  cpu_epsilon   --  CPU epsilon-visibility (approximate)
+All methods run on the same candidates per (model, target, seed). Set-cover: LazyGreedySetCover (CPU; isolates the visibility
+comparison). Actual coverage cross-validated against ground-truth gpu_raycast.
 
-All methods run on the same candidate viewpoints per (model, target, seed) so
-timing and accuracy comparisons are apples-to-apples.
 
-IoU is computed per candidate: |V_method[i] ∩ V_gt[i]| / |V_method[i] ∪ V_gt[i]|,
-where V_gt = gpu_raycast.  Mean IoU is reported per run.
-
-Set-cover: LazyGreedySetCover (CPU)  --  same for all methods to isolate the
-visibility comparison from the optimizer.  Actual coverage always cross-validated
-against ground-truth gpu_raycast.
-
-Key findings expected:
-  - epsilon (GPU & CPU) overestimates coverage (positive gap) and has IoU < 1
-  - GPU variants are faster than CPU variants
-  - GPU raycast is faster than GPU epsilon for large N (vectorised CUDA raycasting
-    vs per-point epsilon angle computation)
-
-Note: CPU methods are slow for large models (O(N) sequential raycast calls).
-      Run CPU variants with TOSCA models or a reduced candidate count.
-
-Usage:
     conda run -n isaaclab python -m experiments.e05_visibility_comparison
     conda run -n isaaclab python -m experiments.e05_visibility_comparison --plots_only
-    # GPU-only (fast, includes Duke):
-    conda run -n isaaclab python -m experiments.e05_visibility_comparison \\
-        --methods gpu_raycast gpu_epsilon
+    conda run -n isaaclab python -m experiments.e05_visibility_comparison --methods gpu_raycast gpu_epsilon
 """
 
 from __future__ import annotations
@@ -69,7 +45,6 @@ from experiments.common.plotting import (
     setup_thesis_style,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -110,19 +85,12 @@ _METHOD_LABELS = {
 
 
 def _display_model(name: str) -> str:
-    """Map internal model id to a compact display label used in figures."""
     return "duke" if name == "duke_of_lancaster" else name
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Visibility helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _build_cpu_query(
     method: str, ctx: PipelineContext, target_points_np: np.ndarray, normals_np: np.ndarray
 ):
-    """Construct a CPU visibility query."""
     from visibility.core.types import FrustumParams
 
     frustum_params = FrustumParams(
@@ -153,10 +121,7 @@ def _build_cpu_query(
 
 
 def _cpu_batch(vis_cpu, pos_np: np.ndarray, rot_np: np.ndarray) -> np.ndarray:
-    """Compute visibility for all candidates via per-viewpoint CPU calls.
-
-    Returns (N, M) boolean numpy array.
-    """
+    """(N, M) bool via per-viewpoint CPU calls."""
     n = len(pos_np)
     m = len(vis_cpu.target_points)
     V = np.zeros((n, m), dtype=bool)
@@ -167,7 +132,6 @@ def _cpu_batch(vis_cpu, pos_np: np.ndarray, rot_np: np.ndarray) -> np.ndarray:
 
 
 def _compute_iou_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float:
-    """Mean per-candidate IoU between method and ground truth."""
     intersection = (V_gt & V_method).sum(axis=1).astype(np.float32)
     union = (V_gt | V_method).sum(axis=1).astype(np.float32)
     iou = np.where(union > 0, intersection / union, 1.0)
@@ -175,14 +139,9 @@ def _compute_iou_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float
 
 
 def _compute_f1_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float:
-    """Mean per-candidate F1 score between method and ground truth.
-
-    F1 = 2.TP / (2.TP + FP + FN). F1 weights precision and recall equally,
-    which is the right choice here because epsilon's failure mode is
-    over-reporting (false positives inflate coverage downstream). When both
-    method and GT are empty for a candidate, define F1 = 1 (trivially
-    correct "nothing visible" agreement).
-    """
+    """Mean per-candidate F1 = 2·TP / (2·TP + FP + FN). F1 weights precision and recall equally —
+    the right choice because epsilon's failure mode is over-reporting (false positives inflate
+    coverage downstream). When method and GT are both empty for a candidate, F1 = 1."""
     tp = (V_gt & V_method).sum(axis=1).astype(np.float32)
     fp = (~V_gt & V_method).sum(axis=1).astype(np.float32)
     fn = (V_gt & ~V_method).sum(axis=1).astype(np.float32)
@@ -192,7 +151,6 @@ def _compute_f1_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float:
 
 
 def _actual_coverage(V_gt_np: np.ndarray, selected_indices) -> float:
-    """Compute true coverage from GPU-raycast ground truth for selected viewpoints."""
     if hasattr(selected_indices, "get"):
         selected_indices = selected_indices.get()
     selected_indices = np.asarray(selected_indices)
@@ -200,19 +158,13 @@ def _actual_coverage(V_gt_np: np.ndarray, selected_indices) -> float:
     return float(covered / V_gt_np.shape[1])
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Per-run logic
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def run_all_methods(
     ctx: PipelineContext, methods: list[str], target_coverage: float, seed: int
 ) -> list[dict]:
-    """Run all requested methods on the same candidates. Returns list of result dicts."""
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
 
-    # Generate candidates (targeted_50, consistent with e01/e02 default strategy)
+    # targeted_50 candidates (consistent with e01/e02 default).
     sampler = ctx.build_sampler("targeted")
     num_cands = ctx.model.num_candidates
     n_base = num_cands // 2
@@ -239,7 +191,6 @@ def run_all_methods(
     target_points_np = cp.asnumpy(target_points)
     normals_np = cp.asnumpy(normals)
 
-    # Ground truth visibility (GPU raycast, always computed)
     with timed():
         V_gt_gpu, _ = gt_query.compute_visibility_batch(pos_gpu, rot_gpu)
     V_gt_np = cp.asnumpy(V_gt_gpu)
@@ -249,7 +200,7 @@ def run_all_methods(
         logger.debug("  Computing visibility: %s", method)
         try:
             if method == "gpu_raycast":
-                # Already computed above  --  reuse for timing isolation
+                # Already computed above; recompute for timing isolation.
                 with timed() as t_vis:
                     V_m_gpu, _ = gt_query.compute_visibility_batch(pos_gpu, rot_gpu)
                 V_m_np = cp.asnumpy(V_m_gpu)
@@ -273,11 +224,9 @@ def run_all_methods(
             logger.error("  Visibility FAILED for %s: %s", method, e, exc_info=True)
             continue
 
-        # IoU and F1 vs ground truth (all candidates)
         mean_iou = _compute_iou_all_candidates(V_gt_np, V_m_np)
         mean_f1 = _compute_f1_all_candidates(V_gt_np, V_m_np)
 
-        # Set cover (CPU LazyGreedy  --  same for all methods)
         with timed() as t_opt:
             optimizer = LazyGreedySetCover(len(target_points), pos_np, rot_np, V_m_np)
             opt_result = optimizer.optimize(target_coverage=target_coverage, max_viewpoints=1000)
@@ -307,23 +256,14 @@ def run_all_methods(
     return results
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plot generation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _render_f1_table(
     results: list[dict],
     methods: list[str],
     expected_seeds_per_cell: int,
     fig_dir: str,
 ) -> None:
-    """Aggregate per-(model, method) mean F1 over targets and seeds, log a
-    text table + sanity summary, and save a matplotlib table figure.
-
-    Mirrors what `verify_e05_f1_table.py` used to do as a standalone script,
-    so the user can compare the printed cells against Table 6.1 in chap06.tex.
-    """
+    """Aggregate per-(model, method) mean F1 over targets and seeds; log a text table + sanity
+    summary; save a matplotlib table figure (mirrors the standalone verify_e05_f1_table.py)."""
     f1_results = [r for r in results if r.get("mean_f1") is not None]
     if not f1_results:
         return
@@ -440,7 +380,6 @@ def generate_plots(
     output_dir: str,
     expected_seeds_per_cell: int,
 ):
-    """Generate all E3 figures."""
     setup_thesis_style()
     fig_dir = os.path.join(output_dir, "figures")
     os.makedirs(fig_dir, exist_ok=True)
@@ -463,7 +402,7 @@ def generate_plots(
             r[metric] for r in results if r["method"] == method and r["target_coverage"] == target
         ]
 
-    # ── Per-model: actual-vs-target coverage line, Duke only ────────────
+    # Per-model: actual-vs-target coverage line, Duke only
     duke = "duke_of_lancaster"
     if duke in models:
         mr = [r for r in results if r["model"] == duke]
@@ -502,7 +441,7 @@ def generate_plots(
             save_figure(fig, os.path.join(fig_dir, f"{duke}_e05_actual_vs_target"))
             logger.info("E05 actual-vs-target figure saved for %s", _display_model(duke))
 
-    # ── Cross-model timing bar (one figure, bars grouped by model x method) ─
+    # Cross-model timing bar (one figure, bars grouped by model × method)
     if models:
         model_labels = [_display_model(m) for m in models]
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
@@ -535,13 +474,7 @@ def generate_plots(
         save_figure(fig, os.path.join(fig_dir, "cross_model_e05_timing"))
         logger.info("Cross-model timing figure saved")
 
-    # ── Cross-model F1 table (printed + saved as figure) ────────────────
     _render_f1_table(results, methods, expected_seeds_per_cell, fig_dir)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def main():
@@ -550,13 +483,12 @@ def main():
         "--models",
         nargs="+",
         default=TOSCA_REPRESENTATIVE + ["duke_of_lancaster"],
-        help="Models to evaluate (default: TOSCA and duke_of_lancaster)",
     )
     p.add_argument(
         "--methods",
         nargs="+",
         default=_ALL_METHODS,
-        help="Visibility methods: gpu_raycast gpu_epsilon cpu_raycast cpu_epsilon",
+        help="gpu_raycast gpu_epsilon cpu_raycast cpu_epsilon",
     )
     p.add_argument("--targets", type=float, nargs="+", default=E03_COVERAGE_TARGETS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
@@ -604,7 +536,6 @@ def main():
             for idx, (target, seed) in enumerate(combos, 1):
                 logger.info("[%d/%d] target=%.2f seed=%d", idx, total, target, seed)
 
-                # Check if all methods already have results for this combo
                 missing_methods = []
                 for method in args.methods:
                     rpath = os.path.join(

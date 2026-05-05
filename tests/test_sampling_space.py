@@ -6,10 +6,9 @@ correctly and returns only voxels that satisfy the SDF bounds.
 
 from __future__ import annotations
 
+import cupy as cp
 import numpy as np
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from shared.occupancy_grid import OccupancyGrid
 from shared.types import Side

@@ -1,27 +1,9 @@
 #!/usr/bin/env python3
-"""E15: Cross-Model Generalization
+"""E15: Cross-Model Generalization — full 8-stage pipeline on Duke + TOSCA_ALL.
 
-Runs the full 8-stage inspection pipeline on Duke of Lancaster + TOSCA_ALL to
-evaluate how well the pipeline generalizes across shape complexity.
+Stages timed: mesh → surface → OG → sampling (weighted_curvature, e01) → visibility (GPU
+raycast, e03) → set cover (LazyGreedy CPU, e04) → VRP (cuOpt, K=5) → MAPF (0.5m).
 
-Pipeline stages timed:
-  1. Mesh loading
-  2. Surface sampling
-  3. Occupancy grid
-  4. Viewpoint sampling  (weighted_curvature  --  chosen based on e01 results)
-  5. Visibility          (GPU raycast  --  ground truth, from e03 results)
-  6. Set cover           (LazyGreedy CPU  --  fastest solver, from e04 results)
-  7. VRP routing         (cuOpt, K=5 robots  --  from e08 results)
-  8. MAPF trajectory     (resolution 0.5 m  --  from e10 results)
-
-Implementation choice rationale (printed in summary and figure annotations):
-  - Sampler: weighted_curvature achieves the best coverage/viewpoints ratio (e01)
-  - Visibility: GPU raycast is exact and fastest for N<=5K candidates (e03)
-  - Set cover: LazyGreedy (CPU) beats LazyGreedy (GPU) for N~1500 due to heap (e04)
-  - VRP: cuOpt achieves near-optimal within time limit (e08)
-  - MAPF: 0.5 m voxel resolution balances path quality vs planning cost (e10)
-
-Usage:
     conda run -n isaaclab python -m experiments.e10_cross_model
     conda run -n isaaclab python -m experiments.e10_cross_model --plots_only
     conda run -n isaaclab python -m experiments.e10_cross_model --models duke_of_lancaster wolf0
@@ -65,7 +47,6 @@ from experiments.common.plotting import (
     setup_thesis_style,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -98,10 +79,9 @@ logger = logging.getLogger(__name__)
 
 ALL_MODELS = ["duke_of_lancaster"] + TOSCA_ALL
 TARGET_COVERAGE = 0.95
-FLEET_SIZE = 5  # robots for VRP/MAPF
-VRP_ALPHA = 0.5  # blend β in eq. (1.1): 0.5 · makespan + 0.5 · total_cost
+FLEET_SIZE = 5
+VRP_ALPHA = 0.5  # blend β: 0.5·makespan + 0.5·total_cost
 
-# Fields persisted as an LB sidecar JSON next to each main result.
 LB_SIDECAR_FIELDS = tuple(JOINT_LB_FIELDS) + tuple(ALL_LB_FIELDS)
 
 _IMPLEMENTATION_CHOICES = (
@@ -112,7 +92,6 @@ _IMPLEMENTATION_CHOICES = (
     "MAPF: 0.5 m resolution (e10)"
 )
 
-# Graceful import of VRP/MAPF stack
 try:
     from VRP.core.constants import AUV_CRUISE_SPEED, SPACE_TIME_DWELL_S
     from VRP.core.distance_matrix import compute_distance_matrix
@@ -129,17 +108,10 @@ except ImportError as _vrp_err:
     SPACE_TIME_DWELL_S = 2.0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Single run logic
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
-    """Run full 8-stage pipeline on one model with one seed."""
     result: dict = {
         "model": model_cfg.name,
         "seed": seed,
-        # Stage timings
         "t_mesh": 0.0,
         "t_surface": 0.0,
         "t_og": 0.0,
@@ -149,7 +121,6 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         "t_vrp": 0.0,
         "t_mapf": 0.0,
         "t_joint_lb": 0.0,
-        # Metrics
         "mesh_vertices": 0,
         "mesh_faces": 0,
         "num_viewpoints": 0,
@@ -163,30 +134,25 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         "mapf_makespan_s": float("nan"),
         "mapf_total_time_s": float("nan"),
     }
-    # Joint-problem + stage LB fields (all 0.0 if not filled in).
     for k in JOINT_LB_FIELDS:
         result[k] = 0 if k.endswith("poses_lb") else 0.0
     for k in ALL_LB_FIELDS:
         result[k] = 0.0
 
-    # 1. Mesh loading
     with timed() as t_mesh:
         tm, _ = ctx.load_mesh()
     result["t_mesh"] = t_mesh.elapsed
     result["mesh_vertices"] = len(tm.vertices)
     result["mesh_faces"] = len(tm.faces)
 
-    # 2. Surface sampling
     with timed() as t_surface:
         target_points, normals = ctx.sample_surface()
     result["t_surface"] = t_surface.elapsed
 
-    # 3. Occupancy grid
     with timed() as t_og:
         og = ctx.build_sampling_og()
     result["t_og"] = t_og.elapsed
 
-    # 4. Viewpoint sampling (weighted_curvature)
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
     with timed() as t_sample:
@@ -201,19 +167,17 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         )
     result["t_sample"] = t_sample.elapsed
 
-    # 5. Visibility (GPU raycast)
     with timed() as t_vis:
         V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
     result["t_vis"] = t_vis.elapsed
 
-    # 6. Set cover (LazyGreedy CPU)
     V_np = cp.asnumpy(V)
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)
     num_points = int(len(target_points))
 
-    # Joint-problem lower bound  --  computed here (after visibility) so
-    # we have V_np for Component 1. Depot layout matches the VRP stage.
+    # Joint-problem LB computed here (after visibility) so we have V_np for Component 1.
+    # Depot layout matches the VRP stage.
     if _VRP_AVAILABLE:
         try:
             bounds_min, bounds_max = ctx.mesh_bounds
@@ -256,13 +220,12 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
     result["coverage"] = float(opt_result.total_coverage)
     result["redundancy"] = float(opt_result.redundancy)
 
-    # Selected viewpoint positions / rotations
     sel_idx = opt_result.selected_indices
     if hasattr(sel_idx, "get"):
         sel_idx = sel_idx.get()
     sel_idx = np.asarray(sel_idx)
-    insp_positions = pos_np[sel_idx]  # (N_vp, 3)
-    insp_rotmats = rot_np[sel_idx]  # (N_vp, 3, 3)
+    insp_positions = pos_np[sel_idx]
+    insp_rotmats = rot_np[sel_idx]
 
     if not _VRP_AVAILABLE or opt_result.num_viewpoints == 0:
         result["total_time"] = sum(
@@ -270,7 +233,6 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         )
         return result
 
-    # 7. VRP routing (cuOpt, K=FLEET_SIZE robots)
     try:
         bounds_min, bounds_max = ctx.mesh_bounds
         robot_starts = compute_start_grid(FLEET_SIZE, bounds_min, bounds_max)
@@ -297,8 +259,6 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
         result["vrp_status"] = vrp_result.status
         result["vrp_total_cost"] = float(vrp_result.total_cost)
 
-        # Stage LBs for VRP / MAPF in meters/seconds, using the same
-        # dist_matrix and the cuOpt dual bound.
         try:
             stage_lb = compute_all_lbs(
                 dist_matrix,
@@ -321,7 +281,6 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
             rc = np.array(per_vehicle_costs(vrp_result.routes, dist_matrix, home_indices))
             result["vrp_makespan"] = float(rc.max())
 
-            # 8. MAPF trajectory planning
             routes = [
                 [home_indices[i]] + list(r) + [home_indices[i]]
                 for i, r in enumerate(vrp_result.routes)
@@ -365,18 +324,11 @@ def run_single(ctx: PipelineContext, model_cfg: ModelConfig, seed: int) -> dict:
     return result
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plot generation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _display_model(name: str) -> str:
-    """Map internal model id to a compact display label used in figures."""
     return "duke" if name == "duke_of_lancaster" else name
 
 
 def generate_plots(results: list[dict], output_dir: str):
-    """Generate all E15 figures."""
     setup_thesis_style()
     fig_dir = os.path.join(output_dir, "figures")
     os.makedirs(fig_dir, exist_ok=True)
@@ -415,21 +367,10 @@ def generate_plots(results: list[dict], output_dir: str):
     subtitle = f"\n{_IMPLEMENTATION_CHOICES}"
     model_labels = [_display_model(m) for m in models]
 
-    # ── Three-bar timing breakdown per model ────────────────────────────
-    #   Bar 1 (left)   : total pipeline time as a single segment
-    #   Bar 2 (middle) : 2-group stack  --  sampling-pipeline / routing
-    #   Bar 3 (right)  : full 6-stage stack
-    # The two stacked bars share their cumulative heights at the group
-    # boundaries, so the reader can read off how each high-level group
-    # decomposes into its constituent stages just by tracing horizontally
-    # from one bar to the next.
-    #
-    # Note: mesh load and surface sampling are cached at the start of the
-    # run and are not shown in the figure. Occupancy-grid construction is
-    # counted under the sampling pipeline because it is part of that
-    # stage's setup. Trajectory creation/densification is part of the
-    # MAPF stage (Multi-Agent Path Planning, space-time A*), which
-    # already returns dense 6-DOF trajectories.
+    # Three-bar timing breakdown per model:
+    #   Bar 1 — total pipeline time as a single segment
+    #   Bar 2 — 2-group stack (sampling-pipeline / routing)
+    #   Bar 3 — full 6-stage stack
     GROUP_DEFS = [
         (
             "Sampling pipeline",
@@ -438,34 +379,31 @@ def generate_plots(results: list[dict], output_dir: str):
         ),
         ("Routing", ["t_vrp", "t_mapf"], ["VRP", "MAPF (space-time A*)"]),
     ]
-    # Bold colour per group; lighter shades for the constituent stages.
-    # Colourblind-safe Okabe-Ito-inspired palette with strong light->dark range.
+    # Colourblind-safe palette.
     GROUP_COLORS = ["#D55E00", "#009E73"]
     STAGE_COLORS = [
         "#FDD0A2",
         "#FDAE6B",
         "#E6550D",
-        "#7F2704",  # sampling-pipeline shades (vermillion)
+        "#7F2704",  # sampling-pipeline (vermillion)
         "#A1D99B",
-        "#00441B",  # routing shades (green)
+        "#00441B",  # routing (green)
     ]
 
     fig, ax = plt.subplots(figsize=(DOUBLE_COL * 1.15, 5.2))
     bar_w = 0.26
     xv = np.arange(len(models))
 
-    # Log-scale stacking needs a strictly positive floor so segments below
-    # the floor don't render as -inf. Stages with timing below this floor
-    # (e.g. sub-millisecond mesh-load on every mesh) are clipped, which
-    # is acceptable since they are not operationally significant.
-    LOG_FLOOR = 1e-3  # seconds
+    # Log-scale stacking needs a strictly positive floor so segments below the floor don't
+    # render as -inf. Sub-millisecond stages (e.g. mesh-load) are clipped.
+    LOG_FLOOR = 1e-3
 
     for mi, m in enumerate(models):
         per_stage = {key: max(_mm(m, key), 0.0) for _, keys, _ in GROUP_DEFS for key in keys}
         per_group = [sum(per_stage[k] for k in keys) for _, keys, _ in GROUP_DEFS]
         total = sum(per_group)
 
-        # Bar 1: total  --  single segment from the log floor up to the total.
+        # Bar 1: total — single segment from log floor to total.
         if total > LOG_FLOOR:
             ax.bar(
                 xv[mi] - bar_w,
@@ -477,9 +415,8 @@ def generate_plots(results: list[dict], output_dir: str):
                 linewidth=0.5,
             )
 
-        # Bar 2: 3-group stack. First visible segment starts at LOG_FLOOR
-        # (segments wholly below LOG_FLOOR are skipped); subsequent segments
-        # stack at the cumulative top, so the heights align with Bar 3.
+        # Bar 2: 3-group stack. First visible segment starts at LOG_FLOOR; subsequent
+        # segments stack at the cumulative top so heights align with Bar 3.
         cumulative = 0.0
         first = True
         for gi, (_gname, _, _) in enumerate(GROUP_DEFS):
@@ -499,7 +436,7 @@ def generate_plots(results: list[dict], output_dir: str):
                 first = False
             cumulative = new_top
 
-        # Bar 3: full 8-stage stack  --  same colour families, finer slices.
+        # Bar 3: full 8-stage stack — same colour families, finer slices.
         cumulative = 0.0
         flat_idx = 0
         first = True
@@ -522,9 +459,8 @@ def generate_plots(results: list[dict], output_dir: str):
                 cumulative = new_top
                 flat_idx += 1
 
-    # Build legend handles as Patch proxies so every group/stage appears in
-    # the legend, even when its segments are clipped below the log floor on
-    # every mesh (e.g. preprocessing).
+    # Build legend handles as Patch proxies so every group/stage appears in the legend
+    # even when its segments are clipped below the log floor on every mesh.
     from matplotlib.patches import Patch
 
     total_handle = Patch(facecolor="0.55", edgecolor="0.2", label="Total")
@@ -551,8 +487,6 @@ def generate_plots(results: list[dict], output_dir: str):
         f"(K={FLEET_SIZE} robots){subtitle}"
     )
 
-    # Two legends so the user can read total/group rows separately from
-    # the per-stage colours.
     leg_top = ax.legend(
         handles=[total_handle] + group_handles,
         labels=["Total"] + [g[0] for g in GROUP_DEFS],
@@ -579,7 +513,6 @@ def generate_plots(results: list[dict], output_dir: str):
     fig.tight_layout()
     save_figure(fig, os.path.join(fig_dir, "e10_timing_breakdown"))
 
-    # ── Viewpoints vs mesh complexity (scatter, per-mesh colors) ────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for i, m in enumerate(models):
         mr = [r for r in results if r["model"] == m]
@@ -600,7 +533,6 @@ def generate_plots(results: list[dict], output_dir: str):
     ax.legend(fontsize=6, ncol=2, loc="best")
     save_figure(fig, os.path.join(fig_dir, "e10_scatter_faces_vs_vps"))
 
-    # ── Joint-objective gap (paired bars, observed vs LB, with %-labels) ─
     def _paired_gap_fig(value_fn, lb_field: str, title: str, ylabel: str, stem: str):
         rows = [(m, [value_fn(r) for r in results if r["model"] == m]) for m in models]
         rows = [(m, [v for v in vs if v is not None]) for m, vs in rows]
@@ -627,8 +559,7 @@ def generate_plots(results: list[dict], output_dir: str):
             alpha=0.85,
             label="Observed",
         )
-        # Position percent labels above the std whisker so they don't
-        # overlap with the error bars.
+        # Position percent labels above the std whisker.
         for xi, (obs, std, lb) in enumerate(zip(obs_mean, obs_std, lbs, strict=False)):
             if lb and not np.isnan(lb) and lb > 0:
                 gap = (obs - lb) / lb * 100.0
@@ -658,14 +589,8 @@ def generate_plots(results: list[dict], output_dir: str):
     logger.info("E10 figures saved to %s", fig_dir)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Joint-LB gap helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _observed_objective_s(r: dict) -> float | None:
-    """β . observed_makespan + (1-β) . observed_total_time, or None if
-    MAPF did not run / times are missing."""
+    """β·observed_makespan + (1-β)·observed_total_time, or None if MAPF didn't run."""
     mks = r.get("mapf_makespan_s", float("nan"))
     tot = r.get("mapf_total_time_s", float("nan"))
     if np.isnan(mks) or np.isnan(tot):
@@ -674,7 +599,6 @@ def _observed_objective_s(r: dict) -> float | None:
 
 
 def _objective_gap_pct(r: dict) -> float | None:
-    """(observed − joint_objective_LB) / joint_objective_LB x 100, or None."""
     obs = _observed_objective_s(r)
     lb = r.get("joint_objective_lb_s", 0.0)
     if obs is None or lb is None or lb <= 0:
@@ -688,11 +612,6 @@ def _makespan_gap_pct(r: dict) -> float | None:
     if np.isnan(mks) or lb <= 0:
         return None
     return (mks - lb) / lb * 100.0
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def main():
@@ -796,8 +715,7 @@ def main():
                 all_results.append(
                     load_run_result(os.path.join(raw_dir, fname.replace(".json", "")))
                 )
-        # Merge LB sidecars by stem so old main JSONs that predate the LB
-        # fields still get the bound values for plotting.
+        # Merge LB sidecars by stem so old main JSONs predating the LB fields still get the bounds.
         lb_map = load_raw_lb_dir(raw_lb_dir, raw_dir)
         for r in all_results:
             stem = f"model={r['model']}_seed={r['seed']}"

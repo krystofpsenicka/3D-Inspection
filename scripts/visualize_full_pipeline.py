@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
-"""
-Visualise a saved pipeline run end-to-end in Isaac Sim.
+"""Visualise a saved pipeline run end-to-end in Isaac Sim.
 
-Loads the directory written by ``scripts.run_full_pipeline`` and walks through
-nine phases (mesh+pointcloud, normals, candidates, set-cover visibility,
-selected, VRP depots+waypoints, assignment, trajectories, replay).
-
-Press ``N`` / Right Arrow to advance, ``P`` / Left Arrow to go back, ``Q`` /
-Esc to quit. ``--phase-duration`` adds an auto-advance fallback.
-
-Usage::
-
-    python -m scripts.visualize_full_pipeline
-    python -m scripts.visualize_full_pipeline --input outputs/full_pipeline
-    python -m scripts.visualize_full_pipeline --headless --phase-duration 2
+Loads the directory written by ``scripts.run_full_pipeline`` and walks 9 phases
+(mesh+pointcloud, normals, candidates, set-cover visibility, selected, VRP depots+waypoints,
+assignment, trajectories, replay). Keys: N/Right next, P/Left prev, Q/Esc quit.
+``--phase-duration`` adds an auto-advance fallback.
 """
 
 from __future__ import annotations
@@ -41,24 +32,16 @@ def parse_args() -> argparse.Namespace:
         default=os.path.join(REPO_ROOT, "outputs", "full_pipeline"),
         help="Pipeline directory written by run_full_pipeline.",
     )
-    p.add_argument("--headless", action="store_true", help="Run without GUI.")
+    p.add_argument("--headless", action="store_true")
     p.add_argument(
         "--phase-duration",
         type=float,
         default=None,
         help="Auto-advance every phase after this many seconds (still keypress-interruptible).",
     )
-    p.add_argument(
-        "--replay-dt",
-        type=float,
-        default=1.0 / 30.0,
-        help="Wall-clock seconds per trajectory frame in the replay phase.",
-    )
-    p.add_argument(
-        "--brov-usd",
-        default=DEFAULT_BROV,
-        help=f"BROV USD asset path (default: {DEFAULT_BROV}).",
-    )
+    p.add_argument("--replay-dt", type=float, default=1.0 / 30.0,
+        help="Wall-clock seconds per trajectory frame in the replay phase.")
+    p.add_argument("--brov-usd", default=DEFAULT_BROV, help=f"BROV USD asset path (default: {DEFAULT_BROV}).")
     p.add_argument(
         "--max-candidates",
         type=int,
@@ -80,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         "--orbit-period",
         type=float,
         default=20.0,
-        help="Seconds for one full camera orbit during the replay phase. 0 to disable.",
+        help="Seconds for one full camera orbit during replay. 0 to disable.",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args()
@@ -93,14 +76,13 @@ def main() -> None:
         format="%(levelname)-8s %(name)s: %(message)s",
     )
 
-    # 1. Load pipeline data BEFORE launching Isaac Sim (no Isaac deps yet).
+    # Load pipeline data BEFORE launching Isaac Sim (no Isaac deps yet).
     from VRP.utils.serialization import load_pipeline
 
     data = load_pipeline(args.input)
 
-    # Lift the mesh so it doesn't intersect the floor. Also shift any
-    # depot / target / trajectory positions by the same offset so the scene
-    # stays internally consistent.
+    # Lift the mesh so it doesn't intersect the floor; shift depots / targets / trajectories
+    # by the same offset so the scene stays internally consistent.
     if args.mesh_z_offset:
         dz = float(args.mesh_z_offset)
         pose = list(data["mesh_pose"])
@@ -112,7 +94,6 @@ def main() -> None:
                 arr = np.asarray(arr, dtype=np.float64).copy()
                 arr[..., 2] += dz
                 data[key] = arr
-        # Trajectory positions live inside ExecutionResult.all_traj_positions[i][:, :3]
         exec_res = data.get("exec_result")
         if exec_res is not None and getattr(exec_res, "all_traj_positions", None) is not None:
             shifted = []
@@ -123,8 +104,6 @@ def main() -> None:
                 shifted.append(t)
             exec_res.all_traj_positions = shifted
 
-        # OptimizationResult holds the selected viewpoints used by the
-        # set-cover phases; its `positions` is a separate CuPy/NumPy array.
         opt_res = data.get("optimization_result")
         if opt_res is not None and getattr(opt_res, "positions", None) is not None:
             pos = np.asarray(opt_res.positions, dtype=np.float64).copy()
@@ -132,7 +111,6 @@ def main() -> None:
                 pos[..., 2] += dz
             opt_res.positions = pos
 
-    # Reconstruct trimesh + frustum + per-robot trajectory poses.
     from shared.mesh_loader import load_and_transform_mesh
     from visibility.core.types import FrustumParams
 
@@ -147,7 +125,6 @@ def main() -> None:
         far=float(fp["far"]),
     )
 
-    # 2. Launch Isaac Sim and build the phase list.
     from visualization_isaac import (
         IsaacApp,
         ModelVisualizer,
@@ -165,16 +142,14 @@ def main() -> None:
     )
 
     with IsaacApp(headless=args.headless) as ctx:
-        # Dome only -- a directional sun light produces hard contrasty
-        # shadows that read as "weird lighting". Pure dome gives soft,
-        # uniform diffuse light, closer to a CAD-style look.
+        # Dome only — directional sun light produces hard contrasty shadows that read as
+        # "weird lighting"; pure dome gives soft uniform diffuse, closer to a CAD-style look.
         add_dome_light(ctx.stage, intensity=750.0)
-        # Pass the IsaacContext (not just the stage) so we get the canonical
-        # blue+grid Isaac default ground plane.
+        # Pass IsaacContext (not just stage) for the canonical blue+grid Isaac default ground plane.
         add_ground_plane(ctx, size=1500.0)
 
-        # Frame the viewport on the mesh; default Isaac camera at ~(5,5,5)
-        # is inside any tens-of-metres-scale scene.
+        # Frame the viewport on the mesh; default Isaac camera at ~(5,5,5) is inside
+        # any tens-of-metres-scale scene.
         cam_path = "/World/MainCamera"
         cam_target = (0.0, 0.0, 0.0)
         cam_distance = 50.0
@@ -184,10 +159,9 @@ def main() -> None:
             extent = float(np.linalg.norm(verts.max(axis=0) - verts.min(axis=0)))
             cam_distance = max(extent * 1.4, 5.0)
             cam_path = frame_viewport(ctx.stage, target=cam_target, distance=cam_distance)
-        except Exception as exc:  # pragma: no cover - non-critical
+        except Exception as exc:  # pragma: no cover
             logging.getLogger(__name__).warning("frame_viewport failed: %s", exc)
 
-        # Pre-build helpers (cheap; safe to call before any phase enters).
         model_vis = ModelVisualizer(mesh, data["target_points"], data["normals"])
         sampling_vis = SamplingVisualizer(
             mesh, data["target_points"], data["normals"], frustum_params
@@ -197,20 +171,16 @@ def main() -> None:
         traj_poses = convert_trajectories(data["exec_result"].all_traj_positions)
         vrp_vis = VRPVisualizer(num_robots=int(data["num_robots"]), traj_poses=traj_poses)
 
-        # ---- Phase 1: mesh + target pointcloud --------------------------
         def enter_mesh_pc(stage, parent):
             model_vis.add_mesh(stage, f"{parent}/mesh")
             model_vis.add_points(stage, f"{parent}/points", color=(0.9, 0.9, 0.9))
 
-        # ---- Phase 2: surface normals ----------------------------------
         def enter_normals(stage, parent):
             model_vis.add_mesh(stage, f"{parent}/mesh")
             model_vis.add_points(stage, f"{parent}/points", color=(0.5, 0.5, 0.5))
             model_vis.add_normals(stage, f"{parent}/normals", normal_scale=0.3)
 
-        # ---- Phase 3: candidates + frustums ----------------------------
-        # Subsample candidates for visualisation; rendering 2000 frustums
-        # craters interactivity even on RTX 3090.
+        # Subsample candidates: rendering 2000 frustums craters interactivity even on RTX 3090.
         all_pos = np.asarray(data["all_positions"])
         all_R = np.asarray(data["all_rotmats"])
         if len(all_pos) > args.max_candidates:
@@ -231,9 +201,7 @@ def main() -> None:
                 rotmats=cand_R,
             )
 
-        # ---- Phase 4: set-cover visibility -----------------------------
-        # Reuse the subsampled candidate set + matching rows of the visibility
-        # map so phase 4 stays interactive.
+        # Reuse the subsampled candidate set + matching rows of the visibility map.
         if len(all_pos) > args.max_candidates:
             vis_pos = cand_pos
             vis_R = cand_R
@@ -248,7 +216,6 @@ def main() -> None:
 
         def enter_visibility(stage, parent):
             if full_vis_sub is None:
-                # Fallback: just show selected viewpoints
                 sc_vis.add_phase_selected(stage, parent, data["optimization_result"])
                 return
             sc_vis.add_phase_visibility(
@@ -259,11 +226,9 @@ def main() -> None:
                 full_visibility_map=full_vis_sub,
             )
 
-        # ---- Phase 5: set-cover selected -------------------------------
         def enter_selected(stage, parent):
             sc_vis.add_phase_selected(stage, parent, data["optimization_result"])
 
-        # ---- Phase 6: VRP depots + waypoints ---------------------------
         def enter_depots(stage, parent):
             vrp_vis.add_inspection_mesh(
                 stage,
@@ -280,7 +245,6 @@ def main() -> None:
                 vp_rotmats=np.asarray(data["selected_rotmats"]),
             )
 
-        # ---- Phase 7: VRP assignment colouring --------------------------
         def enter_assignment(stage, parent):
             vrp_vis.add_inspection_mesh(
                 stage,
@@ -299,7 +263,6 @@ def main() -> None:
                 home_indices=data["home_indices"],
             )
 
-        # ---- Phase 8: trajectories as polylines ------------------------
         def enter_trajectories(stage, parent):
             vrp_vis.add_inspection_mesh(
                 stage,
@@ -319,7 +282,6 @@ def main() -> None:
             )
             vrp_vis.add_trajectories(stage, parent)
 
-        # ---- Phase 9: replay BROVs ------------------------------------
         replay_state: dict = {
             "prims": [],
             "last_t": None,
@@ -342,8 +304,8 @@ def main() -> None:
             if args.use_brov_usd:
                 replay_state["prims"] = vrp_vis.add_brov_robots(stage, parent, args.brov_usd)
             else:
-                # 345 MB BROV USD * 3 references is too heavy for replay; use
-                # a coloured cuboid per robot. Animation hook is identical.
+                # 345 MB BROV USD * 3 references is too heavy for replay; use a coloured
+                # cuboid per robot. Animation hook is identical.
                 prims = []
                 for i in range(int(data["num_robots"])):
                     path = f"{parent}/simple_robot_{i}"
@@ -364,12 +326,10 @@ def main() -> None:
 
         import math as _math
 
-        # Reuse the camera framing already computed when we entered the world.
         orbit_period = float(args.orbit_period)
         orbit_elev_rad = _math.radians(25.0)
 
-        # Single global orbit clock so the camera keeps moving smoothly
-        # across phase transitions instead of resetting on each enter.
+        # Single global orbit clock so the camera keeps moving smoothly across phase transitions.
         orbit_state = {"start_t": time.perf_counter()}
 
         def step_orbit(stage, parent, frame_idx, _now):
@@ -393,10 +353,8 @@ def main() -> None:
                 replay_state["last_t"] = t
             if replay_state["prims"]:
                 vrp_vis.step(replay_state["prims"], replay_state["frame"])
-            # Same orbit as every other phase, driven by the global clock.
             step_orbit(stage, parent, frame_idx, now)
 
-        # Assemble phases (durations only set when the user passed --phase-duration)
         D = args.phase_duration
         phases = [
             Phase("mesh_and_points", enter=enter_mesh_pc, on_step=step_orbit, duration=D),

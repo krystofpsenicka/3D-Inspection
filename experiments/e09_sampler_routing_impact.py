@@ -1,22 +1,11 @@
 #!/usr/bin/env python3
-"""E17: Sampler Routing Impact
+"""E17: Sampler Routing Impact — does the sampler choice affect downstream VRP makespan/total_cost?
 
-Tests whether the sampler strategy affects downstream VRP routing objectives
-(makespan and total_cost).  Runs stages 1-7 of the pipeline (skips MAPF) with
-varying sampler strategies and measures how viewpoint spatial distribution
-propagates to routing cost.
+Strategies: weighted, weighted_curvature, targeted_100 (spi=100, k=3), cmaes_100 (popsize=40,
+maxiter=40, k=3). CMA-ES travel_weight per-model-group (Duke uses E03_C_TRAVEL_WEIGHTS_DUKE,
+TOSCA uses E03_C_TRAVEL_WEIGHTS_TOSCA). Models: Duke + TOSCA_REPRESENTATIVE
+(wolf0, cat0, david0). Fixed: 5 robots, 1500 candidates, 0.95 target coverage, 3 seeds.
 
-Hypothesis: CMA-ES's travel_weight parameter penalises point-to-point distance
-during sampling, producing viewpoint sets that are cheaper to route through.
-
-Strategies: weighted, weighted_curvature, targeted_100 (spi=100, k=3),
-            cmaes_100 (popsize=40, maxiter=40, k=3)
-CMA-ES travel_weight sweep: per-model-group  --  Duke uses E03_C_TRAVEL_WEIGHTS_DUKE
-            and TOSCA uses E03_C_TRAVEL_WEIGHTS_TOSCA (same as e03 Section 2B).
-Models: Duke of Lancaster + TOSCA_REPRESENTATIVE (wolf0, cat0, david0).
-Fixed: 5 robots, 1500 candidates, 0.95 target coverage. 3 seeds.
-
-Usage:
     conda run -n isaaclab python -m experiments.e09_sampler_routing_impact
     conda run -n isaaclab python -m experiments.e09_sampler_routing_impact --plots_only
     conda run -n isaaclab python -m experiments.e09_sampler_routing_impact --resume
@@ -56,7 +45,6 @@ from experiments.common.lb_sidecar import (
     save_lb_json,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -91,9 +79,6 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Strategy set for e09 (thesis-final): weighted + weighted_curvature baselines,
-# targeted_100 (iterative targeted at k=3 with spi=100), cmaes_100 (CMA-ES
-# with k=3, popsize=40, maxiter=40 and a per-model-group travel_weight sweep).
 _E09_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
 _E09_MODELS = ["duke_of_lancaster"] + list(TOSCA_REPRESENTATIVE)
 
@@ -103,7 +88,7 @@ def _is_duke(model_name: str) -> bool:
 
 
 def _cmaes_travel_weights(model_name: str) -> list[float]:
-    """TW sweep list matching e03 Section 2B's per-model-group choice."""
+    """Per-model-group TW sweep matching e03 §2B."""
     return (
         list(E03_C_TRAVEL_WEIGHTS_DUKE)
         if _is_duke(model_name)
@@ -112,7 +97,6 @@ def _cmaes_travel_weights(model_name: str) -> list[float]:
 
 
 def _strategy_kwargs_e09(strategy: str, travel_weight: float | None) -> dict:
-    """Per-strategy kwargs forwarded to sample_strategy() for e09."""
     if strategy == "targeted_100":
         return {"k_coverage": 3, "samples_per_iteration": 100}
     if strategy == "cmaes_100":
@@ -134,16 +118,10 @@ from experiments.common.plotting import (
     setup_thesis_style,
 )
 
-# e09's solve_vrp currently uses the default alpha=1.0 (pure makespan).
-# Centralised so the LB sidecar uses the same value.
+# e09 uses default alpha=1.0 (pure makespan); centralised so the LB sidecar uses the same value.
 _E09_ALPHA = 1.0
 
 logger = logging.getLogger(__name__)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _display_label(strategy: str, travel_weight) -> str:
@@ -154,11 +132,7 @@ def _display_label(strategy: str, travel_weight) -> str:
 
 
 def _build_run_configs(strategies, cmaes_travel_weights):
-    """Expand ``strategies`` into (strategy, travel_weight) tuples.
-
-    For CMA-ES strategies, one entry per travel-weight value. For other
-    strategies, ``travel_weight`` is ``None``.
-    """
+    """Expand strategies into (strategy, travel_weight) tuples; one TW entry per cmaes."""
     configs = []
     for s in strategies:
         if s.startswith("cmaes_"):
@@ -177,11 +151,6 @@ def _result_path(raw_dir, model_name, strategy, travel_weight, seed):
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Single run logic
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _rebuild_instance_for_lb(
     ctx: PipelineContext,
     strategy: str,
@@ -189,17 +158,9 @@ def _rebuild_instance_for_lb(
     seed: int,
     target_coverage: float,
 ) -> tuple:
-    """Re-run sampling + visibility + set-cover + distance-matrix construction
-    for an existing (model, strategy, travel_weight, seed) row. Mirrors
-    stages 1-6 of ``run_single`` without running VRP. Returns
-    ``(K, home_indices, dist_matrix, num_viewpoints)``.
-
-    Because the sampling output depends on the full seeded sequence of calls,
-    this is the cheapest way to reconstruct the exact distance matrix the
-    original solve saw. The duplicated logic with ``run_single`` is
-    deliberate  --  changing ``run_single`` risks behaviour drift for the main
-    experiment.
-    """
+    """Mirror stages 1-6 of ``run_single`` without VRP. Returns ``(K, home_indices, dist_matrix,
+    num_viewpoints)``. Logic deliberately duplicated with ``run_single`` — changing run_single
+    risks behaviour drift for the main experiment."""
     set_seed(seed)
     model_cfg = ctx.model
     target_points, normals = ctx.sample_surface()
@@ -265,13 +226,11 @@ def _rebuild_instance_for_lb(
 def run_single(
     ctx: PipelineContext, strategy: str, travel_weight, seed: int, target_coverage: float = 0.95
 ) -> dict:
-    """Run stages 1-7 for one (strategy, travel_weight, seed) combo."""
     set_seed(seed)
     model_cfg = ctx.model
     target_points, normals = ctx.sample_surface()
     vis_query = ctx.build_visibility_query("raycast")
 
-    # Stage 4: Sampling  --  kwargs depend on the strategy (see _strategy_kwargs_e09)
     with timed() as t_sample:
         pos_gpu, rot_gpu, n_base, n_iter, base_name, n_ws_fb = sample_strategy(
             ctx,
@@ -284,11 +243,9 @@ def run_single(
             **_strategy_kwargs_e09(strategy, travel_weight),
         )
 
-    # Stage 5: Visibility
     with timed() as t_vis:
         V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
-    # Stage 6: Set cover
     with timed() as t_opt:
         V_np = cp.asnumpy(V)
         pos_np = cp.asnumpy(pos_gpu)
@@ -303,7 +260,6 @@ def run_single(
     coverage = float(opt_result.total_coverage)
     redundancy = float(opt_result.redundancy)
 
-    # Stage 7: VRP
     with timed() as t_vrp:
         K = E17_N_ROBOTS
         _, o3d_mesh = ctx.load_mesh()
@@ -321,14 +277,12 @@ def run_single(
         all_pos = np.vstack([home_pos, vp_pos_np])
         home_indices = list(range(K))
 
-        # og_vrp must accept every viewpoint the sampling OG accepts. At 0.20 m
-        # resolution (kept coarse because cuGraph OOMs on the 0.10 m sampling
-        # grid), worst-case voxel alignment mismatch is ~0.67 m, so any
-        # inflation > 1 voxel can reject a viewpoint the sampling OG considers
-        # feasible. Inflate by 1 voxel only (0.20 m clearance)  --  OK for VRP
-        # distance estimation (no MAPF in e09; paths need only pair waypoints
-        # for route ordering). Also match sampling OG's padding so grid origins
-        # align and `compute_grid_bounds` agrees on voxel centres.
+        # og_vrp must accept every viewpoint the sampling OG accepts. At 0.20m resolution
+        # (kept coarse because cuGraph OOMs on the 0.10m sampling grid), worst-case voxel
+        # alignment mismatch is ~0.67m, so any inflation > 1 voxel can reject a viewpoint
+        # the sampling OG considers feasible. Inflate by 1 voxel only (0.20m clearance) —
+        # OK for VRP distance estimation (no MAPF in e09; paths only pair waypoints for
+        # route ordering). Match sampling OG's padding so grid origins align.
         import trimesh
 
         from shared.grid_builder_utils import compute_grid_bounds, voxelize_mesh
@@ -364,7 +318,7 @@ def run_single(
     makespan = max(pv) if pv else 0.0
     total_cost = vrp_result.total_cost
 
-    # LB sidecar (VRP-only; this experiment does not run MAPF).
+    # VRP-only LBs (no MAPF in this experiment).
     lb: dict | None = None
     try:
         lb = compute_all_lbs(
@@ -404,18 +358,12 @@ def run_single(
     return result, lb
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plot generation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def generate_plots(
     results: list[dict],
     output_dir: str,
     lb_by_stem: dict | None = None,
     target_coverage: float = 0.95,
 ):
-    """Generate all E17 figures, one set per model."""
     setup_thesis_style()
     fig_dir = os.path.join(output_dir, "figures")
     os.makedirs(fig_dir, exist_ok=True)
@@ -437,12 +385,10 @@ def generate_plots(
 def _generate_plots_for_model(
     ok: list[dict], fig_dir: str, model_name: str, lb_by_stem: dict, target_coverage: float
 ):
-    # Thesis chapter only uses Duke for E09; TOSCA per-model figures are not
-    # rendered to keep the chapter focused.
+    # Thesis chapter only uses Duke for E09; TOSCA per-model figures not rendered.
     if model_name != "duke_of_lancaster":
         logger.info("Skipping E09 plots for %s (Duke-only in thesis)", model_name)
         return
-    # Ordered (strategy, travel_weight) combos for x-axis
     seen = set()
     run_cfgs = []
     for r in ok:
@@ -454,10 +400,8 @@ def _generate_plots_for_model(
     cmaes = sorted([c for c in run_cfgs if c[1] is not None], key=lambda x: x[1])
     run_cfgs = non_cmaes + cmaes
 
-    # ── Scatter  --  viewpoints vs makespan / total_cost ─────────────────
-    # Each (strategy, travel_weight) is treated as a distinct "method" with
-    # its own discrete color and legend entry. Runs whose coverage fell below
-    # the target are drawn with a star marker so they are visually flagged.
+    # Each (strategy, travel_weight) is a distinct "method" with its own discrete color.
+    # Runs whose coverage fell below the target are drawn with a star marker.
     method_color = {
         cfg: CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)] for i, cfg in enumerate(run_cfgs)
     }
@@ -495,7 +439,6 @@ def _generate_plots_for_model(
                     linewidth=0.6,
                     label=None if ok_rows else label,
                 )
-        # Star-marker legend explainer
         if any(r["coverage"] < target_coverage for r in ok):
             from matplotlib.lines import Line2D
 
@@ -538,18 +481,12 @@ def _generate_plots_for_model(
     logger.info("E09 figures saved to %s", fig_dir)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def main():
     p = argparse.ArgumentParser(description="E17: Sampler Routing Impact")
     p.add_argument(
         "--models",
         nargs="+",
         default=_E09_MODELS,
-        help="Models to evaluate (default: Duke + TOSCA_REPRESENTATIVE)",
     )
     p.add_argument("--strategies", nargs="+", default=_E09_STRATEGIES)
     p.add_argument(
@@ -557,30 +494,24 @@ def main():
         type=float,
         nargs="+",
         default=None,
-        help="Override per-model travel-weight sweep; if unset, uses "
-        "E03_C_TRAVEL_WEIGHTS_{DUKE,TOSCA} depending on the model.",
+        help="Override per-model TW sweep; defaults to E03_C_TRAVEL_WEIGHTS_{DUKE,TOSCA}.",
     )
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--target_coverage", type=float, default=0.95)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e09_sampler_routing_impact"))
     p.add_argument("--resume", action="store_true")
-    p.add_argument(
-        "--plots_only", action="store_true", help="Only regenerate plots from existing results"
-    )
+    p.add_argument("--plots_only", action="store_true")
     p.add_argument(
         "--compute_lbs_only",
         action="store_true",
-        help="Skip VRP solves; rebuild each existing instance "
-        "(sampling + visibility + set cover + distance "
-        "matrix), compute analytical LBs, write sidecar "
-        "JSONs into raw_lb/.",
+        help="Skip VRP solves; rebuild each existing instance, compute analytical LBs, write "
+        "sidecar JSONs into raw_lb/.",
     )
     p.add_argument(
         "--include_cuopt_bound",
         action="store_true",
-        help="In --compute_lbs_only mode, also run a short cuOpt "
-        "solve per instance to extract the MIP dual bound. "
-        "Expensive; off by default.",
+        help="In --compute_lbs_only mode, also run a short cuOpt solve per instance to extract "
+        "the MIP dual bound. Expensive; off by default.",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -611,7 +542,6 @@ def main():
             return None
 
     def _lb_path_for(result_path: str) -> str:
-        """Mirror path in raw_lb/ for a given raw/ result path."""
         stem = os.path.basename(result_path)
         return os.path.join(raw_lb_dir, stem)
 
@@ -620,8 +550,7 @@ def main():
             logger.error("No raw/ directory at %s; nothing to augment.", raw_dir)
             return
         os.makedirs(raw_lb_dir, exist_ok=True)
-        # Group existing main JSONs by model so we only build one
-        # PipelineContext per model.
+        # Group existing main JSONs by model so we only build one PipelineContext per model.
         stems = sorted(f[:-5] for f in os.listdir(raw_dir) if f.endswith(".json"))
         by_model: dict[str, list[dict]] = {}
         for stem in stems:
@@ -776,7 +705,6 @@ def main():
             target_coverage=args.target_coverage,
         )
 
-        # Summary table (per model)
         models = sorted(set(r.get("model", "unknown") for r in all_results))
         for model_name in models:
             logger.info("\n%s\nE17 SUMMARY — %s\n%s", "=" * 80, model_name, "=" * 80)

@@ -1,5 +1,3 @@
-"""Visibility visualization sub-package (Isaac Sim variant)."""
-
 from .esdf import EsdfVisualizer
 from .frustum_utils import add_frustum_lineset, add_viewpoint_geometry
 from .model import ModelVisualizer

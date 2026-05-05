@@ -1,7 +1,6 @@
 """Stage-builder for multi-robot trajectory replay scenes (Isaac Sim).
 
-Extracts reusable scene-building operations from the VRP replay pipeline.
-The lifecycle orchestration (SimulationApp, World, render loop) lives in
+Lifecycle orchestration (SimulationApp, World, render loop) lives in
 ``visualization_isaac.app`` / ``visualization_isaac.phases``.
 """
 
@@ -17,28 +16,20 @@ from .._usd_primitives import create_cuboid_prim, create_mesh_prim, set_prim_pos
 logger = logging.getLogger(__name__)
 
 
-# ─── Waypoint-marker colours ─────────────────────────────────────────────────
-
 ROBOT_COLORS = [
-    np.array([1.0, 0.2, 0.2]),  # red
-    np.array([0.2, 0.6, 1.0]),  # blue
-    np.array([0.2, 1.0, 0.2]),  # green
-    np.array([1.0, 0.8, 0.0]),  # yellow
-    np.array([1.0, 0.2, 1.0]),  # magenta
-    np.array([0.0, 1.0, 1.0]),  # cyan
-    np.array([1.0, 0.5, 0.0]),  # orange
-    np.array([0.5, 0.0, 1.0]),  # purple
+    np.array([1.0, 0.2, 0.2]),
+    np.array([0.2, 0.6, 1.0]),
+    np.array([0.2, 1.0, 0.2]),
+    np.array([1.0, 0.8, 0.0]),
+    np.array([1.0, 0.2, 1.0]),
+    np.array([0.0, 1.0, 1.0]),
+    np.array([1.0, 0.5, 0.0]),
+    np.array([0.5, 0.0, 1.0]),
 ]
 
 
-# ─── Pose conversion utilities (pure NumPy / SciPy, no USD) ─────────────────
-
-
 def traj8_to_pose(traj_pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Convert one 8-DOF joint position to ``(xyz, quat_wxyz)``.
-
-    The 8 DOFs are ``[x, y, z, yaw, pitch, roll, cam_yaw, cam_pitch]``.
-    """
+    """8 DOFs are ``[x, y, z, yaw, pitch, roll, cam_yaw, cam_pitch]``."""
     from scipy.spatial.transform import Rotation as R
 
     xyz = traj_pos[:3].copy().astype(np.float64)
@@ -60,24 +51,9 @@ def convert_trajectories(all_traj_positions: list) -> list[np.ndarray]:
     return result
 
 
-# ─── Stage-builder class ────────────────────────────────────────────────────
-
-
 class ReplayVisualizer:
-    """Stage-builder for VRP multi-robot trajectory replay.
-
-    Follows the ``visualization_isaac`` convention: every ``add_*`` method
-    takes ``(stage, ...)`` and returns created prim path(s).  No
-    SimulationApp management or render loops.
-
-    Parameters
-    ----------
-    traj_poses : list[np.ndarray]
-        Per-robot ``(N, 7)`` arrays of ``[x, y, z, qw, qx, qy, qz]``
-        (output of :func:`convert_trajectories`).
-    all_waypoints : list[list]
-        Per-robot waypoint lists from ``ExecutionResult.all_waypoints``.
-    """
+    """``traj_poses``: per-robot ``(N, 7)`` arrays from :func:`convert_trajectories`.
+    ``all_waypoints``: per-robot waypoint lists from ``ExecutionResult.all_waypoints``."""
 
     def __init__(self, traj_poses: list[np.ndarray], all_waypoints: list[list]):
         self.traj_poses = traj_poses
@@ -85,15 +61,7 @@ class ReplayVisualizer:
         self.num_robots = len(traj_poses)
         self.total_steps = max(len(t) for t in traj_poses) if traj_poses else 0
 
-    # ── Waypoint markers ─────────────────────────────────────────────
-
     def add_waypoint_markers(self, stage, base_path: str, marker_size: float = 0.08) -> list[str]:
-        """Add colour-coded waypoint cubes for each robot.
-
-        Returns
-        -------
-        List of created prim paths.
-        """
         paths: list[str] = []
         for i in range(self.num_robots):
             color = tuple(ROBOT_COLORS[i % len(ROBOT_COLORS)])
@@ -112,8 +80,6 @@ class ReplayVisualizer:
         logger.info("Added waypoint markers for %d robots.", self.num_robots)
         return paths
 
-    # ── Environment obstacles ────────────────────────────────────────
-
     def add_obstacles(
         self,
         stage,
@@ -122,15 +88,6 @@ class ReplayVisualizer:
         mesh_pose: list,
         mesh_target_length: float,
     ) -> list[str]:
-        """Add the inspection mesh as a USD prim.
-
-        The mesh is loaded via trimesh, scaled to ``mesh_target_length``,
-        and positioned according to ``mesh_pose``.
-
-        Returns
-        -------
-        List of created prim paths.
-        """
         from shared.mesh_loader import load_and_transform_mesh
 
         paths: list[str] = []
@@ -145,8 +102,6 @@ class ReplayVisualizer:
         logger.info("Added mesh obstacle: %s", prim_path)
         return paths
 
-    # ── Robot spawning ──────────────────────────────────────────────
-
     def add_robots(
         self,
         stage,
@@ -154,12 +109,7 @@ class ReplayVisualizer:
         urdf_path: str,
         num_robots: int,
     ) -> list:
-        """Import a URDF robot and spawn ``num_robots`` instances.
-
-        Returns
-        -------
-        List of (Robot, prim) tuples for the replay loop to animate.
-        """
+        """Import a URDF robot and spawn ``num_robots`` instances. Returns (Robot, prim) tuples."""
         ISAAC_SIM_45 = False
         try:
             from omni.importer.urdf import _urdf
@@ -232,8 +182,6 @@ class ReplayVisualizer:
 
         return list(zip(robots, rob_prims, strict=False))
 
-    # ── Scene setup helpers ──────────────────────────────────────────
-
     def add_dome_light(
         self,
         stage,
@@ -241,12 +189,6 @@ class ReplayVisualizer:
         intensity: float = 800.0,
         color: tuple = (0.75, 0.85, 1.0),
     ) -> str:
-        """Add a dome light prim.
-
-        Returns
-        -------
-        The prim path string.
-        """
         from pxr import Gf, UsdLux
 
         dome_light = UsdLux.DomeLight.Define(stage, path)
@@ -256,12 +198,6 @@ class ReplayVisualizer:
         return path
 
     def add_zero_gravity(self, stage, scene_path: str = "/physicsScene") -> str:
-        """Configure a zero-gravity physics scene (for underwater AUVs).
-
-        Returns
-        -------
-        The physics scene prim path.
-        """
         from pxr import Gf, UsdPhysics
 
         ps = UsdPhysics.Scene.Get(stage, scene_path)
@@ -271,8 +207,6 @@ class ReplayVisualizer:
         ps.GetGravityMagnitudeAttr().Set(0.0)
         return scene_path
 
-    # ── No-joints USD-reference robots (replay only) ─────────────────
-
     def add_brov_robots(
         self,
         stage,
@@ -280,17 +214,8 @@ class ReplayVisualizer:
         num_robots: int,
         brov_usd_path: str,
     ) -> list:
-        """Reference the BROV USD as a single Xform per robot (no joints).
-
-        Each robot gets its own ``Xform`` prim that references *brov_usd_path*.
-        Position and orientation are seeded so subsequent ``set_prim_pose``
-        calls reuse the existing ``xformOp:translate`` / ``xformOp:orient``
-        attributes.
-
-        Returns
-        -------
-        List of ``Usd.Prim`` handles for the robot roots.
-        """
+        """One ``Xform`` prim per robot referencing ``brov_usd_path``. Pose is seeded so subsequent
+        ``set_prim_pose`` calls reuse the existing ``xformOp:translate`` / ``xformOp:orient`` attributes."""
         from pxr import UsdGeom
 
         if not os.path.isfile(brov_usd_path):
@@ -313,10 +238,7 @@ class ReplayVisualizer:
         return prims
 
     def step_replay(self, robot_prims: list, frame_idx: int) -> None:
-        """Set every robot's transform to ``traj_poses[i][frame_idx]``.
-
-        ``frame_idx`` is clamped per-robot to the trajectory length.
-        """
+        """``frame_idx`` is clamped per-robot to the trajectory length."""
         for i, prim in enumerate(robot_prims):
             if i >= len(self.traj_poses):
                 continue

@@ -1,27 +1,14 @@
 #!/usr/bin/env python3
 """Measure MAPF conflict density on pure-VRP trajectories.
 
-For each (fleet_size, seed) configuration we:
+Per (fleet_size, seed): run VRP -> plan each robot with an empty reservation table (pre-MAPF
+counterfactual) -> count pairwise collision events via ``find_trajectory_collisions``.
 
-1. Run the VRP stage (no MAPF) to obtain per-robot routes.
-2. Plan each robot's space-time trajectory with an *empty* reservation table
-   so robots ignore each other (the pre-MAPF counterfactual).
-3. Count pairwise collision events between the resulting trajectories using
-   the project's standard ``find_trajectory_collisions`` helper.
+Reports per fleet size: mean collision events, events per robot-pair, fraction of pairs with at
+least one event, fraction of fleets with at least one event. Output: ``results/mapf_conflict_density.csv``.
 
-Reports, per fleet size:
-
-* mean number of collision events,
-* mean collision events per robot-pair,
-* fraction of pairs that have at least one collision event,
-* fraction of fleets with at least one collision event.
-
-Output is written to ``results/mapf_conflict_density.csv`` and a one-line
-summary is logged.
-
-Usage:
     conda run -n isaaclab python -m scripts.measure_mapf_conflict_density
-    conda run -n isaaclab python -m scripts.measure_mapf_conflict_density \
+    conda run -n isaaclab python -m scripts.measure_mapf_conflict_density \\
         --fleet_sizes 2 3 4 5 6 7 8 9 10 --n_waypoints 100 --seeds 1 2 3
 """
 
@@ -119,11 +106,8 @@ def _build_setup(resolution: float = 0.20):
 def _plan_independently(
     routes, waypoint_positions_gpu, coarse_og, max_time_steps, collision_radius_vox
 ):
-    """Plan each robot through its route IGNORING inter-robot conflicts.
-
-    A fresh empty reservation table is created per robot so commits made by
-    earlier robots do not influence later robots' searches.
-    """
+    """Plan each robot ignoring inter-robot conflicts. Fresh empty reservation per robot so
+    earlier commits don't influence later searches."""
     per_robot_paths: list = []
     per_robot_times: list = []
     for route in routes:
@@ -144,12 +128,7 @@ def _plan_independently(
 
 
 def _align_in_time(per_robot_paths, per_robot_times) -> list[cp.ndarray]:
-    """Build dense (T, 3) per-robot trajectories on a common coarse-time axis.
-
-    Each robot's coarse path has its own time-step samples; for collision
-    detection we resample each robot onto the union time axis (held at the
-    last position once the robot's mission ends).
-    """
+    """Resample each robot onto the union time axis (held at last position once mission ends)."""
     if not per_robot_paths:
         return []
 
@@ -286,7 +265,6 @@ def main():
                 f.flush()
                 free_gpu_memory()
 
-    # ── Summary ───────────────────────────────────────────────────────
     by_fleet: dict[int, list[Row]] = {}
     for r in rows:
         by_fleet.setdefault(r.fleet_size, []).append(r)

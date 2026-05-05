@@ -1,10 +1,9 @@
-"""Render the two dataset figures referenced by Bachelor-Thesis/chap03.tex § 3.3.
+"""Render the dataset figures referenced by Bachelor-Thesis/chap03.tex § 3.3.
 
 Outputs:
   Bachelor-Thesis/img/datasets/duke_of_lancaster.png
   Bachelor-Thesis/img/datasets/tosca_samples.png
 
-Run:
   conda run -n isaaclab python 3D-Inspection/scripts/generate_dataset_figures.py
 """
 
@@ -29,9 +28,7 @@ THESIS_IMG = REPO_ROOT / "Bachelor-Thesis" / "img" / "datasets"
 DUKE_GLB = INSPECTION_ROOT / "models" / "duke_of_lancaster_uk_clipped.glb"
 TOSCA_DIR = INSPECTION_ROOT / "models" / "TOSCA-dataset"
 
-# Per the thesis text (chap03 § "Test Environment"), the Duke mesh is scaled at
-# pipeline-time so that its longest axis matches a target length of 50 m.
-DUKE_TARGET_LENGTH = 50.0
+DUKE_TARGET_LENGTH = 50.0  # matches pipeline-time scaling per thesis chap03 § "Test Environment"
 
 
 def _trimesh_to_o3d(mesh: trimesh.Trimesh) -> o3d.geometry.TriangleMesh:
@@ -41,11 +38,10 @@ def _trimesh_to_o3d(mesh: trimesh.Trimesh) -> o3d.geometry.TriangleMesh:
     )
     o3d_mesh.compute_vertex_normals()
     o3d_mesh.compute_triangle_normals()
-    # Some TOSCA .off files have degenerate triangles that produce NaN normals.
+    # Some TOSCA .off files have degenerate triangles producing NaN normals.
     normals = np.asarray(o3d_mesh.vertex_normals)
     if not np.all(np.isfinite(normals)):
         normals = np.nan_to_num(normals, nan=0.0)
-        # Re-normalize anything we touched.
         norms = np.linalg.norm(normals, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         normals = normals / norms
@@ -65,11 +61,8 @@ def _render_mesh_offscreen(
     background: tuple[float, float, float] = (1.0, 1.0, 1.0),
     lookat_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> np.ndarray:
-    """Render mesh to an HxWx3 uint8 array via an invisible Open3D window.
-
-    `lookat_offset` shifts the camera lookat point in world coordinates,
-    which translates the mesh in the opposite direction in screen space.
-    """
+    """Render mesh to HxWx3 uint8 via an invisible Open3D window. ``lookat_offset`` shifts the
+    camera lookat in world coords (mesh translates the opposite direction in screen space)."""
     vis = o3d.visualization.Visualizer()
     vis.create_window(width=width, height=height, visible=False)
     try:
@@ -124,9 +117,7 @@ def render_duke(out_path: Path) -> None:
 
     mesh = _trimesh_to_o3d(tm)
 
-    # The Duke mesh's longest axis is X (~21 m). The GLB stores +Y as "down"
-    # in this case, so we flip the world up vector. Render from a side-oblique
-    # angle that shows both length and superstructure detail.
+    # Duke's longest axis is X (~21 m). The GLB stores +Y as "down" here, so flip world up.
     img = _render_mesh_offscreen(
         mesh,
         width=2200,
@@ -141,9 +132,9 @@ def render_duke(out_path: Path) -> None:
     draw = ImageDraw.Draw(pil)
     font = _load_font(36)
 
-    L_scaled = extents_scaled[0]  # X = length
-    H_scaled = extents_scaled[1]  # Y = height
-    W_scaled = extents_scaled[2]  # Z = width / beam
+    L_scaled = extents_scaled[0]
+    H_scaled = extents_scaled[1]
+    W_scaled = extents_scaled[2]
     label = f"≈ {L_scaled:.0f} m (length)  ×  {W_scaled:.1f} m (beam)  ×  {H_scaled:.1f} m (height)"
 
     text_xy = (40, pil.height - 70)
@@ -162,8 +153,7 @@ def render_duke(out_path: Path) -> None:
     log.info("Saved %s (%dx%d)", out_path, pil.width, pil.height)
 
 
-# Selection of TOSCA classes for the sample grid. Six distinct classes
-# (humans + animals) using the lowest-index pose available.
+# Six TOSCA classes, lowest-index pose available.
 TOSCA_PICKS: list[tuple[str, str]] = [
     ("cat0", "Cat"),
     ("centaur0", "Centaur"),
@@ -180,8 +170,7 @@ def _render_tosca_tile(file_stem: str, tile_size: int) -> np.ndarray:
     tm = trimesh.load(str(path), force="mesh")
     mesh = _trimesh_to_o3d(tm)
 
-    # TOSCA meshes are not consistently oriented across classes; for most poses
-    # the up axis is +Z (humans/quadrupeds standing upright). Keep a single
+    # TOSCA classes aren't consistently oriented; most poses' up axis is +Z. Single
     # camera convention so the grid feels uniform.
     return _render_mesh_offscreen(
         mesh,
@@ -216,7 +205,6 @@ def render_tosca(out_path: Path) -> None:
 
         cx = c * cell_w
         cy = r * cell_h
-        # Light-grey border around tile.
         draw.rectangle(
             (cx, cy + label_h, cx + cell_w, cy + cell_h),
             outline=(180, 180, 180),
@@ -224,7 +212,6 @@ def render_tosca(out_path: Path) -> None:
         )
         canvas.paste(tile_img, (cx + border, cy + label_h + border))
 
-        # Class label, centered above the tile.
         bbox = draw.textbbox((0, 0), pretty, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]

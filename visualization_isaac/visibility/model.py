@@ -16,15 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 class ModelVisualizer:
-    """Stage-builder for mesh, target points, and/or normals.
-
-    Parameters
-    ----------
-    mesh : trimesh.Trimesh  --  the model mesh.
-    target_points : (N, 3) array of surface sample points (optional).
-    normals : (N, 3) outward surface normals (optional).
-    """
-
     def __init__(
         self,
         mesh: trimesh.Trimesh,
@@ -38,17 +29,14 @@ class ModelVisualizer:
     def add_mesh(
         self, stage, path: str, color: tuple = (0.55, 0.55, 0.55), opacity: float = 1.0
     ) -> str:
-        """Add a grey mesh prim to *stage* at *path*."""
         return create_mesh_prim(stage, path, self.mesh, color=color, opacity=opacity)
 
     def add_wireframe(self, stage, path: str, color: tuple = (0.7, 0.7, 0.7)) -> str:
-        """Add a wireframe prim to *stage* at *path*."""
         return create_wireframe_from_trimesh(stage, path, self.mesh, color=color)
 
     def add_points(
         self, stage, path: str, color: tuple = (1.0, 0.0, 0.0), point_size: float = 0.02
     ) -> str | None:
-        """Add a coloured point cloud of target points, or ``None`` if unavailable."""
         if self.target_points is None:
             return None
         return create_points_prim(
@@ -63,12 +51,7 @@ class ModelVisualizer:
         width: float = 0.01,
         max_normals: int | None = 5000,
     ) -> str | None:
-        """Add normal-vector line segments, or ``None`` if unavailable.
-
-        ``width`` is in world units (default 5 mm). ``max_normals`` subsamples
-        the rendered set; the full target_points cloud is unchanged. Pass
-        ``None`` to render all normals (heavy at 100 k+).
-        """
+        """``max_normals`` subsamples the rendered set; pass ``None`` to render all (heavy at 100k+)."""
         if self.target_points is None or self.normals is None:
             return None
 

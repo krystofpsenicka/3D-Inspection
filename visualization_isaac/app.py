@@ -1,17 +1,11 @@
 """Isaac Sim application lifecycle helper.
 
-Use this as a context manager to launch ``SimulationApp`` once and obtain a
-ready-to-use stage:
-
-    from visualization_isaac import IsaacApp
+Every ``isaacsim``/``omni``/``pxr`` import is deferred to ``__enter__`` because ``SimulationApp``
+must be constructed before any of those modules can be imported safely.
 
     with IsaacApp(headless=False) as ctx:
-        # build prims via the visualizer classes on ctx.stage ...
+        # build prims via visualizer classes on ctx.stage ...
         ctx.run_until_quit()
-
-The class defers every ``isaacsim`` / ``omni`` / ``pxr`` import to
-``__enter__`` because ``SimulationApp`` must be constructed before any of
-those modules can be imported safely.
 """
 
 from __future__ import annotations
@@ -37,11 +31,9 @@ class IsaacContext:
     extras: dict = field(default_factory=dict)
 
     def step(self, render: bool = True) -> None:
-        """Advance the world by one physics step."""
         self.world.step(render=render)
 
     def update(self) -> None:
-        """Render-only frame tick (no physics)."""
         self.app.update()
 
     def is_running(self) -> bool:
@@ -59,16 +51,6 @@ class IsaacContext:
 
 
 class IsaacApp:
-    """Context manager that launches ``SimulationApp`` and yields an :class:`IsaacContext`.
-
-    Parameters
-    ----------
-    headless : Disable rendering / GUI when ``True``.
-    renderer : Renderer name (e.g. ``"RayTracedLighting"``).
-    physics_dt : World physics timestep.
-    rendering_dt : World rendering timestep.
-    """
-
     def __init__(
         self,
         headless: bool = False,
@@ -89,16 +71,13 @@ class IsaacApp:
 
         app = SimulationApp({"headless": self.headless, "renderer": self.renderer})
 
-        # Detect Isaac Sim version (4.5 vs 5.x); uses the same heuristic as
-        # ``visualization_isaac.vrp.replay``: presence of the legacy URDF
-        # importer module ``omni.importer.urdf``.
+        # Detect Isaac Sim 4.5 vs 5.x via presence of the legacy URDF importer.
         is_isaac_45 = False
         try:
             import omni.importer.urdf  # type: ignore  # noqa: F401
         except ImportError:
             is_isaac_45 = True
 
-        # World creation must happen after SimulationApp.
         try:
             from isaacsim.core.api import World  # type: ignore
         except Exception:
@@ -109,8 +88,6 @@ class IsaacApp:
         world = World(physics_dt=self.physics_dt, rendering_dt=self.rendering_dt)
         stage = omni.usd.get_context().get_stage()
 
-        # Ensure /World exists and is the default prim, so `Sdf.Reference` /
-        # `OverridePrim` paths resolve consistently across helpers.
         from pxr import UsdGeom
 
         if not stage.GetPrimAtPath("/World").IsValid():
@@ -122,9 +99,8 @@ class IsaacApp:
                 import carb  # type: ignore
 
                 s = carb.settings.get_settings()
-                # Balanced preset: keep shadows + AO + indirect diffuse for
-                # depth cues, but skip the heavyweight effects we don't need
-                # (AA, reflections, translucency, DLSS upscaling).
+                # Balanced preset: keep shadows + AO + indirect diffuse for depth cues,
+                # skip AA, reflections, translucency, DLSS upscaling.
                 s.set("/rtx/post/aa/op", 0)
                 s.set("/rtx/translucency/enabled", False)
                 s.set("/rtx/reflections/enabled", False)
@@ -134,9 +110,8 @@ class IsaacApp:
                 s.set("/rtx/ambientOcclusion/enabled", True)
                 s.set("/rtx/indirectDiffuse/enabled", True)
 
-                # Kill temporal accumulation + motion blur. These are what
-                # cause the "trails when panning the camera" and the soft
-                # halo around line-set / curve edges occluded by the mesh.
+                # Kill temporal accumulation + motion blur (cause panning trails and
+                # halo around line-set/curve edges occluded by the mesh).
                 s.set("/rtx/post/aa/enabled", False)
                 s.set("/rtx/post/taa/enabled", False)
                 s.set("/rtx/post/motionblur/enabled", False)
@@ -147,9 +122,7 @@ class IsaacApp:
                 s.set("/rtx/post/chromaticAberration/enabled", False)
                 s.set("/rtx/post/bloom/enabled", False)
 
-                # Denoising/spatial-filter halo around small features (lines,
-                # cubes silhouetted against the mesh). Turn the RTX denoiser
-                # off so the renderer doesn't blur sub-pixel edges.
+                # Disable RTX denoiser so it doesn't blur sub-pixel edges (halo around small features).
                 s.set("/rtx/raytracing/showLights", False)
                 s.set("/rtx/raytracing/spatialFilter/enabled", False)
                 s.set("/rtx/post/denoising/enabled", False)
@@ -161,7 +134,6 @@ class IsaacApp:
         ctx = IsaacContext(
             app=app, world=world, stage=stage, is_isaac_45=is_isaac_45,
         )
-        # Convenience method bindings (keep IsaacContext stateless of references).
         ctx.run_until_quit = lambda: _run_until_quit(ctx)  # type: ignore[attr-defined]
         self._ctx = ctx
         logger.info(
@@ -179,7 +151,6 @@ class IsaacApp:
 
 
 def _run_until_quit(ctx: IsaacContext) -> None:
-    """Loop ``app.update()`` until the user closes the window."""
     while ctx.is_running():
         ctx.update()
 
@@ -191,20 +162,14 @@ def add_dome_light(
     color: tuple = (1.0, 1.0, 1.0),
     guide_radius: float = 1.0,
 ) -> str:
-    """Convenience: add a dome light prim to *stage* (mirrors ReplayVisualizer.add_dome_light).
-
-    DomeLight is conceptually at infinity, but Hydra renders a guide sphere
-    proportional to ``guide_radius`` (the visible "dome" you see in the
-    viewport). USD doesn't expose this on the schema in every version, so
-    we set it via the raw attribute path.
-    """
+    """DomeLight is at infinity, but Hydra renders a guide sphere of ``guide_radius`` (the visible "dome").
+    USD doesn't expose this on the schema in every version, so set via raw attribute path."""
     from pxr import Gf, Sdf, UsdLux
 
     dome_light = UsdLux.DomeLight.Define(stage, path)
     dome_light.GetIntensityAttr().Set(intensity)
     dome_light.GetColorAttr().Set(Gf.Vec3f(*color))
     prim = dome_light.GetPrim()
-    # Best-effort: write whichever guide-radius attr the kit recognises.
     for attr_name in ("guideRadius", "inputs:guideRadius", "radius", "inputs:radius"):
         attr = prim.GetAttribute(attr_name)
         if not attr:
@@ -224,7 +189,6 @@ def add_distant_light(
     color: tuple = (1.0, 1.0, 1.0),
     rotate_xyz: tuple = (-45.0, 0.0, 30.0),
 ) -> str:
-    """Add a directional 'sun' light for diffuse shading."""
     from pxr import Gf, UsdGeom, UsdLux
 
     light = UsdLux.DistantLight.Define(stage, path)
@@ -244,25 +208,18 @@ def add_ground_plane(
     color: tuple | None = None,
     z: float = 0.0,
 ) -> str:
-    """Add Isaac Sim's canonical blue+grid ground plane.
-
-    Pass an :class:`IsaacContext` (preferred) so the signature default
-    ground plane environment can be installed via ``world.scene``. Falls
-    back to a plain ``GroundPlane`` quad and finally to a raw USD mesh.
-    """
+    """Isaac Sim's canonical blue+grid ground plane. Pass an ``IsaacContext`` (preferred) so the
+    default ground plane environment can be installed via ``world.scene``."""
     from pxr import Gf, UsdGeom, Vt
 
-    # Distinguish IsaacContext from a bare USD stage.
     ctx = ctx_or_stage if hasattr(ctx_or_stage, "world") else None
     stage = ctx.stage if ctx is not None else ctx_or_stage
 
     if ctx is not None and color is None:
         try:
             ctx.world.scene.add_default_ground_plane(z_position=z)
-            # The bundled environment is ~25 m across by default. We scale
-            # every immediate non-light child of the env reference; the
-            # transform inherits down to all geometry, while sibling
-            # SphereLight prims are left at their original size.
+            # Bundled environment is ~25m across; scale every immediate non-light child of the
+            # env reference so the transform inherits down to all geometry while sibling lights stay put.
             from pxr import UsdLux
 
             scale_factor = max(size / 25.0, 1.0)
@@ -310,11 +267,9 @@ def add_ground_plane(
     except Exception:
         pass
 
-    # Fallback colour if even the simple quad path is taken.
     if color is None:
         color = (0.18, 0.40, 0.85)
 
-    # Fallback: simple quad mesh.
     half = size / 2.0
     mesh = UsdGeom.Mesh.Define(stage, path)
     mesh.GetPointsAttr().Set(
@@ -342,13 +297,8 @@ def frame_viewport(
     path: str = "/World/MainCamera",
     focal_length: float = 18.0,
 ) -> str:
-    """Create a camera looking at *target* and make it the active viewport camera.
-
-    Isaac Sim's default perspective camera sits at ~(5, 5, 5) looking at the
-    origin -- inside any large scene. This helper places a camera at
-    *distance* metres from *target* (spherical coords) and switches the
-    viewport to it so the user actually sees something on first frame.
-    """
+    """Place a camera at ``distance`` metres from ``target`` (spherical coords) and switch the
+    viewport to it. Isaac Sim's default perspective camera at ~(5,5,5) sits inside any large scene."""
     import math
 
     from pxr import Gf, UsdGeom
@@ -365,7 +315,6 @@ def frame_viewport(
     cam.GetFocalLengthAttr().Set(float(focal_length))
     cam.GetClippingRangeAttr().Set(Gf.Vec2f(0.1, max(distance * 10.0, 1000.0)))
 
-    # Build a look-at transform: place at *eye*, look at *target*, with +Z up.
     mat = Gf.Matrix4d().SetLookAt(
         Gf.Vec3d(*eye), Gf.Vec3d(*target), Gf.Vec3d(0.0, 0.0, 1.0)
     ).GetInverse()
@@ -392,8 +341,7 @@ def set_camera_lookat(
     target: tuple,
     up: tuple = (0.0, 0.0, 1.0),
 ) -> None:
-    """Re-aim a camera prim with a fresh look-at transform."""
-    import math  # noqa: F401  (re-used by callers building eye/target)
+    import math  # noqa: F401
 
     from pxr import Gf, UsdGeom
 
@@ -409,7 +357,6 @@ def set_camera_lookat(
 
 
 def add_zero_gravity(stage, scene_path: str = "/physicsScene") -> str:
-    """Convenience: configure a zero-gravity physics scene."""
     from pxr import Gf, UsdPhysics
 
     ps = UsdPhysics.Scene.Get(stage, scene_path)

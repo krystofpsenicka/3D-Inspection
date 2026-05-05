@@ -2,6 +2,7 @@
 
 import cupy as cp
 import numpy as np
+import open3d as o3d
 import pytest
 
 from shared.occupancy_grid import OccupancyGrid
@@ -59,7 +60,6 @@ def rng():
 @pytest.fixture
 def cube_mesh():
     """Unit cube TriangleMesh centered at origin."""
-    o3d = pytest.importorskip("open3d")
     mesh = o3d.geometry.TriangleMesh.create_box(width=1.0, height=1.0, depth=1.0)
     mesh.translate((-0.5, -0.5, -0.5))
     return mesh

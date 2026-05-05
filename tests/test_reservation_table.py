@@ -6,9 +6,8 @@ and time-horizon enforcement. Split out of test_vrp.py for focus.
 
 from __future__ import annotations
 
+import cupy as cp
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from VRP.mapf.reservation_table import ReservationTable
 

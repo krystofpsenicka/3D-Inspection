@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
-"""E1: Sampling Strategy Comparison (k=1, thesis-final configuration)
+"""E1: Sampling Strategy Comparison.
 
-Compares three sampling strategies under the thesis-final configuration
-across Duke of Lancaster + TOSCA_REPRESENTATIVE, 3 seeds each:
-  weighted             --  SDF² uniform, all N from the weighted base sampler
-  weighted_curvature   --  SDF² + curvature bias, all N from base sampler
-  cmaes_100        --  100% CMA-ES optimised (k_coverage=3, popsize=40,
-                        maxiter=40, travel_weight=0.1 for TOSCA / 0.0 for
-                        Duke  --  values from e03 Section 2B)
+Compares 3 strategies on Duke + TOSCA_REPRESENTATIVE × 3 seeds:
+  weighted             – SDF^2 uniform
+  weighted_curvature   – SDF^2 + curvature bias
+  cmaes_100            – 100% CMA-ES (k_coverage=3, popsize=40, maxiter=40,
+                         travel_weight=0.1 TOSCA / 0.0 Duke; e03 §2B)
 
-The k-coverage and k x travel_weight sweeps live in e03
-(iterative_sampler_params); this experiment fixes the CMA-ES
-hyperparameters to e03's thesis-final values and asks "under that
-configuration, how do the three samplers compare?"
+The k_coverage and k×travel_weight sweeps live in e03; this experiment fixes the CMA-ES
+hyperparameters and asks how the three samplers compare. Targeted sampler excluded — it
+does not outperform weighted_curvature (e03). Set-cover: LazyGreedySetCover (CPU, fastest per e06).
 
-Fixed candidate budget: model.num_candidates (1500 Duke, 500 TOSCA).
-Target coverage: 95%. Targeted samplers are deliberately excluded  --  see
-e03 Section 1: they do not outperform weighted_curvature.
-
-Set-cover: LazyGreedySetCover (CPU, O(log N) heap)  --  fastest per e06 results.
-
-Usage:
     conda run -n isaaclab python -m experiments.e01_sampling_strategy
     conda run -n isaaclab python -m experiments.e01_sampling_strategy --plots_only
 """
@@ -49,7 +39,6 @@ from experiments.common.config import (
     ModelConfig,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -72,11 +61,10 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Targeted sampler is intentionally excluded from the e01 comparison  --
-# it never outperforms weighted_curvature at k=1 (see e03 Section 1).
+# Targeted sampler intentionally excluded: never outperforms weighted_curvature at k=1 (e03 §1).
 _E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes_100"]
 
-# Thesis-final CMA-ES configuration (from e03 Section 2B).
+# Thesis-final CMA-ES configuration (e03 §2B).
 _E01_K_COVERAGE = 3
 _E01_CMAES_POPSIZE = 40
 _E01_CMAES_MAXITER = 40
@@ -85,13 +73,8 @@ _E01_CMAES_TRAVEL_WEIGHT_TOSCA = 0.1
 
 
 def _strategy_kwargs(strategy: str, model_name: str) -> dict:
-    """Per-strategy + per-model kwargs forwarded to sample_strategy().
-
-    weighted and weighted_curvature are one-shot  --  kwargs are silently
-    ignored in the dispatch's one-shot branch. For cmaes_100 we pin the
-    thesis-final hyperparameters; the travel_weight is chosen per model
-    group to match e03 Section 2B's conclusion.
-    """
+    """``weighted`` / ``weighted_curvature`` are one-shot — kwargs ignored in dispatch's one-shot
+    branch. ``cmaes_100`` pins thesis-final hyperparameters; travel_weight per model group (e03 §2B)."""
     if strategy == "cmaes_100":
         tw = (
             _E01_CMAES_TRAVEL_WEIGHT_DUKE
@@ -120,20 +103,13 @@ from experiments.common.plotting import (
 
 
 def _display_model(name: str) -> str:
-    """Map internal model id to a compact display label used in figures."""
     return "duke" if name == "duke_of_lancaster" else name
 
 
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Per-run helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage):
-    """Run LazyGreedySetCover (CPU) and return opt_result."""
     V_np = cp.asnumpy(V)
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)
@@ -142,7 +118,6 @@ def _set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage):
 
 
 def _save_viz(opt_result, target_points, normals, viz_path, meta):
-    """Save set-cover viz data (positions, rotations, visibility_map, points) for replay."""
     data = {
         "positions": opt_result.positions,
         "rotations": opt_result.rotations,
@@ -161,15 +136,13 @@ def run_single_A(
     target_coverage: float = 0.95,
     viz_path: str | None = None,
 ) -> dict:
-    """Fixed candidate budget (model.num_candidates), thesis-final CMA-ES
-    hyperparameters from _strategy_kwargs."""
+    """Fixed candidate budget (model.num_candidates), thesis-final CMA-ES hyperparameters."""
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
     model = ctx.model
 
     strat_kw = _strategy_kwargs(strategy, model.name)
-    # k_coverage is recorded from the kwargs (or 1 for one-shot samplers).
     k_recorded = strat_kw.get("k_coverage", 1)
 
     with timed() as t_sample:
@@ -232,15 +205,6 @@ def run_single_A(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plotting helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Section A plots
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _per_strategy_mean(rows, strategies, metric, mult=1.0):
     means, stds = [], []
     for s in strategies:
@@ -251,7 +215,6 @@ def _per_strategy_mean(rows, strategies, metric, mult=1.0):
 
 
 def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
-    """Section A plots: by-model viewpoint counts and per-model timing breakdown."""
     mr = [r for r in results if r["section"] == "A"]
     if not mr:
         return
@@ -260,7 +223,6 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
     models = sorted(set(r["model"] for r in mr))
     model_labels = [_display_model(m) for m in models]
 
-    # ── Fig 1: By-model grouped bars (absolute viewpoints) ──────────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     vp_data: dict = {}
     vp_err: dict = {}
@@ -286,7 +248,6 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
     ax.tick_params(axis="x", rotation=30)
     save_figure(fig, os.path.join(fig_dir, "e01_A_by_model_viewpoints"))
 
-    # ── Fig 2: Stage timing per model (stacked bar, one panel per model) ─
     n_models = len(models)
     fig, axes = plt.subplots(1, n_models, figsize=(DOUBLE_COL, 3.8), sharey=True)
     if n_models == 1:
@@ -313,18 +274,12 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
     logger.info("Section A aggregated figures saved")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def main():
     p = argparse.ArgumentParser(description="E1: Sampling Strategy Comparison")
     p.add_argument(
         "--models",
         nargs="+",
         default=["duke_of_lancaster"] + TOSCA_REPRESENTATIVE,
-        help="Models to evaluate",
     )
     p.add_argument("--strategies", nargs="+", default=_E01_STRATEGIES)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
@@ -444,7 +399,6 @@ def main():
         if a_results:
             generate_plots_A(a_results, args.strategies, fig_dir)
 
-        # ── Summary table ──────────────────────────────────────────────
         models = sorted(set(r["model"] for r in a_results))
         logger.info("\n%s\nE1 SUMMARY\n%s", "=" * 80, "=" * 80)
         for model_name in models:

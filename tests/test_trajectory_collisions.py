@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+import cupy as cp
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from VRP.core.constants import ROBOT_RADIUS
 from VRP.utils.collision import find_trajectory_collisions

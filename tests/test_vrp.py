@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from VRP.core.constants import MIP_GAP
-from VRP.core.types import VRPBackend, VRPResult
+from VRP.core.types import VRPBackend
 from VRP.vrp._helpers import (
     compute_route_cost as _compute_route_cost,
 )
@@ -27,14 +27,9 @@ from VRP.vrp._helpers import (
 from VRP.vrp._helpers import (
     per_vehicle_costs as _per_vehicle_costs,
 )
-from VRP.vrp.vrp_solver import solve_vrp
-
-# ── Skip conditions ──────────────────────────────────────────────────────────
-
-pulp = pytest.importorskip("pulp", reason="PuLP not installed")
-
 from VRP.vrp.mip_solver_cpu import MIPSolverCPU as MIPMakespanCPU
 from VRP.vrp.mip_solver_gpu import MIPSolverGPU as MIPMakespanGPU
+from VRP.vrp.vrp_solver import solve_vrp
 
 # ─── Brute-force reference solver ───────────────────────────────────────────
 
@@ -226,14 +221,6 @@ def _make_solver(name: str, alpha: float = 1.0):
         raise ValueError(f"Unknown solver: {name}")
 
 
-def _skip_on_subprocess_error(result: VRPResult, solver_name: str):
-    """Skip the test if the solver failed due to subprocess/env issues."""
-    if result.status != "success":
-        if "subprocess_error" in result.status or "timeout" in result.status:
-            pytest.skip(f"{solver_name} subprocess unavailable: {result.status}")
-        assert False, f"Solver failed: {result.status}"
-
-
 def _solver_ids(solvers):
     """Generate pytest ids from solver name list."""
     return solvers
@@ -285,7 +272,7 @@ class TestSolverOptimality:
 
         solver, _ = _make_solver(solver_name, alpha=alpha)
         result = solver.solve(dm, num_vehicles=2, depots=depots, alpha=alpha)
-        _skip_on_subprocess_error(result, solver_name)
+        assert result.status == "success", f"{solver_name}: {result.status}"
         tol = MIP_GAP + 0.01  # MIP gap + small numerical margin
         actual = getattr(result, objective)
         assert actual <= bf_value * (1 + tol), (
@@ -304,7 +291,7 @@ class TestSolverOptimality:
         dm, depots, optimal_makespan = _clustered_known_optimum()
         solver = MIPMakespanCPU(time_limit=60, mip_gap=MIP_GAP)
         result = solver.solve(dm, num_vehicles=3, depots=depots, alpha=1.0)
-        _skip_on_subprocess_error(result, "mip_cpu")
+        assert result.status == "success", f"mip_cpu: {result.status}"
         tol = MIP_GAP + 0.01
         assert result.makespan <= optimal_makespan * (1 + tol), (
             f"makespan={result.makespan:.2f} > optimal={optimal_makespan:.2f}"
@@ -325,8 +312,9 @@ class TestSolverFeasibility:
         dm = _small_dist_matrix()
         solver, alpha = _make_solver(solver_name, alpha=1.0)
         result = solver.solve(dm, num_vehicles=2, depots=[0, 0], alpha=alpha)
-        if result.status != "success":
-            pytest.skip(f"{solver_name} did not find a solution")
+        assert result.status == "success", (
+            f"{solver_name} did not find a solution: {result.status}"
+        )
         return result, dm
 
     def test_all_customers_visited_once(self, solved):

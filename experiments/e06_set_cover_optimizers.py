@@ -1,30 +1,14 @@
 #!/usr/bin/env python3
-"""E4: Set Cover Optimizer Comparison
+"""E4: Set Cover Optimizer Comparison.
 
-Two sections:
+Section A — fixed input strategy (weighted_curvature):
+  GreedySetCover, GreedySetCoverCuda, LazyGreedySetCover, ExpansionIterative_{weighted, weighted_curvature, cmaes}.
 
-Section A  --  Optimizer comparison (fixed input strategy: weighted_curvature):
-  Optimizers compared:
-    GreedySetCover               --  CPU greedy, O(N.M) per step
-    GreedySetCoverCuda           --  GPU greedy, ~30x faster than CPU for large N
-    LazyGreedySetCover           --  CPU lazy greedy, O(log N) heap  --  fastest for N~1500
-    ExpansionIterative_weighted          --  LazyGreedy + weighted expansion
-    ExpansionIterative_weighted_curvature  --  LazyGreedy + curvature-weighted expansion
-    ExpansionIterative_cmaes             --  LazyGreedy + CMA-ES expansion
+Section B — input-strategy robustness: 10 sampling strategies × 4 key optimizers.
 
-  Note: GreedyCuda is fast because it evaluates all N candidates in one CUDA
-  kernel per step. Reference: e04 results confirm LazyGreedy-CPU is fastest for N<=2K.
+Lower bound: greedy matching (anti-chain) + trivial info-theoretic + LP relaxation, computed
+once per (model, seed) on the weighted_curvature pool. See common/lower_bounds.py.
 
-Section B  --  Input strategy robustness (all 10 sampling strategies x 4 key optimizers):
-  Shows whether optimizer ranking (timing and solution quality) holds regardless of
-  how the candidate pool was generated. Each strategy generates different candidates
-  (different N, quality, spatial distribution)  --  this tests optimizer robustness.
-
-Lower bound: greedy matching (anti-chain) bound combined with the trivial
-  info-theoretic bound. Computed once per (model, seed) on the weighted_curvature
-  candidate set; plots show the per-seed band. See common/lower_bounds.py.
-
-Usage:
     conda run -n isaaclab python -m experiments.e06_set_cover_optimizers
     conda run -n isaaclab python -m experiments.e06_set_cover_optimizers --section A
     conda run -n isaaclab python -m experiments.e06_set_cover_optimizers --section B
@@ -72,7 +56,6 @@ from experiments.common.plotting import (
     setup_thesis_style,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -104,19 +87,9 @@ except ImportError as _e:
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Expansion adapter (adapts TargetedViewpointSampler to ProbabilisticSampler
-# interface for ProbabilisticExpansionSampler)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 class _WeightedExpansionAdapter:
-    """Wraps a TargetedViewpointSampler and exposes ProbabilisticSampler.sample(n).
-
-    ProbabilisticExpansionSampler.refine() calls self.sampler.sample(n_samples)
-    with no other arguments.  TargetedViewpointSampler.sample() requires
-    uncovered_indices as the first arg, so we call the parent class method.
-    """
+    """Wrap a TargetedViewpointSampler to expose the ProbabilisticSampler.sample(n) interface
+    used by ProbabilisticExpansionSampler.refine()."""
 
     def __init__(self, sampler, curvature_weighting: bool = False):
         self._s = sampler
@@ -139,24 +112,9 @@ class _WeightedExpansionAdapter:
         )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Optimizer factory
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _make_optimizer(
     name: str, ctx: PipelineContext, vis_query, num_points: int, pos_gpu, rot_gpu, V_gpu, V_np
 ):
-    """Instantiate a set cover optimizer.
-
-    Args:
-        name:       optimizer identifier (see E04_OPTIMIZERS_A / _B)
-        ctx:        PipelineContext (needed for expansion samplers)
-        vis_query:  GPU visibility query (needed for expansion samplers)
-        V_gpu:      CuPy (N, M) visibility matrix
-        V_np:       numpy (N, M) visibility matrix
-        pos_gpu / rot_gpu: CuPy candidate positions/rotations
-    """
     from visibility.set_cover import (
         ExpansionIterativeSetCover,
         GreedySetCover,
@@ -177,7 +135,7 @@ def _make_optimizer(
         return LazyGreedySetCover(num_points, pos_np, rot_np, V_np)
 
     elif name.startswith("ExpansionIterative_"):
-        inner_sampler_type = name.split("_", 1)[1]  # "weighted", "weighted_curvature", "cmaes"
+        inner_sampler_type = name.split("_", 1)[1]  # "weighted" / "weighted_curvature" / "cmaes"
         inner = LazyGreedySetCover(num_points, pos_np, rot_np, V_np)
 
         if inner_sampler_type in ("weighted", "weighted_curvature"):
@@ -205,18 +163,9 @@ def _make_optimizer(
         raise ValueError(f"Unknown optimizer: {name!r}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Single run
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _save_viz(opt_result, target_points, normals, viz_path, meta):
-    """Save set-cover viz data (positions, rotations, visibility_map, points) for replay.
-
-    target_points and normals may arrive as CuPy arrays (when called from the
-    main pipeline)  --  route them through cp.asnumpy rather than np.asarray,
-    which would raise TypeError on an implicit GPU->CPU copy.
-    """
+    """``target_points`` / ``normals`` may be CuPy when called from the main pipeline — route
+    through ``cp.asnumpy`` rather than ``np.asarray`` (which would raise on implicit GPU→CPU copy)."""
     data = {
         "positions": (
             opt_result.positions.get()
@@ -263,10 +212,7 @@ def run_single(
     target_points_viz=None,
     normals_viz=None,
 ) -> dict:
-    """Run one optimizer on pre-generated candidates.
-
-    Candidates are passed in to avoid recomputing across optimizers.
-    """
+    """Candidates passed in to avoid recomputing across optimizers."""
     vis_query = ctx.build_visibility_query("raycast")
     optimizer = _make_optimizer(
         optimizer_name,
@@ -312,17 +258,11 @@ def run_single(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Lower bound computation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _lb_cache_path(raw_dir: str, model_name: str, seed: int) -> str:
     return os.path.join(raw_dir, f"lb_model={model_name}_seed={seed}")
 
 
 def _save_lb(raw_dir: str, model_name: str, seed: int, num_points: int, lb_this: dict) -> None:
-    """Persist a per-(model, seed) LB record to raw_dir."""
     targets = sorted(lb_this.keys())
     record = {
         "model": model_name,
@@ -339,7 +279,7 @@ def _save_lb(raw_dir: str, model_name: str, seed: int, num_points: int, lb_this:
 
 
 def _load_lb(raw_dir: str, model_name: str, seed: int, expected_targets: list) -> dict | None:
-    """Load a cached LB record; return None on miss or target mismatch."""
+    """Returns None on miss or target mismatch."""
     path = _lb_cache_path(raw_dir, model_name, seed)
     if not os.path.exists(path + ".json"):
         return None
@@ -364,7 +304,6 @@ def _load_lb(raw_dir: str, model_name: str, seed: int, expected_targets: list) -
 
 
 def _accumulate_lb(lower_bounds: dict, model_name: str, lb_this: dict) -> None:
-    """Append a single-seed LB record into the per-(model, target) aggregate."""
     for target, d in lb_this.items():
         key = (model_name, target)
         acc = lower_bounds.setdefault(
@@ -382,15 +321,10 @@ def _accumulate_lb(lower_bounds: dict, model_name: str, lb_this: dict) -> None:
 
 
 def compute_lower_bounds(V_np: np.ndarray, num_points: int, coverage_targets: list) -> dict:
-    """Compute lower bounds for partial set cover.
-
-    Three bounds per target:
+    """Three bounds per target:
     - Matching (anti-chain): ``max(0, K + ceil(M*t) - M)``
     - Info-theoretic: ``ceil(M*t / max_single_cov)``
-    - LP relaxation: ``ceil(LP_opt)`` of the partial set cover LP
-
-    The LP is the tightest (it subsumes the other two) and naturally
-    increases with the target coverage fraction.
+    - LP relaxation: ``ceil(LP_opt)`` of the partial set cover LP (tightest; subsumes the others).
     """
     from scipy.sparse import csc_matrix
 
@@ -427,13 +361,7 @@ def compute_lower_bounds(V_np: np.ndarray, num_points: int, coverage_targets: li
     return bounds
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plot generation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _short(optimizer_name: str) -> str:
-    """Short label for plots."""
     return (
         optimizer_name.replace("SetCoverCuda", "Cuda")
         .replace("SetCover", "")
@@ -442,12 +370,10 @@ def _short(optimizer_name: str) -> str:
 
 
 def _display_model(name: str) -> str:
-    """Map internal model id to a compact display label used in figures."""
     return "duke" if name == "duke_of_lancaster" else name
 
 
 def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[str], fig_dir: str):
-    """Section A plots: cross-model summary plus the per-target LB plot for Duke."""
     mr = [r for r in results if r.get("section") == "A"]
     if not mr:
         return
@@ -462,7 +388,6 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
         vals = [r[metric] for r in rows]
         return float(np.mean(vals)) if vals else float("nan")
 
-    # ── Per-target LB plot for Duke only ─────────────────────────────────
     duke = "duke_of_lancaster"
     if duke in models and lower_bounds:
         duke_mr = [r for r in mr if r["model"] == duke]
@@ -507,13 +432,11 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
             ax.set_xlabel("Target coverage")
             save_figure(fig, os.path.join(fig_dir, f"{duke}_e06_A_viewpoints_vs_lb"))
 
-    # ── Cross-model figures at α=0.95 (used in the thesis chapter) ───────
     if models:
         target_95 = min(targets, key=lambda t: abs(t - 0.95))
         present_all = [o for o in optimizers if any(r["optimizer"] == o for r in mr)]
         model_labels = [_display_model(m) for m in models]
 
-        # Fig: viewpoints per model x optimizer at α=0.95, with per-model LB
         from matplotlib.lines import Line2D
 
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
@@ -547,8 +470,7 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
         ax.tick_params(axis="x", rotation=20)
         save_figure(fig, os.path.join(fig_dir, "cross_model_e06_A_viewpoints_lb"))
 
-        # Fig: timing per model x optimizer at α=0.95 (log y so the fast
-        # solvers don't get squashed by Exp_cmaes which is ~100x slower).
+        # Log y so fast solvers don't get squashed by Exp_cmaes (~100× slower).
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
         time_data = {
             _short(o): [_mean(o, target_95, "optimization_time", md) for md in models]
@@ -568,11 +490,6 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
         logger.info("Cross-model A figures saved (target=%.2f)", target_95)
 
     logger.info("Section A figures saved to %s", fig_dir)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def main():
@@ -595,7 +512,7 @@ def main():
         default=True,
         help="Compute lower bounds (default: on).",
     )
-    p.add_argument("--no_lb", dest="lb", action="store_false", help="Skip lower bound computation.")
+    p.add_argument("--no_lb", dest="lb", action="store_false")
     p.add_argument(
         "--lb_only",
         action="store_true",
@@ -625,7 +542,7 @@ def main():
     run_A = args.section in ("A", "both")
 
     if args.lb_only:
-        # LB is computed inside Section A's candidate-gen loop  --  force it on
+        # LB is computed inside Section A's candidate-gen loop — force it on.
         run_A = True
 
     if not args.plots_only:
@@ -646,12 +563,10 @@ def main():
                 logger.warning("Skipping %s: degenerate normals", model_name)
                 continue
 
-            # ── Section A: fixed input=weighted_curvature, all optimizers ─
             if run_A:
                 logger.info("--- Section A (weighted_curvature) ---")
                 for seed in args.seeds_A:
-                    # Try the LB cache first so --lb_only --resume can skip
-                    # candidate generation entirely.
+                    # Try LB cache first so --lb_only --resume can skip candidate generation.
                     lb_this = None
                     if args.lb and args.resume:
                         lb_this = _load_lb(raw_dir, model_name, seed, args.targets)
@@ -680,7 +595,6 @@ def main():
                     num_points = int(len(target_points))
                     logger.info("  %d candidates (%.1fs)", len(pos_gpu), t_cand.elapsed)
 
-                    # Compute or reuse per-(model, seed) LB; persist for --plots_only.
                     if args.lb:
                         if lb_this is None:
                             logger.info("  Computing lower bounds...")
@@ -761,7 +675,6 @@ def main():
             base = fname.replace(".json", "")
             r = load_run_result(os.path.join(raw_dir, base))
             if fname.startswith("lb_"):
-                # Cached LB record: populate per-(model, target) aggregates.
                 model = r["model"]
                 K = int(r["K"])
                 has_lp = "lp" in r

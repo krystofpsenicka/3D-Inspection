@@ -7,10 +7,9 @@ Split out of test_vrp.py.
 
 from __future__ import annotations
 
+import cupy as cp
 import numpy as np
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from shared.occupancy_grid import OccupancyGrid
 from VRP.mapf.reservation_table import ReservationTable

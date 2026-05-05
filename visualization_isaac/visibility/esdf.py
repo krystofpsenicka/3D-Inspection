@@ -1,4 +1,4 @@
-"""Visualize ESDF voxel grids in 3D (Isaac Sim variant  --  no 2D slice)."""
+"""Visualize ESDF voxel grids in 3D (Isaac Sim variant)."""
 
 from __future__ import annotations
 
@@ -27,9 +27,9 @@ COORD_FRAME_SIZE = 2.0
 
 @dataclass
 class _PreparedPoints:
-    positions: np.ndarray  # (N, 3)
-    colors: np.ndarray | tuple  # (N, 3) or (3,)
-    n_total: int  # before subsampling
+    positions: np.ndarray
+    colors: np.ndarray | tuple
+    n_total: int
 
 
 @dataclass
@@ -48,7 +48,6 @@ def _subsample(ijk: np.ndarray, max_points: int, seed: int) -> np.ndarray:
 
 
 def _to_numpy(arr):
-    """Move a CuPy/Torch/etc. array to a NumPy array; pass numpy through."""
     if isinstance(arr, np.ndarray):
         return arr
     get = getattr(arr, "get", None)
@@ -58,24 +57,9 @@ def _to_numpy(arr):
 
 
 class EsdfVisualizer:
-    """Stage-builder for ESDF voxel grid visualization.
-
-    Parameters
-    ----------
-    occupancy_grid : OccupancyGrid object.
-    raw_grid : Pre-inflation boolean occupancy grid.
-    esdf : 3-D float array of signed distances.
-    scaled_mesh : Optional trimesh (already scaled/posed) for overlays.
-
-    Notes
-    -----
-    Heavy numpy work (mask, argwhere, sub-sampling, colour mapping) belongs
-    in :meth:`prepare`, which should be called **before** the IsaacApp
-    context manager opens. Once Kit is running it auto-shuts the app down
-    if the main thread does not pump ``app.update()`` for ~1-2 seconds, so
-    the data must be ready when ``add_3d`` is invoked from a phase enter
-    callback.
-    """
+    """Heavy numpy work belongs in :meth:`prepare`, called *before* the IsaacApp context manager
+    opens — Kit auto-shuts the app down if the main thread doesn't pump ``app.update()`` for ~1-2s,
+    so data must be ready when ``add_3d`` is invoked from a phase enter callback."""
 
     def __init__(
         self,
@@ -98,15 +82,11 @@ class EsdfVisualizer:
         max_points: int = 300_000,
     ) -> None:
         """Pre-compute all voxel arrays before the SimulationApp launches."""
-        # The ESDF/raw grids and the grid origin may live on the GPU (CuPy).
-        # Move to CPU once; Isaac Sim's USD APIs only consume host memory,
-        # and matplotlib's colour map cannot consume CuPy arrays implicitly.
         esdf_np = _to_numpy(self.esdf)
         raw_np = _to_numpy(self.raw)
         origin_np = np.asarray(_to_numpy(self.og.origin), dtype=np.float64)
         resolution = float(self.og.resolution)
 
-        # Band: voxels with |signed-distance| < band_radius, coloured by value.
         mask = np.abs(esdf_np) < esdf_band
         ijk = np.argwhere(mask)
         if len(ijk) > 0:
@@ -147,10 +127,6 @@ class EsdfVisualizer:
         base_path: str,
         show_mesh: bool = True,
     ) -> list[str]:
-        """Author the prepared prims under ``base_path``.
-
-        :meth:`prepare` must have been called first.
-        """
         if self._prepared is None:
             raise RuntimeError("EsdfVisualizer.prepare() must be called before add_3d()")
         prep = self._prepared

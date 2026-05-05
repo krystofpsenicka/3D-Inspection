@@ -1,32 +1,13 @@
 #!/usr/bin/env python3
-"""
-Full Inspection Pipeline - Computation Script
-==============================================
+"""Full inspection pipeline: mesh -> sampling -> visibility -> set cover -> VRP -> ST-A* -> save.
 
-Runs the complete 3D-Inspection -> VRP pipeline end-to-end and saves all
-intermediate data into a directory so the visualisation script can replay the
-process in Isaac Sim phase-by-phase.
+Stages: load mesh, sample surface + normals, build sampling OG, generate candidates, raycast
+visibility, greedy set cover, build routing OG + distance matrix, solve VRP, execute via ST-A*,
+serialise. Output replays in Isaac Sim via ``scripts/visualize_full_pipeline.py``.
 
-Pipeline stages
----------------
-1. Load & transform mesh (duke_of_lancaster_uk_clipped.glb -> 50 m, VRP pose).
-2. Sample 200 K surface points (pointcloud) and estimate outward normals.
-3. Generate 1 500 candidate viewpoints outside the mesh.
-4. Compute raycast visibility for every candidate (BVH + KD-tree frustum
-   culling).
-5. Greedy set-cover optimisation at 95 % target coverage.
-6. Convert selected viewpoints to VRP waypoints [x,y,z,qw,qx,qy,qz].
-7. Build occupancy grid (50 m mesh), compute distance matrix, solve VRP.
-8. Execute routes via Space-Time A* -> ``ExecutionResult``.
-9. Save everything via ``VRP.utils.serialization.save_pipeline``.
-
-Usage
------
-::
-
-    python -m scripts.run_full_pipeline                          # outputs/full_pipeline
-    python -m scripts.run_full_pipeline --output my_dir/         # custom directory
-    python -m scripts.run_full_pipeline --num_robots 3           # 3 AUVs
+    python -m scripts.run_full_pipeline                   # outputs/full_pipeline
+    python -m scripts.run_full_pipeline -o my_dir/        # custom directory
+    python -m scripts.run_full_pipeline -n 3              # 3 AUVs
 """
 
 from __future__ import annotations
@@ -40,17 +21,14 @@ import time
 import cupy as cp
 import numpy as np
 
-# ── Ensure repo root is on sys.path ──────────────────────────────────────────
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-# The GLB file stores vertices in Y-up convention (glTF standard).
-# Isaac Sim's GLB->USD converter implicitly prepends a Y-up->Z-up rotation
-# (+90 deg about X) before any user xformOps, but trimesh loads raw coordinates.
-# To get the same orientation from trimesh we compose:
-#   R_combined = R_mesh_pose(180 degX) @ R_y2z(+90 degX) = R_x(270 deg) = R_x(-90 deg)
-#   Quaternion [qw,qx,qy,qz] = [cos(-45 deg), sin(-45 deg), 0, 0]
+# GLB stores Y-up; Isaac's GLB->USD converter prepends a Y-up->Z-up rotation (+90° about X)
+# before any user xformOps, but trimesh loads raw coordinates. Compose:
+#   R_combined = R_mesh_pose(180°X) @ R_y2z(+90°X) = R_x(270°) = R_x(-90°)
+#   quaternion [qw,qx,qy,qz] = [cos(-45°), sin(-45°), 0, 0]
 import math as _math
 
 from shared.types import Side
@@ -67,104 +45,55 @@ _CORRECTED_MESH_POSE = list(_vrp_cfg.MESH_POSE[:3]) + [
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Run the full 3D-Inspection → VRP pipeline and save data "
-        "for Isaac Sim visualisation.",
+        description="Run the full 3D-Inspection → VRP pipeline and save data for Isaac Sim replay.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
         "--output",
         "-o",
         default=os.path.join(REPO_ROOT, "outputs", "full_pipeline"),
-        help="Directory to write pipeline artefacts (overwritten on each run).",
+        help="Output directory (overwritten on each run).",
     )
-    p.add_argument("--num_robots", "-n", type=int, default=5, help="Number of AUV robots for VRP.")
-    p.add_argument(
-        "--mesh_target_length",
-        type=float,
-        default=50.0,
-        help="Target length (m) of the ship along its longest axis.",
-    )
-    p.add_argument(
-        "--num_surface_points",
-        type=int,
-        default=200_000,
-        help="Number of surface points to sample on the mesh.",
-    )
-    p.add_argument(
-        "--num_candidates",
-        type=int,
-        default=1500,
-        help="Number of candidate viewpoints to generate.",
-    )
-    p.add_argument(
-        "--target_coverage",
-        type=float,
-        default=0.95,
-        help="Greedy set cover target coverage (0–1).",
-    )
-    p.add_argument("--frustum_near", type=float, default=0.1, help="Frustum near plane (m).")
-    p.add_argument("--frustum_far", type=float, default=6.0, help="Frustum far plane (m).")
-    p.add_argument(
-        "--frustum_fov_deg", type=float, default=40.0, help="Frustum vertical FOV (degrees)."
-    )
-    p.add_argument(
-        "--frustum_aspect", type=float, default=1.0, help="Frustum aspect ratio (width/height)."
-    )
-    p.add_argument(
-        "--solver", choices=["cuopt", "highs"], default="cuopt", help="MIP solver backend."
-    )
-    p.add_argument(
-        "--alpha",
-        type=float,
-        default=0.5,
-        help="Objective blending: 1.0=makespan, 0.0=total distance.",
-    )
-    p.add_argument("--seed", type=int, default=42, help="Random seed.")
-    p.add_argument(
-        "--curvature_weighting",
-        action="store_true",
-        help="Enable curvature-weighted sampling (bias toward complex regions).",
-    )
+    p.add_argument("--num_robots", "-n", type=int, default=5)
+    p.add_argument("--mesh_target_length", type=float, default=50.0, help="Mesh longest-axis length (m).")
+    p.add_argument("--num_surface_points", type=int, default=200_000)
+    p.add_argument("--num_candidates", type=int, default=1500)
+    p.add_argument("--target_coverage", type=float, default=0.95)
+    p.add_argument("--frustum_near", type=float, default=0.1)
+    p.add_argument("--frustum_far", type=float, default=6.0)
+    p.add_argument("--frustum_fov_deg", type=float, default=40.0)
+    p.add_argument("--frustum_aspect", type=float, default=1.0)
+    p.add_argument("--solver", choices=["cuopt", "highs"], default="cuopt")
+    p.add_argument("--alpha", type=float, default=0.5, help="1.0=makespan, 0.0=total distance.")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--curvature_weighting", action="store_true", help="Bias sampling toward complex regions.")
     p.add_argument(
         "--resample_fraction",
         type=float,
         default=0.0,
-        help="Fraction of candidates generated via targeted resampling "
-        "(0.0 = disabled, 0.25 = 25%% targeted).",
+        help="Fraction generated via targeted resampling (0=disabled).",
     )
     p.add_argument(
         "--resampling_strategy",
         choices=["random", "optimal"],
         default="optimal",
-        help="Targeted resampling strategy: 'random' (proximity-weighted) or 'optimal' (CMA-ES).",
+        help="'random' (proximity-weighted) or 'optimal' (CMA-ES).",
     )
     p.add_argument(
         "--k_coverage",
         type=int,
         default=1,
-        help="Coverage redundancy: sample until each point is covered "
-        "by at least k viewpoints (Glorieux 2020).",
+        help="Per-target coverage redundancy (Glorieux 2020).",
     )
     p.add_argument(
         "--side",
         choices=["outside", "inside"],
         default="outside",
-        help="Inspection side: 'outside' (routes around mesh) or 'inside' (routes inside mesh).",
     )
     p.add_argument("--verbose", "-v", action="store_true")
     return p.parse_args()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Main pipeline
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def main() -> None:
@@ -180,7 +109,6 @@ def main() -> None:
 
     MESH_TARGET_LENGTH = args.mesh_target_length
     MESH_PATH = _vrp_cfg.MESH_PATH
-    # Use the rotation-corrected pose (trimesh Y-up -> Z-up adjustment).
     MESH_POSE = _CORRECTED_MESH_POSE
 
     logger.info("=" * 70)
@@ -204,9 +132,7 @@ def main() -> None:
 
     t0 = time.perf_counter()
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 1 - Load & transform mesh
-    # ══════════════════════════════════════════════════════════════════════
+    # [1/9] Load & transform mesh
     logger.info("[1/9] Loading and transforming mesh …")
     import open3d as o3d
 
@@ -229,9 +155,7 @@ def main() -> None:
     o3d_mesh.triangles = o3d.utility.Vector3iVector(np.asarray(raw_tm.faces))
     o3d_mesh.compute_vertex_normals()
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 2 - Sample surface points
-    # ══════════════════════════════════════════════════════════════════════
+    # [2/9] Sample surface points
     logger.info("[2/9] Sampling %d surface points …", args.num_surface_points)
     from shared.surface_sampler import SurfacePointSampler
 
@@ -248,9 +172,7 @@ def main() -> None:
         logger.info("  Normals negated for inside inspection.")
     logger.info("  Sampled %d points.  Normal estimation done.", len(target_points))
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 2b - Build surface-only occupancy grid for sampling
-    # ══════════════════════════════════════════════════════════════════════
+    # [2b/9] Sampling occupancy grid
     logger.info("[2b/9] Building surface-only occupancy grid for sampling …")
     from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
 
@@ -268,9 +190,7 @@ def main() -> None:
         sampling_og.num_free,
     )
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 3 - Sampler + visibility query
-    # ══════════════════════════════════════════════════════════════════════
+    # [3/9] Sampler + visibility query
     logger.info("[3/9] Generating %d candidate viewpoints …", args.num_candidates)
     if args.curvature_weighting:
         logger.info("  Curvature weighting: ENABLED")
@@ -315,9 +235,7 @@ def main() -> None:
         frustum_params=frustum_params,
     )
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 5 - Greedy set cover
-    # ══════════════════════════════════════════════════════════════════════
+    # [5/9] Greedy set cover (with optional resampling)
     if args.resample_fraction > 0:
         n_targeted = int(args.num_candidates * args.resample_fraction)
         n_uniform = args.num_candidates - n_targeted
@@ -416,18 +334,14 @@ def main() -> None:
         opt_result.optimization_time,
     )
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 6 - Convert selected viewpoints to VRP waypoints
-    # ══════════════════════════════════════════════════════════════════════
+    # [6/9] Selected viewpoints
     logger.info("[6/9] Preparing %d selected viewpoints for VRP …", opt_result.num_viewpoints)
 
-    selected_positions = opt_result.positions  # (K, 3) CuPy
-    selected_rotmats = opt_result.rotations  # (K, 3, 3) CuPy
+    selected_positions = opt_result.positions
+    selected_rotmats = opt_result.rotations
     logger.info("  Selected positions shape: %s", selected_positions.shape)
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 7 - Occupancy grid + depot positions + distance matrix
-    # ══════════════════════════════════════════════════════════════════════
+    # [7/9] Routing OG + depots + distance matrix
     logger.info("[7/9] Building occupancy grid & distance matrix …")
 
     from VRP.core.distance_matrix import compute_distance_matrix
@@ -517,9 +431,7 @@ def main() -> None:
         float(cp.max(dist_matrix[cp.isfinite(dist_matrix)])),
     )
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 8 - Solve VRP + execute routes
-    # ══════════════════════════════════════════════════════════════════════
+    # [8/9] Solve VRP + execute routes
     logger.info("[8/9] Solving VRP (%s) and executing routes …", args.solver)
 
     from VRP.core.types import ExecutionResult, VRPBackend, VRPResult
@@ -558,9 +470,7 @@ def main() -> None:
     )
     logger.info("  Execution done.  Fail counts: %s", exec_result.fail_counts)
 
-    # ══════════════════════════════════════════════════════════════════════
-    # STAGE 9 - Build per-robot waypoint mapping + save everything
-    # ══════════════════════════════════════════════════════════════════════
+    # [9/9] Save
     logger.info("[9/9] Saving pipeline data to %s …", args.output)
 
     robot_inspection_wp_indices: list[list[int]] = []
@@ -569,21 +479,17 @@ def main() -> None:
         robot_inspection_wp_indices.append(insp_idxs)
 
     pipeline_data = {
-        # Mesh
         "mesh_scale": mesh_scale,
         "mesh_pose": list(MESH_POSE),
         "mesh_target_length": MESH_TARGET_LENGTH,
         "mesh_path": MESH_PATH,
         "mesh_bounds_min": mesh_bounds_min,
         "mesh_bounds_max": mesh_bounds_max,
-        # Pointcloud
         "target_points": cp.asnumpy(target_points),
         "normals": cp.asnumpy(normals),
-        # Candidates (full set + full visibility matrix)
         "all_positions": cp.asnumpy(pos_gpu),
         "all_rotmats": cp.asnumpy(rot_gpu),
         "full_visibility_map": cp.asnumpy(V),
-        # Frustum
         "frustum_params": {
             "fov_deg": args.frustum_fov_deg,
             "fov_y_rad": float(np.deg2rad(args.frustum_fov_deg)),
@@ -591,11 +497,9 @@ def main() -> None:
             "near": args.frustum_near,
             "far": args.frustum_far,
         },
-        # Set cover
         "optimization_result": opt_result,
         "selected_positions": cp.asnumpy(selected_positions),
         "selected_rotmats": cp.asnumpy(selected_rotmats),
-        # VRP
         "vrp_routes": [list(r) for r in vrp_result.routes],
         "vrp_routes_with_homes": [list(r) for r in routes],
         "num_robots": args.num_robots,
@@ -607,9 +511,7 @@ def main() -> None:
         "vrp_makespan": float(vrp_result.makespan),
         "vrp_solver": vrp_result.solver,
         "alpha": args.alpha,
-        # Trajectories
         "exec_result": exec_result,
-        # CLI snapshot
         "args": vars(args),
     }
 

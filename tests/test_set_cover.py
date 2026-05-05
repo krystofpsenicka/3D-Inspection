@@ -8,10 +8,9 @@ be bit-identical.
 
 from __future__ import annotations
 
+import cupy as cp
 import numpy as np
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from visibility.set_cover.greedy import GreedySetCover
 from visibility.set_cover.greedy_cuda import GreedySetCoverCuda

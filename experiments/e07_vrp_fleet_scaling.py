@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-"""E6: VRP Fleet Scaling
+"""E6: VRP Fleet Scaling — sweep fleet sizes (≤10) × waypoint counts × seeds with LBs.
 
-Sweeps fleet sizes (up to 10) and waypoint counts with multiple seeds,
-Held-Karp lower bounds, and bottleneck analysis.
-
-Usage:
     conda run -n isaaclab python -m experiments.e07_vrp_fleet_scaling
     conda run -n isaaclab python -m experiments.e07_vrp_fleet_scaling --fleet_sizes 1 2 3 --waypoint_counts 10 20
 """
@@ -53,7 +49,6 @@ from experiments.common.plotting import (
     stacked_bar,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -99,8 +94,7 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Alpha used by the VRP objective and propagated to the MAPF scheduler.
-# Kept at module scope so the LB-only mode can reuse the same value.
+# Module-scope so LB-only mode reuses the same value.
 _VRP_ALPHA = 0.5
 _VRP_TIME_LIMIT = 120
 
@@ -128,18 +122,11 @@ class RunMetrics:
     t_total: float = 0.0
 
 
-# Key columns identifying an LB sidecar row in ``lower_bounds.csv``.
 _LB_KEY_COLS = ("fleet_size", "n_waypoints", "seed")
 
 
 def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min, mesh_bounds_max, sampler):
-    """Run the full VRP + MAPF pipeline for one config.
-
-    Returns ``(m, lb)`` where ``m`` is the main ``RunMetrics`` and ``lb`` is
-    a dict of lower-bound fields (suitable for ``append_lb_csv_row``). ``lb``
-    is ``None`` when the run failed before the VRP solve (no dist_matrix /
-    best_bound to record).
-    """
+    """Returns ``(m, lb)``; ``lb`` is None when the run failed before the VRP solve."""
     m = RunMetrics(fleet_size=fleet_size, n_waypoints=n_waypoints, seed=seed)
     t_total_start = time.perf_counter()
     lb: dict | None = None
@@ -177,9 +164,7 @@ def run_single(fleet_size, n_waypoints, seed, og, mesh_bounds_min, mesh_bounds_m
         m.status = vrp_result.status
         m.total_cost = vrp_result.total_cost
 
-        # Compute LBs (analytical + cuOpt dual bound) for the sidecar.
-        # Runs regardless of VRP success so we at least log the analytical
-        # LBs alongside failed-solve rows.
+        # Run regardless of VRP success so analytical LBs are logged even alongside failed solves.
         try:
             lb = compute_all_lbs(
                 dist_matrix,
@@ -265,17 +250,14 @@ def generate_plots(
     for r in successful:
         groups[(r.fleet_size, r.n_waypoints)].append(r)
 
-    # Use distinct categorical colors for each waypoint-count line so that
-    # bands and lines are easy to tell apart even where they overlap.
+    # Distinct categorical colors per waypoint-count line so bands and lines are easy to distinguish.
     wp_colors = [
         CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)] for i in range(len(waypoint_counts))
     ]
 
     def _lb_band(nw, lb_field):
-        """Per-seed min/max band across fleet sizes for the given LB field.
-        Reads from the sidecar ``lb_by_key`` dict (key=(fleet_size,
-        n_waypoints, seed)). Returns (xs, lb_min, lb_max) with only the
-        fleet sizes that had at least one positive LB value."""
+        """Per-seed min/max band across fleet sizes for the given LB field. Returns (xs, lb_min,
+        lb_max), only fleet sizes with at least one positive LB."""
         xs, lb_min, lb_max = [], [], []
         for k in fleet_sizes:
             vals = []
@@ -293,7 +275,6 @@ def generate_plots(
     def _objective_for(r) -> float:
         return _VRP_ALPHA * r.makespan + (1.0 - _VRP_ALPHA) * r.total_cost
 
-    # ── Fig 1: Makespan vs fleet (with per-seed analytical LB band) ───
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     for wi, nw in enumerate(waypoint_counts):
         xs, means, stds = [], [], []
@@ -316,7 +297,6 @@ def generate_plots(
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e07_makespan_vs_fleet"))
 
-    # ── Fig 1b: Total cost vs fleet (with per-seed analytical LB band) ─
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     for wi, nw in enumerate(waypoint_counts):
         xs, means, stds = [], [], []
@@ -339,7 +319,6 @@ def generate_plots(
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e07_total_cost_vs_fleet"))
 
-    # ── Fig 1c: Blended objective vs fleet (with cuOpt bound band) ────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     any_obj = False
     for wi, nw in enumerate(waypoint_counts):
@@ -355,7 +334,7 @@ def generate_plots(
             ax.errorbar(
                 xs, means, yerr=stds, marker="o", color=wp_colors[wi], label=f"{nw} wps", capsize=2
             )
-        # Prefer cuOpt bound if present; fall back to analytical objective LB.
+        # Prefer cuOpt bound; fall back to analytical objective LB.
         lb_xs, lb_min, lb_max = _lb_band(nw, "vrp_objective_best_bound_m")
         if not lb_xs:
             lb_xs, lb_min, lb_max = _lb_band(nw, "vrp_objective_lb_m")
@@ -368,7 +347,6 @@ def generate_plots(
         ax.legend(fontsize=6, ncol=2)
         save_figure(fig, os.path.join(fig_dir, "e07_objective_vs_fleet"))
 
-    # ── Fig 3: Stacked bar - timing breakdown ────────────────────────
     mid_wps = waypoint_counts[len(waypoint_counts) // 2]
     fig, ax = plt.subplots(figsize=(THESIS_COL, 3))
     stage_data = {"Dist matrix": [], "VRP solve": [], "Trajectory": []}
@@ -390,11 +368,7 @@ def generate_plots(
 
 
 def _build_setup(resolution: float = 0.20):
-    """Load the Duke mesh and build the occupancy grid + sampler once.
-
-    Factored out so both the full-run path and ``--compute_lbs_only`` can
-    reconstruct the same waypoint-sampling state deterministically.
-    """
+    """Load Duke mesh + build OG + sampler once. Shared between full-run and ``--compute_lbs_only``."""
     logger.info("Loading mesh and building occupancy grid (res=%.2f) ...", resolution)
     mesh = load_and_transform_mesh(MESH_PATH, MESH_TARGET_LENGTH, MESH_POSE)
     mesh_bounds_min = np.asarray(mesh.bounds[0], dtype=float)
@@ -433,14 +407,9 @@ def _build_setup(resolution: float = 0.20):
 def _recompute_lbs_for_row(
     m: RunMetrics, og, sampler, bmin, bmax, *, include_cuopt: bool = False
 ) -> dict:
-    """Re-generate the instance deterministically (same seed) and return an
-    LB dict suitable for ``append_lb_csv_row``. The sampler is
-    deterministic given a CuPy RNG seed  --  matches what ``run_single`` does.
-
-    When ``include_cuopt=True``, also runs a short cuOpt solve to extract a
-    dual bound; this is expensive and intended only for augmenting a few
-    rows of interest.
-    """
+    """Re-generate the instance deterministically (sampler is deterministic given a CuPy RNG seed
+    — same as ``run_single``). ``include_cuopt`` runs a short cuOpt solve to extract a dual bound;
+    expensive, intended only for augmenting a few rows of interest."""
     cp.random.seed(m.seed)
     pos_gpu, _ = sampler.sample(m.n_waypoints, side=Side.OUTSIDE)
     insp_positions = cp.asnumpy(pos_gpu).astype(np.float32)
@@ -480,16 +449,14 @@ def main():
     p.add_argument(
         "--compute_lbs_only",
         action="store_true",
-        help="Skip full pipeline; recompute LBs for each unique "
-        "(fleet_size, n_waypoints, seed) from results.csv and "
-        "write them into a sidecar lower_bounds.csv.",
+        help="Skip full pipeline; recompute LBs for each unique (fleet_size, n_waypoints, seed) "
+        "from results.csv into a sidecar lower_bounds.csv.",
     )
     p.add_argument(
         "--include_cuopt_bound",
         action="store_true",
-        help="In --compute_lbs_only mode, also run a short cuOpt "
-        "solve per instance to extract the MIP dual bound. "
-        "Expensive; off by default.",
+        help="In --compute_lbs_only mode, also run a short cuOpt solve per instance to extract "
+        "the MIP dual bound. Expensive; off by default.",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -535,16 +502,13 @@ def main():
                 out.append(m)
         return out
 
-    # ── LB-only mode: load existing CSV, recompute LBs, write sidecar ──
     if args.compute_lbs_only:
         all_metrics = _load_existing_csv()
         if not all_metrics:
             logger.error("No existing results.csv at %s to augment with LBs.", csv_path)
             return
         og, sampler, bmin, bmax = _build_setup()
-        # Dedupe by (fleet_size, n_waypoints, seed) so the per-instance LB
-        # is only recomputed once; main-results CSV may have many rows per
-        # tuple if the user re-ran in overwrite mode.
+        # Dedupe per-instance: main CSV may have many rows per tuple if re-run in overwrite mode.
         unique_keys = {}
         for m in all_metrics:
             unique_keys.setdefault((m.fleet_size, m.n_waypoints, m.seed), m)
@@ -595,8 +559,8 @@ def main():
         return
 
     if not args.plots_only:
-        # Use 0.20m resolution (2x coarser than default) to avoid CUDA OOM
-        # during distance-matrix construction on the Duke model.
+        # 0.20m resolution (2× coarser than default) avoids CUDA OOM during distance-matrix
+        # construction on the Duke model.
         og, sampler, mesh_bounds_min, mesh_bounds_max = _build_setup()
 
         configs = list(itertools.product(args.fleet_sizes, args.waypoint_counts, args.seeds))
@@ -607,7 +571,6 @@ def main():
         if args.resume and os.path.exists(csv_path):
             existing = _load_existing_csv()
             all_metrics.extend(existing)
-            # Re-parse run_id separately (not stored on RunMetrics)
             import csv as csv_mod
 
             with open(csv_path) as f:

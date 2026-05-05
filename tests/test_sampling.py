@@ -1,9 +1,8 @@
 """Tests for visibility/sampling/  --  focused on non-obvious math and algorithmic correctness."""
 
+import cupy as cp
 import numpy as np
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from visibility.sampling.utils.curvature import compute_local_curvature
 from visibility.sampling.utils.direction import apply_angular_noise, knn_centroid_direction

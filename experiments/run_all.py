@@ -1,19 +1,11 @@
 #!/usr/bin/env python3
 """Master runner for all experiments.
 
-Usage:
     conda run -n isaaclab python -m experiments.run_all
     conda run -n isaaclab python -m experiments.run_all --experiments e01 e06 e07
     conda run -n isaaclab python -m experiments.run_all --skip e10
     conda run -n isaaclab python -m experiments.run_all --list
 
-Parallel execution (subprocess-based, full CUDA-context isolation):
-    conda run -n isaaclab python -m experiments.run_all --jobs 2 --gpu-budget 6
-    conda run -n isaaclab python -m experiments.run_all --jobs 4 --gpu-budget 9
-
---gpu-budget N means at most N memory-units may run concurrently (1 unit ~ 2 GB GPU).
-Default budget 6 ~ 12 GB, conservative for an RTX 3090.
-Logs for parallel runs go to experiments/results/_logs/{name}.log.
 """
 
 from __future__ import annotations
@@ -31,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def _free_gpu_memory() -> None:
-    """Free CuPy memory pool between experiments."""
     try:
         import cupy as cp
 
@@ -55,31 +46,10 @@ ALL_EXPERIMENTS = [
     "e10_cross_model",
 ]
 
-# GPU memory weight per experiment (1 unit ~ 2 GB peak VRAM).
-# Used by the parallel scheduler to ensure concurrent weights <= --gpu-budget.
-# Tune these if you observe higher/lower actual usage via `nvidia-smi`.
-EXPERIMENT_WEIGHTS: dict[str, int] = {
-    "e01_sampling_strategy": 2,
-    "e02_candidate_scaling": 3,
-    "e03_iterative_sampler_params": 2,
-    "e04_curvature_sensitivity": 1,
-    "e05_visibility_comparison": 1,
-    "e06_set_cover_optimizers": 2,
-    "e07_vrp_fleet_scaling": 4,
-    "e08_vrp_alpha_blending": 2,
-    "e09_sampler_routing_impact": 3,
-    "e10_cross_model": 4,
-}
-
 
 def run_experiment(name: str, resume: bool = False) -> bool:
-    """Import and run a single experiment's main(). Returns True on success.
-
-    Under ``resume=True`` the child sees ``--resume`` in its argv, and any
-    exception (including ``SystemExit``) raised by ``main()`` is propagated up
-    so the caller can abort the whole sequence  --  this is what lets an outer
-    ``while ! ...; do ...; done`` loop recover from CUDA OOM.
-    """
+    """Import and run one experiment's main(). Under ``resume=True`` exceptions propagate so an
+    outer ``while ! ...; do ...; done`` loop can recover from CUDA OOM."""
     module_name = f"experiments.{name}"
     logger.info("=" * 70)
     logger.info("RUNNING: %s%s", name, " (--resume)" if resume else "")
@@ -113,12 +83,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_experiment_subprocess(name: str, log_dir: Path, resume: bool = False) -> bool:
-    """Run a single experiment in its own subprocess. Returns True on success.
-
-    stdout/stderr are captured to log_dir/{name}.log so parallel runs don't
-    interleave in the terminal.  sys.executable is already the isaaclab conda
-    Python when the parent process was launched via `conda run -n isaaclab`.
-    """
+    """Run an experiment in its own subprocess. stdout/stderr -> log_dir/{name}.log so parallel
+    runs don't interleave. ``sys.executable`` is the isaaclab Python when launched via conda run."""
     log_path = log_dir / f"{name}.log"
     logger.info(
         "STARTING (subprocess): %s%s  →  %s", name, " (--resume)" if resume else "", log_path
@@ -146,13 +112,9 @@ def run_experiment_subprocess(name: str, log_dir: Path, resume: bool = False) ->
 
 
 def build_waves(to_run: list[str], max_jobs: int, gpu_budget: int) -> list[list[str]]:
-    """Greedy bin-packing of experiments into parallel waves.
-
-    Experiments are sorted heaviest-first to reduce fragmentation.  A new wave
-    is opened whenever the next experiment would exceed either the gpu_budget or
-    the max_jobs cap.  An experiment whose own weight exceeds gpu_budget runs
-    solo with a warning.
-    """
+    """Greedy bin-pack experiments into parallel waves (heaviest-first to reduce fragmentation).
+    A new wave opens when the next experiment would exceed gpu_budget or max_jobs. An experiment
+    whose own weight exceeds gpu_budget runs solo with a warning."""
     sorted_exps = sorted(
         to_run,
         key=lambda n: EXPERIMENT_WEIGHTS.get(n, 1),
@@ -204,12 +166,8 @@ def build_waves(to_run: list[str], max_jobs: int, gpu_budget: int) -> list[list[
 
 
 def run_parallel(to_run: list[str], max_jobs: int, gpu_budget: int, resume: bool = False) -> bool:
-    """Run experiments in parallel waves, respecting the GPU memory budget.
-
-    Returns True if every experiment succeeded, False otherwise. Under
-    ``resume=True`` a failed wave aborts further waves so an outer restart
-    loop can relaunch with a fresh GPU context.
-    """
+    """Run waves respecting GPU budget. Under ``resume=True`` a failed wave aborts further waves
+    so an outer restart loop can relaunch with a fresh GPU context."""
     log_dir = Path(__file__).resolve().parent / "results" / "_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -243,8 +201,8 @@ def run_parallel(to_run: list[str], max_jobs: int, gpu_budget: int, resume: bool
             all_ok = False
             if resume:
                 logger.error(
-                    "Wave %d had failures; aborting remaining waves under "
-                    "--resume so an outer restart loop can recover.",
+                    "Wave %d had failures; aborting remaining waves under --resume so an outer "
+                    "restart loop can recover.",
                     i + 1,
                 )
                 break
@@ -265,24 +223,21 @@ def main():
         "--jobs",
         type=int,
         default=1,
-        help="Max experiments to run concurrently (default: 1 = sequential)",
+        help="Max experiments to run concurrently (default 1 = sequential).",
     )
     p.add_argument(
         "--gpu-budget",
         type=int,
         default=6,
-        help="Max concurrent GPU-memory units (1 unit ≈ 2 GB). "
-        "Default 6 ≈ 12 GB — conservative for an RTX 3090. "
+        help="Max concurrent GPU-memory units (1 unit ≈ 2 GB). Default 6 ≈ 12 GB. "
         "Increase to 9 for ~4× speedup with ~5 GB buffer.",
     )
     p.add_argument(
         "--resume",
         action="store_true",
-        help="Pass --resume to each child experiment (skip rows "
-        "whose result JSON already exists) and exit non-zero "
-        "on the first failure, so an outer "
-        "`while ! run_all.py --resume; do sleep 5; done` loop "
-        "can restart after CUDA OOM with a fresh process.",
+        help="Pass --resume to each child (skip rows whose result JSON exists) and exit non-zero "
+        "on first failure so an outer `while ! run_all.py --resume; do sleep 5; done` loop "
+        "can restart after CUDA OOM.",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -298,7 +253,6 @@ def main():
         return
 
     if args.experiments:
-        # Match short names like "e01" to full names
         to_run = []
         for exp in args.experiments:
             matches = [n for n in ALL_EXPERIMENTS if n.startswith(exp)]
@@ -309,7 +263,6 @@ def main():
     else:
         to_run = ALL_EXPERIMENTS
 
-    # Apply skip
     skip_full = []
     for s in args.skip:
         skip_full.extend(n for n in ALL_EXPERIMENTS if n.startswith(s))
@@ -328,10 +281,9 @@ def main():
             for name in to_run:
                 if not run_experiment(name, resume=args.resume):
                     all_ok = False
-                    # Without --resume, continue past failures (legacy behaviour).
-                    # With --resume, run_experiment re-raises, so we never reach here.
+                    # Without --resume, continue past failures (legacy). With --resume,
+                    # run_experiment re-raises, so we never reach here.
         except BaseException as e:
-            # --resume path: first failing experiment propagated an exception.
             logger.error("Aborting run_all under --resume: %s", e)
             sys.exit(1)
         logger.info("=" * 70)

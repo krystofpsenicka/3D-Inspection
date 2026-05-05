@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import math
 
+import cupy as cp
 import numpy as np
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from VRP.core.constants import CAMERA_OFFSET_FORWARD, CAMERA_OFFSET_UP
 from VRP.core.geometry import compute_start_grid, viewpoints_to_robot_waypoints

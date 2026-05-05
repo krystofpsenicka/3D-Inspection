@@ -1,19 +1,8 @@
-"""Phase / PhaseController -- step through scene phases inside an Isaac Sim app.
+"""Phase / PhaseController — step through scene phases inside an Isaac Sim app.
 
-The controller creates a parent ``Xform`` prim per phase
-(``/World/<sanitized_name>``) and removes the subtree on exit, so phases
-can't leak prims they forget to track. Phases advance on a key press
-(N / RIGHT) or after a per-phase ``duration``.
-
-Typical use::
-
-    with IsaacApp() as ctx:
-        phases = [
-            Phase("intro", enter=lambda stage, parent: build_intro(stage, parent)),
-            Phase("animation", enter=enter_anim, on_step=tick_anim, duration=8.0),
-        ]
-        PhaseController(ctx, phases).run()
-
+Each phase has its own ``/World/<sanitized_name>`` parent Xform; the controller deletes the
+subtree on phase exit (unless ``persistent=True``). Phases advance on N/RIGHT or after
+``duration`` seconds.
 """
 
 from __future__ import annotations
@@ -34,26 +23,11 @@ def _sanitize(name: str) -> str:
     return s
 
 
-# ----------------------------------------------------------------------------
-# Phase dataclass
-# ----------------------------------------------------------------------------
-
-
 @dataclass
 class Phase:
-    """One step of a phase-based visualization.
-
-    ``enter(stage, parent_path)`` is called when the phase becomes active and
-    is expected to build prims under ``parent_path``. The default ``exit``
-    deletes that subtree so phases can't leak prims; mark ``persistent=True``
-    if the phase's prims should outlive the phase.
-
-    ``on_step(stage, parent_path, frame_idx, dt)`` runs on every render tick
-    while the phase is active; useful for replay loops.
-
-    ``duration`` (seconds) auto-advances the phase if no key has been pressed.
-    Pass ``None`` (default) to require a manual keypress.
-    """
+    """One phase. ``enter`` builds prims under ``parent_path``; default ``exit`` deletes the subtree
+    unless ``persistent=True``. ``on_step(stage, parent_path, frame_idx, dt)`` runs every render tick.
+    ``duration`` (seconds) auto-advances; ``None`` means manual keypress only."""
 
     name: str
     enter: Callable[[object, str], object | None]
@@ -64,20 +38,8 @@ class Phase:
     metadata: dict = field(default_factory=dict)
 
 
-# ----------------------------------------------------------------------------
-# Phase controller
-# ----------------------------------------------------------------------------
-
-
 class PhaseController:
-    """Drive a list of :class:`Phase` objects inside an :class:`IsaacContext`.
-
-    Keyboard shortcuts (Isaac Sim viewport must be focused):
-
-      N / Right Arrow  --  advance to next phase
-      P / Left Arrow   --  return to previous phase (rebuilds it from scratch)
-      Q / Escape       --  exit the loop
-    """
+    """Drive a list of :class:`Phase` objects. Keys: N/Right next, P/Left prev, Q/Esc quit."""
 
     def __init__(
         self,
@@ -95,13 +57,11 @@ class PhaseController:
         self._idx = -1
         self._frame_in_phase = 0
         self._enter_t = 0.0
-        self._pending: str | None = None  # 'next' | 'prev' | 'quit'
+        self._pending: str | None = None
         self._kb_sub = None
         self._kb_iface = None
         self._app_kb = None
         self._parent_paths: list[str] = []
-
-    # -- Keyboard wiring --------------------------------------------------
 
     def _install_keyboard(self) -> None:
         try:
@@ -114,8 +74,7 @@ class PhaseController:
         self._kb_iface = carb.input.acquire_input_interface()
         appwin = omni.appwindow.get_default_app_window()
         self._app_kb = appwin.get_keyboard()
-        # The enum member is named ``KEY_PRESS`` in current Isaac Sim builds; older
-        # docs/snippets use ``KEY_PRESSED``. Pick whichever exists.
+        # Current Isaac uses KEY_PRESS; older builds use KEY_PRESSED.
         KEY_PRESSED = getattr(
             carb.input.KeyboardEventType,
             "KEY_PRESS",
@@ -146,8 +105,6 @@ class PhaseController:
         self._kb_iface = None
         self._app_kb = None
 
-    # -- Phase lifecycle --------------------------------------------------
-
     def _phase_parent(self, phase: Phase) -> str:
         return f"{self.ctx.default_prim_path}/{_sanitize(phase.name)}"
 
@@ -155,7 +112,6 @@ class PhaseController:
         phase = self.phases[idx]
         parent = self._phase_parent(phase)
 
-        # Ensure parent xform exists for this phase
         from pxr import UsdGeom
 
         UsdGeom.Xform.Define(self.ctx.stage, parent)
@@ -177,30 +133,24 @@ class PhaseController:
             except Exception:
                 pass
 
-    # -- Public API -------------------------------------------------------
-
     def run(self) -> None:
-        """Run the phase loop until exhausted or the user quits."""
         if not self.phases:
             return
         self._install_keyboard()
         try:
             self._idx = 0
             self._enter_phase(self._idx)
-            # Tick Kit once so Hydra ingests the new prims before we start
-            # sampling ``is_running()`` (Kit auto-shuts the app down if its
-            # main loop is starved during a slow enter()).
+            # Tick Kit once so Hydra ingests the new prims before sampling is_running()
+            # (Kit auto-shuts the app down if its main loop is starved during a slow enter()).
             self.ctx.update()
             while self.ctx.is_running():
                 phase = self.phases[self._idx]
-                # Per-frame on_step callback
                 if phase.on_step is not None:
                     parent = self._phase_parent(phase)
                     phase.on_step(self.ctx.stage, parent, self._frame_in_phase, time.perf_counter())
                 self.ctx.update()
                 self._frame_in_phase += 1
 
-                # Auto-advance on duration
                 pending = self._pending
                 if pending is None and phase.duration is not None:
                     if (time.perf_counter() - self._enter_t) >= phase.duration:
@@ -227,11 +177,8 @@ class PhaseController:
             self._uninstall_keyboard()
 
     def headless_play(self, durations: list[float] | None = None) -> None:
-        """Iterate phases without a keyboard loop, advancing after each duration.
-
-        Useful for CI smoke-tests. ``durations[i]`` overrides
-        ``phases[i].duration`` if provided; otherwise a default of 1.0 s is used.
-        """
+        """Iterate phases without a keyboard loop. ``durations[i]`` overrides ``phases[i].duration``;
+        defaults to 1.0s. Useful for CI smoke-tests."""
         for i, phase in enumerate(self.phases):
             self._idx = i
             self._enter_phase(i)

@@ -1,28 +1,15 @@
 #!/usr/bin/env python3
-"""E2: Candidate Count Scaling
+"""E2: Candidate Count Scaling — coverage / VPs / runtime vs. ``num_candidates`` per strategy.
 
-Measures how the number of candidate viewpoints affects solution quality
-and computation time, across all sampling strategies.
+Each strategy is one line on the coverage-vs-N and VPs-vs-N plots, revealing whether scaling
+is strategy-specific, where each strategy plateaus, and which wins at a given budget.
 
-Each strategy is a line on the coverage-vs-candidates and viewpoints-vs-candidates
-plots.  This reveals:
-  - Whether scaling behaviour is strategy-specific.
-  - Where each strategy's coverage ceiling is.
-  - Which strategy achieves the best coverage at a given candidate budget.
+Strategies:
+  weighted             – SDF² uniform, no curvature (one-shot)
+  weighted_curvature   – SDF² + curvature (one-shot)
+  targeted_X           – X% targeted toward uncovered, (100-X)% weighted
+  cmaes_X              – X% CMA-ES, (100-X)% weighted
 
-All strategies should converge to the same coverage ceiling at large N;
-strategies that plateau earlier or lower indicate structural limitations.
-
-See e01 for which strategy achieves the best coverage/viewpoint ratio at a
-fixed candidate count  --  e02 confirms that finding holds across all budgets.
-
-Strategies compared:
-  weighted             --  SDF² uniform, no curvature weighting (one-shot)
-  weighted_curvature   --  SDF² + curvature weighting (one-shot)
-  targeted_X           --  X% targeted toward uncovered regions, (100-X)% weighted
-  cmaes_X              --  X% CMA-ES optimised, (100-X)% weighted
-
-Usage:
     conda run -n isaaclab python -m experiments.e02_candidate_scaling
     conda run -n isaaclab python -m experiments.e02_candidate_scaling --plots_only
 """
@@ -51,7 +38,6 @@ from experiments.common.config import (
     ModelConfig,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -69,15 +55,11 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Strategy set for e02: weighted + weighted_curvature baselines,
-# targeted_100 (iterative targeted, k=3), cmaes_100 (CMA-ES, k=3, tw=0.0,
-# popsize=40, maxiter=40). Historical raw data using older strategy names
-# is still loadable via --plots_only.
+# Historical raw data using older strategy names is still loadable via --plots_only.
 _E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
 
 
 def _strategy_kwargs(strategy: str) -> dict:
-    """Per-strategy kwargs forwarded to sample_strategy()."""
     if strategy == "targeted_100":
         return {"k_coverage": 3}
     if strategy == "cmaes_100":
@@ -100,11 +82,6 @@ from experiments.common.plotting import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Single run logic
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def run_single(
@@ -162,11 +139,6 @@ def run_single(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plot generation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     setup_thesis_style()
     fig_dir = os.path.join(output_dir, "figures")
@@ -190,7 +162,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
                 stds.append(0.0)
         return np.array(means), np.array(stds)
 
-    # Assign a colour and linestyle to each strategy group
     group_colors = {
         "weighted": CATEGORICAL_COLORS[0],
         "weighted_curvature": CATEGORICAL_COLORS[1],
@@ -213,7 +184,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             return group_colors["cmaes"], pct_styles.get(pct, "solid"), "D"
         return "grey", "solid", "x"
 
-    # ── Fig 1: Coverage vs candidates requested (all strategies) ─────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for strat in strategies:
         m, s = _agg(strat, "coverage")
@@ -235,7 +205,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e02_coverage_vs_candidates"))
 
-    # ── Fig 2: Selected viewpoints vs candidates requested ───────────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for strat in strategies:
         m, s = _agg(strat, "num_viewpoints")
@@ -255,7 +224,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e02_viewpoints_vs_candidates"))
 
-    # ── Fig 3: Actual candidates generated vs requested ──────────────────
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
     for strat in strategies:
         m, s = _agg(strat, "num_candidates")
@@ -269,7 +237,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             label=display_strategy(strat),
             linewidth=1.5,
         )
-    # Identity line
     ax.plot(candidates, candidates, "k--", alpha=0.3, label="N requested")
     ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Candidates generated")
@@ -278,11 +245,6 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     save_figure(fig, os.path.join(fig_dir, "e02_candidates_generated"))
 
     logger.info("E2 figures saved to %s", fig_dir)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def main():
@@ -360,8 +322,7 @@ def main():
                     load_run_result(os.path.join(raw_dir, fname.replace(".json", "")))
                 )
 
-    # Older raw files predate the per-strategy schema and lack the
-    # "strategy" field  --  drop them so they don't crash the plot loop.
+    # Older raw files predate the per-strategy schema and lack the "strategy" field.
     all_results = [r for r in all_results if "strategy" in r]
 
     if all_results:

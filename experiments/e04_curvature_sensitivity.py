@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
-"""E04: Curvature Sensitivity
+"""E04: Curvature Sensitivity — sweep ``curvature_knn_k`` × ``position_weight``.
 
-Curvature weighting parameter sensitivity study. Sweeps curvature_knn_k
-(number of neighbors for curvature estimation) and position_weight
-(relative weight of position vs curvature in sampling).
-
-Parameters:
   curvature_knn_k  {5, 10, 20, 40, 80}
   position_weight  {1.0, 2.5, 5.0, 10.0}
-  3 seeds
+  3 seeds; per combo: sample with curvature weighting -> visibility -> set cover.
 
-For each combo: sample with curvature weighting, run visibility + set cover.
-
-Usage:
     conda run -n isaaclab python -m experiments.e04_curvature_sensitivity
     conda run -n isaaclab python -m experiments.e04_curvature_sensitivity --plots_only
 """
@@ -45,7 +37,7 @@ from experiments.common.plotting import (
     setup_thesis_style,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
+# Runtime imports (need isaaclab/CUDA). Plot-only mode skips these.
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -75,25 +67,18 @@ POSITION_WEIGHTS = [1.0, 2.5, 5.0, 10.0]
 N_CANDIDATES = 2000
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Single run logic
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
-    """Run sampling + visibility + set cover with curvature parameters."""
     set_seed(seed)
     model_cfg = ModelConfig.duke_of_lancaster()
     ctx = PipelineContext(model_cfg)
     ctx.load_mesh()
-    target_points, normals = ctx.sample_surface()  # fixed seed, disk-cached
+    target_points, normals = ctx.sample_surface()
     ctx.build_sampling_og()
 
     sampler = ctx.build_sampler("targeted")
     vis_query = ctx.build_visibility_query("raycast")
     set_seed(seed)  # experiment seed for candidate generation
 
-    # Sample with curvature weighting and the given parameters
     with timed() as t_sample:
         pos_gpu, rot_gpu = sampler.sample(
             cp.arange(len(target_points)),
@@ -104,12 +89,10 @@ def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
             position_weight=position_weight,
         )
 
-    # Visibility
     with timed() as t_vis:
         V_gpu, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
-    # LazyGreedySetCover is the CPU optimizer; move GPU arrays to host first
-    # (same pattern as e06).
+    # LazyGreedySetCover is the CPU optimizer; move GPU arrays to host first.
     V = cp.asnumpy(V_gpu)
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)
@@ -140,13 +123,7 @@ def run_single(knn_k: int, position_weight: float, seed: int) -> dict:
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plot generation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def generate_plots(results: list[dict], output_dir: str):
-    """Generate all E04 figures."""
     setup_thesis_style()
     fig_dir = os.path.join(output_dir, "figures")
     os.makedirs(fig_dir, exist_ok=True)
@@ -161,7 +138,6 @@ def generate_plots(results: list[dict], output_dir: str):
     k_labels = [str(k) for k in k_vals]
     w_labels = [str(w) for w in w_vals]
 
-    # ── Heatmap: knn_k x position_weight -> viewpoints ───────────────
     fig, ax = plt.subplots(figsize=(THESIS_COL, 4))
     vp_vals = np.zeros((len(k_vals), len(w_vals)))
     for i, k in enumerate(k_vals):
@@ -188,26 +164,18 @@ def generate_plots(results: list[dict], output_dir: str):
     logger.info("E04 figures saved to %s", fig_dir)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def main():
     p = argparse.ArgumentParser(description="E04: Curvature Sensitivity")
     p.add_argument("--knn_k_values", type=int, nargs="+", default=KNN_K_VALUES)
     p.add_argument("--position_weights", type=float, nargs="+", default=POSITION_WEIGHTS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e04_curvature_sensitivity"))
-    p.add_argument(
-        "--plots_only", action="store_true", help="Only regenerate plots from existing results"
-    )
+    p.add_argument("--plots_only", action="store_true")
     p.add_argument(
         "--resume",
         action="store_true",
-        help="Skip rows whose result JSON already exists; exit "
-        "non-zero on CUDA OOM so an outer restart loop can "
-        "reclaim GPU memory.",
+        help="Skip rows whose result JSON exists; exit non-zero on CUDA OOM so an outer "
+        "restart loop can reclaim GPU memory.",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()

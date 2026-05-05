@@ -25,16 +25,6 @@ def _to_numpy(x):
 
 
 class SamplingVisualizer:
-    """Stage-builder for sampling heatmaps and resampling progression.
-
-    Parameters
-    ----------
-    mesh : trimesh.Trimesh.
-    target_points : (N, 3) surface sample points.
-    normals : (N, 3) outward surface normals.
-    frustum_params : Camera frustum geometry.
-    """
-
     def __init__(
         self,
         mesh: trimesh.Trimesh,
@@ -48,10 +38,6 @@ class SamplingVisualizer:
         self.num_points = len(target_points)
         self.frustum_params = frustum_params
 
-    # ------------------------------------------------------------------
-    # Free-space heatmap
-    # ------------------------------------------------------------------
-
     def add_free_space(
         self,
         stage,
@@ -64,12 +50,6 @@ class SamplingVisualizer:
         inside_colormap: str = "Blues",
         point_size: float = 0.02,
     ) -> list[str]:
-        """Add free-space sampling heatmap prims.
-
-        Returns
-        -------
-        List of created prim paths.
-        """
         paths: list[str] = []
 
         model_vis = ModelVisualizer(self.mesh)
@@ -104,19 +84,9 @@ class SamplingVisualizer:
 
         return paths
 
-    # ------------------------------------------------------------------
-    # Resampling phase 1  --  normal candidates
-    # ------------------------------------------------------------------
-
     def add_resampling_phase1(
         self, stage, base_path: str, normal_vis_map, normal_candidates, point_size: float = 0.05
     ) -> list[str]:
-        """Add phase-1 (normal candidates) geometry.
-
-        Returns
-        -------
-        List of created prim paths.
-        """
         paths: list[str] = []
 
         model_vis = ModelVisualizer(self.mesh)
@@ -167,10 +137,6 @@ class SamplingVisualizer:
 
         return paths
 
-    # ------------------------------------------------------------------
-    # Resampling phase 2  --  single targeted step
-    # ------------------------------------------------------------------
-
     def add_resampling_phase2_step(
         self,
         stage,
@@ -182,16 +148,7 @@ class SamplingVisualizer:
         cumulative_covered: set[int],
         point_size: float = 0.02,
     ) -> list[str]:
-        """Add geometry for a single targeted-VP step.
-
-        *cumulative_covered* is the set of point indices already covered
-        **before** this step.  The caller is responsible for updating it
-        afterwards with the newly covered points.
-
-        Returns
-        -------
-        List of created prim paths.
-        """
+        """``cumulative_covered`` is the set already covered before this step; caller updates it after."""
         BLUE = (0.0, 0.4, 0.8)
         ORANGE = (1.0, 0.5, 0.0)
         RED = (1.0, 0.0, 0.0)
@@ -203,7 +160,6 @@ class SamplingVisualizer:
         model_vis = ModelVisualizer(self.mesh)
         paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
 
-        # Normal candidates as small blue spheres
         for i in range(len(normal_candidates)):
             pos = np.asarray(normal_candidates[i][0])
             paths.append(
@@ -212,7 +168,6 @@ class SamplingVisualizer:
                 )
             )
 
-        # Previously-added targeted candidates as small orange spheres
         for j in range(step_idx):
             pos = np.asarray(targeted_candidates[j][0])
             paths.append(
@@ -225,7 +180,6 @@ class SamplingVisualizer:
                 )
             )
 
-        # Current targeted candidate  --  full geometry
         cur_pos = np.asarray(targeted_candidates[step_idx][0])
         cur_orient = targeted_candidates[step_idx][1]
         paths += add_viewpoint_geometry(
@@ -238,7 +192,6 @@ class SamplingVisualizer:
             sphere_radius=0.2,
         )
 
-        # Point colouring
         cur_visible = targeted_vis_map.get(step_idx, np.array([], dtype=int))
         newly_covered = set(cur_visible.tolist()) - cumulative_covered
         still_uncovered = set(range(self.num_points)) - cumulative_covered - newly_covered
@@ -287,10 +240,6 @@ class SamplingVisualizer:
 
         return paths
 
-    # ------------------------------------------------------------------
-    # Resampling phase 3  --  final combined view
-    # ------------------------------------------------------------------
-
     def add_resampling_phase3(
         self,
         stage,
@@ -301,12 +250,6 @@ class SamplingVisualizer:
         targeted_candidates,
         point_size: float = 0.02,
     ) -> list[str]:
-        """Add phase-3 (final combined) geometry.
-
-        Returns
-        -------
-        List of created prim paths.
-        """
         BLUE = (0.0, 0.4, 0.8)
         ORANGE = (1.0, 0.5, 0.0)
         RED = (1.0, 0.0, 0.0)
@@ -375,10 +318,6 @@ class SamplingVisualizer:
 
         return paths
 
-    # ------------------------------------------------------------------
-    # Generic sampler-agnostic candidate visualization
-    # ------------------------------------------------------------------
-
     def add_candidates(
         self,
         stage,
@@ -390,16 +329,7 @@ class SamplingVisualizer:
         point_size: float = 0.02,
         candidate_color: tuple = (0.2, 0.55, 1.0),
     ) -> list[str]:
-        """Render mesh + per-candidate frustum (and optional visibility colouring).
-
-        ``positions``: ``(N, 3)`` -- candidate camera positions.
-        ``rotmats``:   ``(N, 3, 3)`` -- candidate rotation matrices.
-        ``visibility_map``: optional ``(N, M)`` bool/uint8 -- if given, target
-            points are coloured by their first-covering candidate (tab20),
-            uncovered points stay red.
-
-        Both NumPy and CuPy arrays are accepted.
-        """
+        """Mesh + per-candidate frustum (and optional visibility colouring). Accepts NumPy or CuPy."""
         paths: list[str] = []
         model_vis = ModelVisualizer(self.mesh, self.target_points)
         paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
@@ -413,7 +343,6 @@ class SamplingVisualizer:
 
         colors = generate_tab20_colors(max(n, 1)) if visibility_map is not None else None
 
-        # Frustums + spheres
         for i, (pos, R) in enumerate(zip(positions, rotmats, strict=False)):
             color = tuple(colors[i % len(colors)]) if colors is not None else candidate_color
             paths += add_viewpoint_geometry(
@@ -426,7 +355,6 @@ class SamplingVisualizer:
                 sphere_radius=sphere_radius,
             )
 
-        # Point colouring
         if visibility_map is not None:
             V = _to_numpy(visibility_map).astype(bool)
             first_cover = np.full(self.num_points, -1, dtype=np.int64)

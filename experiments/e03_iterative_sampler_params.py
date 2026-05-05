@@ -1,43 +1,23 @@
 #!/usr/bin/env python3
-"""E03: Iterative Sampler Parameter Sweep
+"""E03: Iterative Sampler Parameter Sweep — TOSCA (3 models) + Duke.
 
-Runs on two model groups: 3 TOSCA models (wolf0, cat0, david0) and the larger
-Duke of Lancaster model. Candidate budget scales per model via
-`cfg.num_candidates x k_coverage` (TOSCA -> 500.k, Duke -> 1500.k) and the
-set-cover cap is 1000 for TOSCA, 2000 for Duke.
+Candidate budget scales as ``cfg.num_candidates × k_coverage`` (TOSCA -> 500·k, Duke -> 1500·k).
+Set-cover cap: 1000 (TOSCA), 2000 (Duke). Set-cover: LazyGreedySetCover (CPU; fastest per e06).
 
-Section 1  --  Targeted sampler:
-  Sub-B only: samples_per_iteration sweep at k=4, fraction=100%.
-  The goal is to confirm the targeted sampler does not improve over
-  weighted_curvature; a full k x fraction sweep is not needed.
-  spi=None is the pre-fix baseline: all n_iter candidates sampled in one shot
-  from the frozen initial uncovered set (no coverage updates).
+Section 1 — Targeted sampler:
+  Sub-B: spi sweep at k=4, fraction=100%. Confirms targeted does not improve over
+  weighted_curvature.
 
-Section 2  --  CMA-ES sampler (travel_weight is per-model-group):
-  Sub-B: joint k x travel_weight sweep at fraction=100%  --  2-D heatmap,
-         because k and travel_weight interact meaningfully.
-         TOSCA tw list: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3];
-         Duke tw list:  [0.01, 0.02, 0.03, 0.06, 0.1].
-  Sub-C: popsize x maxiter heatmap at k=4, fraction=100%, tw fixed per group
-         (TOSCA tw=0.1, Duke tw=0.0).
+Section 2 — CMA-ES sampler (travel_weight is per-model-group):
+  Sub-B: k × travel_weight 2-D heatmap.
+         TOSCA tw: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]; Duke tw: [0.01, 0.02, 0.03, 0.06, 0.1].
+  Sub-C: popsize × maxiter heatmap at k=4, fraction=100%, tw fixed (TOSCA tw=0.1, Duke tw=0.0).
 
-Set-cover: LazyGreedySetCover (CPU)  --  fastest per e06 results.
-
-Usage:
-    # Default: run TOSCA + Duke
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params
-
-    # TOSCA only / Duke only
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --model_group tosca
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --model_group duke
-
-    # Restrict to one sampler section
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --section 1
-
-    # Explicit model subset (overrides --model_group)
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --models wolf0 duke_of_lancaster
-
-    # Regenerate plots from saved results
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --plots_only
 """
 
@@ -80,7 +60,6 @@ from experiments.common.plotting import (
     setup_thesis_style,
 )
 
-# ── Runtime imports (need isaaclab/CUDA). Plot-only mode skips these. ──────
 _RUNTIME_IMPORT_ERROR: ImportError | None = None
 try:
     import cupy as cp
@@ -107,7 +86,6 @@ except ImportError as _e:
 
 logger = logging.getLogger(__name__)
 
-# Fixed sub-section parameters
 _S1B_K = 4
 _S1B_FRACTION = 100
 _S2B_FRACTION = 100
@@ -117,13 +95,7 @@ _S2C_TRAVEL_WEIGHT_TOSCA = 0.1
 _S2C_TRAVEL_WEIGHT_DUKE = 0.0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Shared helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _max_viewpoints_for(model) -> int:
-    """Set-cover cap: 2000 for the larger Duke model, 1000 for TOSCA."""
     return 2000 if model.name == "duke_of_lancaster" else 1000
 
 
@@ -140,7 +112,6 @@ def _s2b_travel_weights_for(model) -> list:
 
 
 def _make_cfg(name: str):
-    """Resolve a model name to a ModelConfig. Returns None if not found."""
     if name == "duke_of_lancaster":
         return ModelConfig.duke_of_lancaster()
     try:
@@ -151,7 +122,6 @@ def _make_cfg(name: str):
 
 
 def _run_set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage, max_viewpoints=1000):
-    """Run LazyGreedySetCover (CPU). Returns (opt_result, V_np)."""
     V_np = cp.asnumpy(V)
     pos_np = cp.asnumpy(pos_gpu)
     rot_np = cp.asnumpy(rot_gpu)
@@ -160,11 +130,7 @@ def _run_set_cover(target_points, pos_gpu, rot_gpu, V, target_coverage, max_view
 
 
 def _base_phase(sampler, vis_query, target_points, n_base):
-    """Run weighted base sampling phase.
-
-    Returns (pos, rot, coverage_count, uncovered_indices) on GPU.
-    If n_base == 0, returns empty arrays and zero coverage.
-    """
+    """Weighted base sampling. Returns (pos, rot, coverage_count) on GPU."""
     M = len(target_points)
     if n_base > 0:
         pos, rot = sampler.sample(
@@ -182,11 +148,6 @@ def _base_phase(sampler, vis_query, target_points, n_base):
     return pos, rot, coverage_count
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Section 1  --  Targeted sampler
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def run_single_targeted(
     ctx: PipelineContext,
     k_coverage: int,
@@ -196,12 +157,8 @@ def run_single_targeted(
     section_tag: str,
     target_coverage: float = 0.95,
 ) -> dict:
-    """One targeted-sampler run.
-
-    Args:
-        spi: samples_per_iteration. None = all-at-once baseline (no iterative
-             coverage updates); int = iterative with batch size spi.
-    """
+    """``spi=None`` -> single-shot baseline (no iterative coverage updates); int -> iterative
+    with batch size spi."""
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
@@ -219,7 +176,6 @@ def run_single_targeted(
 
         if n_iter > 0 and len(uncovered) > 0:
             if spi is None:
-                # Baseline: single-shot sampling, no iterative coverage updates
                 t_pos, t_rot = sampler.sample(
                     uncovered,
                     n_iter,
@@ -230,7 +186,6 @@ def run_single_targeted(
                     visibility_query=None,
                 )
             else:
-                # Proper iterative mode: update coverage after each batch
                 t_pos, t_rot = sampler.sample(
                     uncovered,
                     n_iter,
@@ -284,11 +239,6 @@ def run_single_targeted(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Section 2  --  CMA-ES sampler
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def run_single_cmaes(
     ctx: PipelineContext,
     k_coverage: int,
@@ -300,13 +250,12 @@ def run_single_cmaes(
     popsize: int = OPT_SAMPLER_POPSIZE,
     maxiter: int = OPT_SAMPLER_MAXITER,
 ) -> dict:
-    """One CMA-ES sampler run."""
     from visibility.sampling import CMAESBackend, OptimizingSampler
 
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
     vis_query = ctx.build_visibility_query("raycast")
-    sampler = ctx.build_sampler("targeted")  # random_sampler for warm-start
+    sampler = ctx.build_sampler("targeted")  # warm-start random_sampler
     og = ctx.build_sampling_og()
     model = ctx.model
     max_vps = _max_viewpoints_for(model)
@@ -388,13 +337,7 @@ def run_single_cmaes(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plotting  --  shared helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _mean(results, metric, **filters):
-    """Mean of metric over results matching all filter key=value pairs."""
     rows = results
     for k, v in filters.items():
         rows = [r for r in rows if r.get(k) == v]
@@ -426,7 +369,6 @@ def _heatmap_2d(
     cbar_label: str = "",
     overlay_mask: np.ndarray | None = None,
 ):
-    """General annotated heatmap for any two parameter axes."""
     vals = np.zeros((len(row_vals), len(col_vals)))
     for i, rv in enumerate(row_vals):
         for j, cv in enumerate(col_vals):
@@ -448,7 +390,6 @@ def _heatmap_2d(
 def _coverage_below_target_mask(
     results, row_key, row_vals, col_key, col_vals, target: float
 ) -> np.ndarray:
-    """Boolean mask of (row, col) cells whose mean coverage < target."""
     mask = np.zeros((len(row_vals), len(col_vals)), dtype=bool)
     for i, rv in enumerate(row_vals):
         for j, cv in enumerate(col_vals):
@@ -457,20 +398,11 @@ def _coverage_below_target_mask(
     return mask
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Plotting  --  combined Duke + TOSCA figures
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def generate_plots_section1_combined(
     groups: list[tuple[str, str, list[dict]]], spi_values: list, fig_dir: str
 ) -> None:
-    """One combined figure for Section 1B with Duke + TOSCA side-by-side.
-
-    Drops the coverage panel (always >= target) and shows two metrics
-    (selected viewpoints, sampling time) for each group. Each row is one
-    mesh group (panel-titled with the group label).
-    """
+    """One combined Section 1B figure with Duke + TOSCA side-by-side. Drops coverage panel
+    (always ≥ target) and shows two metrics (selected viewpoints, sampling time) per group."""
     spi_labels = ["all-at-once" if s is None else str(s) for s in spi_values]
     metrics = [
         ("num_viewpoints", 1.0, "Selected viewpoints"),
@@ -507,13 +439,8 @@ def generate_plots_section2_combined(
     fig_dir: str,
     target_coverage: float = 0.95,
 ) -> None:
-    """Combined Duke + TOSCA figures for Section 2B (k x tw) and 2C (pop x mi).
-
-    Cells whose mean coverage falls below ``target_coverage`` are flagged
-    with an overlay marker so the reader can see where CMA-ES failed to
-    meet the target while inspecting the viewpoint-count heatmap.
-    """
-    # ── Sub-B: viewpoints heatmap (k x travel_weight, frac=100%) ────────
+    """Cells with mean coverage below ``target_coverage`` get an overlay marker so the reader
+    can see where CMA-ES failed to meet the target."""
     fig, axes = plt.subplots(1, len(groups), figsize=(DOUBLE_COL, 3.5), squeeze=False)
     for col, (_tag, label, results) in enumerate(groups):
         r2B = [r for r in results if r.get("section") == "2B"]
@@ -544,7 +471,6 @@ def generate_plots_section2_combined(
     save_figure(fig, os.path.join(fig_dir, "e03_combined_s2B_k_tw_heatmap"))
     logger.info("Section 2B combined figure saved.")
 
-    # ── Sub-C: viewpoints heatmap (popsize x maxiter) ────────────────────
     fig, axes = plt.subplots(1, len(groups), figsize=(DOUBLE_COL, 3.5), squeeze=False)
     for col, (_tag, label, results) in enumerate(groups):
         r2C = [r for r in results if r.get("section") == "2C"]
@@ -575,13 +501,7 @@ def generate_plots_section2_combined(
     logger.info("Section 2C combined figure saved.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Post-processing: add derived fields to loaded results
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def _add_derived(results: list[dict]) -> list[dict]:
-    """Add early_stop_ratio field if not already present."""
     for r in results:
         if "early_stop_ratio" not in r:
             req = r.get("n_iter_requested", 0)
@@ -590,31 +510,25 @@ def _add_derived(results: list[dict]) -> list[dict]:
     return results
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def main():
     p = argparse.ArgumentParser(description="E03: Iterative Sampler Parameter Sweep")
     p.add_argument(
         "--section",
         choices=["1", "2", "both"],
         default="both",
-        help="Which sampler section to run (1=Targeted, 2=CMA-ES, default: both)",
+        help="1=Targeted, 2=CMA-ES, default both.",
     )
     p.add_argument(
         "--model_group",
         choices=["tosca", "duke", "both"],
         default="both",
-        help="Which model family to run. Ignored if --models is given.",
+        help="Ignored if --models is given.",
     )
     p.add_argument(
         "--models",
         nargs="+",
         default=None,
-        help="Explicit model list (TOSCA names and/or 'duke_of_lancaster'). "
-        "Overrides --model_group when set.",
+        help="TOSCA names and/or 'duke_of_lancaster'. Overrides --model_group.",
     )
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--target_coverage", type=float, default=0.95)
@@ -631,7 +545,7 @@ def main():
             args.models = list(TOSCA_REPRESENTATIVE)
         elif args.model_group == "duke":
             args.models = ["duke_of_lancaster"]
-        else:  # "both"
+        else:
             args.models = list(TOSCA_REPRESENTATIVE) + ["duke_of_lancaster"]
 
     logging.basicConfig(
@@ -655,7 +569,6 @@ def main():
     if not args.plots_only:
         cfgs = [c for name in args.models if (c := _make_cfg(name)) is not None]
 
-        # ── Section 1: Targeted ──────────────────────────────────────────
         if run_s1:
             for cfg in cfgs:
                 logger.info("=" * 60)
@@ -669,7 +582,7 @@ def main():
                     logger.warning("Skipping %s: %s", cfg.name, e)
                     continue
 
-                # Sub-B: spi sweep (k=_S1B_K, fraction=_S1B_FRACTION)
+                # Sub-B: spi sweep at k=_S1B_K, fraction=_S1B_FRACTION
                 combos_1B = [(spi, seed) for spi in E03_T_SPI_VALUES for seed in args.seeds]
                 logger.info(
                     "  Sub-B: %d combos (spi sweep, k=%d frac=%d%%)",
@@ -727,7 +640,6 @@ def main():
                     finally:
                         free_gpu_memory()
 
-        # ── Section 2: CMA-ES ────────────────────────────────────────────
         if run_s2:
             for cfg in cfgs:
                 logger.info("=" * 60)
@@ -741,7 +653,7 @@ def main():
                     logger.warning("Skipping %s: %s", cfg.name, e)
                     continue
 
-                # Sub-B: joint k x travel_weight sweep at fraction=_S2B_FRACTION
+                # Sub-B: joint k × travel_weight at fraction=_S2B_FRACTION
                 s2b_tws = _s2b_travel_weights_for(cfg)
                 combos_2B = [
                     (k, tw, seed) for k in E03_C_K_VALUES for tw in s2b_tws for seed in args.seeds
@@ -803,8 +715,7 @@ def main():
                     finally:
                         free_gpu_memory()
 
-                # Sub-C: popsize x maxiter (k=_S2C_K, fraction=_S2C_FRACTION;
-                # tw fixed per model group)
+                # Sub-C: popsize × maxiter at k=_S2C_K, fraction=_S2C_FRACTION; tw fixed per group
                 s2c_tw = _s2c_travel_weight_for(cfg)
                 combos_2C = [
                     (pop, mi, seed)
@@ -876,7 +787,6 @@ def main():
                         free_gpu_memory()
 
     else:
-        # Load all saved results
         for fname in sorted(os.listdir(raw_dir)):
             if fname.endswith(".json"):
                 r = load_run_result(os.path.join(raw_dir, fname.replace(".json", "")))
@@ -894,7 +804,6 @@ def main():
             ("duke", "Duke", [r for r in all_results if r.get("model") == "duke_of_lancaster"]),
         ]
 
-        # Combined Duke + TOSCA figures (used by the thesis chapter).
         non_empty = [(t, l, r) for (t, l, r) in groups if r]
         if non_empty:
             if run_s1 or args.plots_only:
@@ -913,7 +822,6 @@ def main():
             if not group_results:
                 continue
 
-            # ── Summary tables (per group) ────────────────────────────────
             r2B = [r for r in group_results if r.get("section") == "2B"]
             logger.info(
                 "\n%s\nE03 SECTION 2B SUMMARY — %s (CMA-ES: k × travel_weight, frac=100%%)\n%s",

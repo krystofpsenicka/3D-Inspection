@@ -8,9 +8,8 @@ end-to-end on a non-trivial obstacle.
 
 from __future__ import annotations
 
+import cupy as cp
 import pytest
-
-cp = pytest.importorskip("cupy")
 
 from shared.occupancy_grid import OccupancyGrid
 from VRP.mapf.reservation_table import ReservationTable

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import cupy as cp
 import numpy as np
+import open3d as o3d
 import pytest
-
-cp = pytest.importorskip("cupy")
-o3d = pytest.importorskip("open3d")
 
 from visibility.core.types import FrustumParams, normalize_vector
 from visibility.core.utils import compute_redundancy
@@ -193,11 +192,6 @@ class TestRaycastCpuVsCuda:
     (Open3D) on a small scene."""
 
     def test_visibility_matches_on_cube_scene(self, cube_mesh):
-        triro = pytest.importorskip("triro")  # noqa: F841
-        torch = pytest.importorskip("torch")
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
-
         from visibility.visibility.raycast_cuda import RaycastingVisibilityQueryCuda
 
         # 4 targets: 2 unobstructed (offset cubes), 2 behind the cube_mesh

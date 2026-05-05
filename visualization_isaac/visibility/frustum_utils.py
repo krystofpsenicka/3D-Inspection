@@ -16,22 +16,7 @@ def add_frustum_lineset(
     color: tuple = (0.2, 0.55, 1.0),
     width: float = 0.02,
 ) -> str:
-    """Create a frustum wireframe as a ``BasisCurves`` prim.
-
-    Parameters
-    ----------
-    stage : Usd.Stage
-    path : USD prim path.
-    viewpoint : (3,) array  --  camera position.
-    rotation : (3, 3) rotation matrix  --  columns are [forward, right, up].
-    params : FrustumParams defining FOV, near/far planes.
-    color : RGB colour.
-    width : Line width.
-
-    Returns
-    -------
-    The prim path string.
-    """
+    """Frustum wireframe as a ``BasisCurves`` prim. ``rotation`` columns: [forward, right, up]."""
     half_angle_rad = params.fov_y / 2.0
     far_half_size = params.far * np.tan(half_angle_rad)
 
@@ -78,23 +63,7 @@ def add_viewpoint_geometry(
     sphere_radius: float = 0.15,
     arrow_length: float = 0.5,
 ) -> list[str]:
-    """Create the standard viewpoint geometry: sphere + frustum + direction arrow.
-
-    Parameters
-    ----------
-    stage : Usd.Stage
-    base_path : Parent prim path  --  children are created beneath it.
-    position : (3,) camera position.
-    rotation : (3, 3) rotation matrix  --  columns are [forward, right, up].
-    frustum_params : Camera frustum geometry.
-    color : RGB colour for all three primitives.
-    sphere_radius : Radius of the viewpoint marker sphere.
-    arrow_length : Length of the direction arrow line.
-
-    Returns
-    -------
-    List of created prim paths [sphere, frustum, arrow].
-    """
+    """Sphere + frustum + direction arrow under ``base_path``. Returns [sphere, frustum, arrow] paths."""
     color = tuple(color)
     paths = []
 

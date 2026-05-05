@@ -1,16 +1,7 @@
 """Visualize set-cover optimization solutions (Isaac Sim variant).
 
-Three-phase API:
-
-  * :meth:`add_phase_candidates` -- mesh + every candidate VP frustum (no
-    point colouring).
-  * :meth:`add_phase_visibility` -- mesh + frustums + per-point colour by
-    which candidate VP sees it (uses the **full** ``(N_cand, M)`` matrix).
-  * :meth:`add_phase_selected`   -- mesh + only the selected subset (from
-    :class:`OptimizationResult`) and their visibility.
-
-The legacy single-call ``add_solution`` is kept as an alias of
-``add_phase_selected`` for backwards compatibility.
+Three-phase API: candidates -> visibility -> selected. ``add_solution`` is an alias for
+``add_phase_selected`` (legacy single-call form).
 """
 
 from __future__ import annotations
@@ -31,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 def _to_numpy(x):
-    """Convert a CuPy/NumPy array to NumPy."""
     if x is None:
         return None
     if hasattr(x, "get"):
@@ -40,8 +30,6 @@ def _to_numpy(x):
 
 
 class SetCoverVisualizer:
-    """Stage-builder for set-cover / greedy optimization results."""
-
     def __init__(
         self, mesh: trimesh.Trimesh, target_points: np.ndarray, frustum_params: FrustumParams
     ):
@@ -49,8 +37,6 @@ class SetCoverVisualizer:
         self.target_points = target_points
         self.num_points = len(target_points)
         self.frustum_params = frustum_params
-
-    # ── Phase A -- candidates only ─────────────────────────────────────
 
     def add_phase_candidates(
         self,
@@ -61,11 +47,7 @@ class SetCoverVisualizer:
         sphere_radius: float = 0.10,
         candidate_color: tuple = (0.85, 0.85, 0.2),
     ) -> list[str]:
-        """Add the mesh + a sphere/frustum for every candidate VP.
-
-        No per-point colouring; the surface point cloud is rendered grey to
-        provide context.
-        """
+        """Mesh + sphere/frustum per candidate VP. Surface points rendered grey for context."""
         paths: list[str] = []
         model_vis = ModelVisualizer(self.mesh, self.target_points)
         paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
@@ -86,8 +68,6 @@ class SetCoverVisualizer:
         logger.info("[SetCoverVisualizer] phase candidates: %d frustums", len(positions))
         return paths
 
-    # ── Phase B -- per-candidate visibility-coloured points ────────────
-
     def add_phase_visibility(
         self,
         stage,
@@ -97,13 +77,7 @@ class SetCoverVisualizer:
         full_visibility_map: np.ndarray,
         point_size: float = 0.02,
     ) -> list[str]:
-        """Show the mesh + every candidate frustum + visibility-coloured points.
-
-        ``full_visibility_map`` is the ``(N_cand, M)`` boolean / uint8 matrix
-        produced by ``compute_visibility_batch``. Points covered by at least
-        one candidate are coloured by their first-covering candidate (tab20);
-        uncovered points stay red.
-        """
+        """Mesh + every candidate frustum + visibility-coloured points (first-covering VP, tab20)."""
         paths: list[str] = []
         model_vis = ModelVisualizer(self.mesh)
         paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
@@ -115,7 +89,6 @@ class SetCoverVisualizer:
         n_cand = len(positions)
         colors = generate_tab20_colors(max(n_cand, 1))
 
-        # Per-VP frustum geometry
         for i, (pos, R) in enumerate(zip(positions, rotmats, strict=False)):
             color = tuple(colors[i % len(colors)])
             paths += add_viewpoint_geometry(
@@ -128,7 +101,6 @@ class SetCoverVisualizer:
                 sphere_radius=0.08,
             )
 
-        # Point colouring -- pick the *first* candidate that covers each point
         first_cover = np.full(self.num_points, -1, dtype=np.int64)
         if V.size:
             covers = np.argmax(V, axis=0)
@@ -160,15 +132,12 @@ class SetCoverVisualizer:
         )
         return paths
 
-    # ── Phase C -- selected subset only ───────────────────────────────
-
     def add_phase_selected(
         self,
         stage,
         base_path: str,
         result: OptimizationResult,
     ) -> list[str]:
-        """Render only the selected subset and its visibility."""
         paths: list[str] = []
         model_vis = ModelVisualizer(self.mesh)
         paths.append(model_vis.add_mesh(stage, f"{base_path}/mesh"))
@@ -218,6 +187,5 @@ class SetCoverVisualizer:
         )
         return paths
 
-    # Backwards-compat alias
     def add_solution(self, stage, base_path: str, result: OptimizationResult) -> list[str]:
         return self.add_phase_selected(stage, base_path, result)

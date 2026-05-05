@@ -1,9 +1,4 @@
-"""Isaac Sim visualization module  --  USD stage-builder counterpart of ``visualization/``.
-
-Every ``add_*`` method on the visualizer classes adds prims to a caller-provided
-``Usd.Stage`` and returns the list of created prim paths. ``IsaacApp`` and
-``PhaseController`` provide application lifecycle and phase progression.
-"""
+"""Isaac Sim visualization module — USD stage-builder counterpart of ``visualization/``."""
 
 from ._helpers import generate_tab20_colors, rotmat_to_quat_wxyz
 from .app import (
