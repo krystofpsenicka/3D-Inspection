@@ -1,0 +1,13 @@
+{
+  "model": "cat0",
+  "optimizer": "ExpansionIterative_weighted_curvature",
+  "input_strategy": "targeted",
+  "target_coverage": 0.9,
+  "seed": 123,
+  "num_candidates": 500,
+  "num_viewpoints": 12,
+  "coverage": 0.9175,
+  "optimization_time": 0.14134507201379165,
+  "redundancy": 1.3403160572052002,
+  "section": "A"
+}

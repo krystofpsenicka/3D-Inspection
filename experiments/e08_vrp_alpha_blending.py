@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E7: VRP Alpha Blending — sweep alpha (makespan vs. total-distance weighting), measure tradeoff.
+"""E08: VRP Alpha Blending - sweep alpha (makespan vs. total-distance weighting), measure tradeoff.
 
     conda run -n isaaclab python -m experiments.e08_vrp_alpha_blending
 """
@@ -21,7 +21,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from experiments.common.config import ModelConfig, SEEDS_3, E07_ALPHAS, RESULTS_DIR
+from experiments.common.config import ModelConfig, SEEDS_3, E08_ALPHAS, RESULTS_DIR
 from experiments.common.persistence import save_run_result, load_run_result
 from experiments.common.lb_sidecar import (
     compute_all_lbs, recompute_lbs, save_lb_json, load_raw_lb_dir,
@@ -109,7 +109,7 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
         total_cost = vrp_result.total_cost
         status = vrp_result.status
 
-        # No MAPF in this experiment — VRP-only LBs.
+        # No MAPF in this experiment - VRP-only LBs.
         try:
             lb = compute_all_lbs(
                 dist_matrix, home_indices, K, N_WAYPOINTS, alpha,
@@ -121,7 +121,7 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
             logger.warning("LB computation failed: %s", e)
     except RuntimeError as exc:
         solve_time = time.perf_counter() - t0
-        logger.warning("solve_vrp failed (alpha=%.2f seed=%d): %s — skipping",
+        logger.warning("solve_vrp failed (alpha=%.2f seed=%d): %s - skipping",
                        alpha, seed, exc)
         per_v = []
         makespan = float("nan")
@@ -186,8 +186,8 @@ def generate_plots(results: list[dict], output_dir: str,
 
 
 def main():
-    p = argparse.ArgumentParser(description="E7: VRP Alpha Blending")
-    p.add_argument("--alphas", type=float, nargs="+", default=E07_ALPHAS)
+    p = argparse.ArgumentParser(description="E08: VRP Alpha Blending")
+    p.add_argument("--alphas", type=float, nargs="+", default=E08_ALPHAS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e08_vrp_alpha_blending"))
     p.add_argument("--plots_only", action="store_true")

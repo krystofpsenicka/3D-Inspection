@@ -1,10 +1,10 @@
-"""Strategy dispatch for sampling experiments (e01, e02, e13).
+"""Strategy dispatch for sampling experiments.
 
 Strategies:
-  weighted             -- SDF² uniform, all N from base sampler
-  weighted_curvature   -- SDF² + curvature bias
-  targeted_X           -- X% targeted, (100-X)% weighted base
-  cmaes_X              -- X% CMA-ES optimised, (100-X)% weighted base
+  weighted             -- SDF^2 uniform, all N from base sampler
+  weighted_curvature   -- SDF^2 + curvature bias
+  targeted             -- targeted toward uncovered (iterative refinement)
+  cmaes                -- CMA-ES optimised
 """
 
 from __future__ import annotations
@@ -47,36 +47,21 @@ def sample_strategy(
         )
         return pos_gpu, rot_gpu, num_candidates, 0, strategy, 0
 
-    # Hybrid strategies: parse percentage
-    if strategy.startswith("targeted_") or strategy.startswith("cmaes_"):
-        pct = int(strategy.split("_")[1])
-    else:
+    if strategy not in ("targeted", "cmaes"):
         raise ValueError(f"Unknown strategy: {strategy!r}")
 
-    n_iterative = int(num_candidates * pct / 100)
-    n_base = num_candidates - n_iterative
+    n_iterative = num_candidates
+    n_base = 0
     n_warmstart_fallbacks = 0
 
-    # Base (weighted) phase
-    if n_base > 0:
-        pos_gpu, rot_gpu = sampler.sample(
-            cp.arange(len(target_points)),
-            n_base,
-            side=Side.OUTSIDE,
-            curvature_weighting=False,
-        )
-        V_init, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
-        coverage_count = V_init.astype(cp.int32).sum(axis=0)
-        uncovered = cp.where(coverage_count < k_coverage)[0]
-    else:
-        pos_gpu = cp.empty((0, 3), dtype=cp.float32)
-        rot_gpu = cp.empty((0, 3, 3), dtype=cp.float32)
-        uncovered = cp.arange(len(target_points))
-        coverage_count = cp.zeros(len(target_points), dtype=cp.int32)
+    pos_gpu = cp.empty((0, 3), dtype=cp.float32)
+    rot_gpu = cp.empty((0, 3, 3), dtype=cp.float32)
+    uncovered = cp.arange(len(target_points))
+    coverage_count = cp.zeros(len(target_points), dtype=cp.int32)
 
     # Iterative / optimising phase
-    if n_iterative > 0 and len(uncovered) > 0:
-        if strategy.startswith("targeted_"):
+    if len(uncovered) > 0:
+        if strategy == "targeted":
             t_pos, t_rot = sampler.sample(
                 uncovered,
                 n_iterative,
@@ -91,7 +76,7 @@ def sample_strategy(
                 pos_gpu = cp.concatenate([pos_gpu, t_pos]) if len(pos_gpu) > 0 else t_pos
                 rot_gpu = cp.concatenate([rot_gpu, t_rot]) if len(rot_gpu) > 0 else t_rot
 
-        elif strategy.startswith("cmaes_"):
+        elif strategy == "cmaes":
             from visibility.sampling import CMAESBackend, OptimizingSampler
 
             opt_sampler = OptimizingSampler(

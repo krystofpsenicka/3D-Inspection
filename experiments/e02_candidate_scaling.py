@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""E2: Candidate Count Scaling — coverage / VPs / runtime vs. ``num_candidates`` per strategy.
+"""E02: Candidate Count Scaling - coverage / VPs / runtime vs. ``num_candidates`` per strategy.
 
 Each strategy is one line on the coverage-vs-N and VPs-vs-N plots, revealing whether scaling
 is strategy-specific, where each strategy plateaus, and which wins at a given budget.
 
 Strategies:
-  weighted             – SDF² uniform, no curvature (one-shot)
-  weighted_curvature   – SDF² + curvature (one-shot)
-  targeted_X           – X% targeted toward uncovered, (100-X)% weighted
-  cmaes_X              – X% CMA-ES, (100-X)% weighted
+  weighted             - SDF^2 uniform, no curvature (one-shot)
+  weighted_curvature   - SDF^2 + curvature (one-shot)
+  targeted             - targeted toward uncovered (iterative)
+  cmaes                - CMA-ES optimised (iterative)
 
     conda run -n isaaclab python -m experiments.e02_candidate_scaling
     conda run -n isaaclab python -m experiments.e02_candidate_scaling --plots_only
@@ -55,14 +55,13 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Historical raw data using older strategy names is still loadable via --plots_only.
-_E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
+_E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted", "cmaes"]
 
 
 def _strategy_kwargs(strategy: str) -> dict:
-    if strategy == "targeted_100":
+    if strategy == "targeted":
         return {"k_coverage": 3}
-    if strategy == "cmaes_100":
+    if strategy == "cmaes":
         return {
             "k_coverage": 3,
             "travel_weight": 0.0,
@@ -76,7 +75,6 @@ from experiments.common.persistence import load_run_result, save_run_result
 from experiments.common.plotting import (
     CATEGORICAL_COLORS,
     DOUBLE_COL,
-    display_strategy,
     save_figure,
     setup_thesis_style,
 )
@@ -111,7 +109,7 @@ def run_single(
     with timed() as t_vis:
         V, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
 
-    from visibility.set_cover import LazyGreedySetCover  # CPU — fastest per e04 results
+    from visibility.set_cover import LazyGreedySetCover  # CPU - fastest per e06 results
 
     V_np = cp.asnumpy(V)
     pos_np = cp.asnumpy(pos_gpu)
@@ -174,14 +172,10 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             return group_colors["weighted"], "solid", "o"
         if strategy == "weighted_curvature":
             return group_colors["weighted_curvature"], "solid", "s"
-        if strategy.startswith("targeted_"):
-            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot", "100": "solid"}
-            pct = strategy.split("_")[1]
-            return group_colors["targeted"], pct_styles.get(pct, "solid"), "^"
-        if strategy.startswith("cmaes_"):
-            pct_styles = {"25": "dotted", "50": "dashed", "75": "dashdot", "100": "solid"}
-            pct = strategy.split("_")[1]
-            return group_colors["cmaes"], pct_styles.get(pct, "solid"), "D"
+        if strategy == "targeted":
+            return group_colors["targeted"], "solid", "^"
+        if strategy == "cmaes":
+            return group_colors["cmaes"], "solid", "D"
         return "grey", "solid", "x"
 
     fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
@@ -194,14 +188,14 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             marker=marker,
             linestyle=ls,
             color=color,
-            label=display_strategy(strat),
+            label=strat,
             linewidth=1.5,
         )
         ax.fill_between(candidates, (m - s) * 100, (m + s) * 100, alpha=0.08, color=color)
     ax.axhline(95, color="red", linestyle="--", alpha=0.5, label="95% target")
     ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Achieved coverage (%)")
-    ax.set_title("Coverage vs. Candidate Count — All Strategies")
+    ax.set_title("Coverage vs. Candidate Count - All Strategies")
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e02_coverage_vs_candidates"))
 
@@ -215,12 +209,12 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             marker=marker,
             linestyle=ls,
             color=color,
-            label=display_strategy(strat),
+            label=strat,
             linewidth=1.5,
         )
     ax.set_xlabel("Candidates requested")
     ax.set_ylabel("Selected viewpoints")
-    ax.set_title("Selected Viewpoints vs. Candidate Count — All Strategies")
+    ax.set_title("Selected Viewpoints vs. Candidate Count - All Strategies")
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e02_viewpoints_vs_candidates"))
 
@@ -234,7 +228,7 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
             marker=marker,
             linestyle=ls,
             color=color,
-            label=display_strategy(strat),
+            label=strat,
             linewidth=1.5,
         )
     ax.plot(candidates, candidates, "k--", alpha=0.3, label="N requested")
@@ -244,11 +238,11 @@ def generate_plots(results: list[dict], strategies: list[str], output_dir: str):
     ax.legend(fontsize=6, ncol=2)
     save_figure(fig, os.path.join(fig_dir, "e02_candidates_generated"))
 
-    logger.info("E2 figures saved to %s", fig_dir)
+    logger.info("E02 figures saved to %s", fig_dir)
 
 
 def main():
-    p = argparse.ArgumentParser(description="E2: Candidate Count Scaling")
+    p = argparse.ArgumentParser(description="E02: Candidate Count Scaling")
     p.add_argument("--model", default="duke_of_lancaster")
     p.add_argument("--candidates", type=int, nargs="+", default=E02_CANDIDATE_COUNTS)
     p.add_argument("--strategies", nargs="+", default=_E02_STRATEGIES)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -78,13 +77,6 @@ class ModelConfig:
         )
 
 
-@dataclass
-class ExperimentConfig:
-    model: ModelConfig
-    target_coverage: float = 0.95
-    max_viewpoints: int = 1000
-
-
 # ── Seeds ───────────────────────────────────────────────────────────────────
 
 SEEDS_3 = [42, 123, 7]
@@ -100,75 +92,31 @@ TOSCA_ALL = [
     "gorilla1", "horse0", "michael0", "victoria0",
 ]
 
-TOSCA_VALID: list | None = None  # set by validate_models.py
-
 
 # ── Parameter grids ─────────────────────────────────────────────────────────
 
-# E01: Section A (k=1, Duke+TOSCA), Section B (k>1, TOSCA only)
-E01_STRATEGIES_A = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
-E01_STRATEGIES_B = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
-E01_K_VALUES = [1, 2, 3, 4]
-E01_STRATEGIES = E01_STRATEGIES_A
+E05_COVERAGE_TARGETS = [0.85, 0.90, 0.925, 0.95, 0.97]
 
-E02_CANDIDATE_COUNTS = [250, 500, 750, 1000, 1500, 2000, 3000, 5000]
-E02_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
-
-E03_COVERAGE_TARGETS = [0.85, 0.90, 0.925, 0.95, 0.97]
-
-E04_COVERAGE_TARGETS = [0.85, 0.90, 0.925, 0.95, 0.97]
-# Section A: all optimizers including expansion variants
-E04_OPTIMIZERS_A = [
+E06_COVERAGE_TARGETS = [0.85, 0.90, 0.925, 0.95, 0.97]
+E06_OPTIMIZERS = [
     "GreedySetCover", "GreedySetCoverCuda", "LazyGreedySetCover",
     "ExpansionIterative_weighted", "ExpansionIterative_weighted_curvature",
     "ExpansionIterative_cmaes",
 ]
-# Section B: input-strategy robustness sweep
-E04_OPTIMIZERS_B = ["GreedySetCover", "GreedySetCoverCuda", "LazyGreedySetCover"]
-E04_INPUT_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "cmaes_100"]
-E04_OPTIMIZERS = E04_OPTIMIZERS_A  # legacy alias
 
-E05_CANDIDATE_COUNTS = [500, 1000, 2000, 5000, 10000]
-E05_POINT_COUNTS = [50_000, 100_000, 200_000]
+E07_FLEET_SIZES = [1, 2, 3, 4, 5, 6, 8, 10]
+E07_WAYPOINT_COUNTS = [10, 25, 50, 75, 100]
 
-E06_FLEET_SIZES = [1, 2, 3, 4, 5, 6, 8, 10]
-E06_WAYPOINT_COUNTS = [10, 25, 50, 75, 100]
-
-E07_ALPHAS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-
-E10_RESOLUTIONS = [0.25, 0.50, 0.75, 1.0, 1.5]
-
-E13_K_VALUES = [1, 2, 3, 4]
-E13_COVERAGE_TARGETS = [0.90, 0.95]
-E13_STRATEGIES = ["targeted_25", "cmaes_100"]
-
-# E16: Frustum sensitivity
-E16_FOV_VALUES = [30.0, 45.0, 60.0, 90.0]
-E16_NEAR_FAR_PAIRS = [(0.1, 5.0), (0.2, 10.0), (0.5, 15.0)]
+E08_ALPHAS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 # E03: Iterative sampler sweeps
-_E03_BASE_N = 500  # TOSCA budget; scales as _E03_BASE_N * k_coverage
-
-# Targeted
-E03_T_K_VALUES = [1, 2, 3, 4, 6, 8]
-E03_T_FRACTIONS = [12, 25, 50, 75, 100]  # % from targeted phase
 E03_T_SPI_VALUES = [1, 5, 25, None]  # samples_per_iteration; None = all-at-once
-
-# CMA-ES
 E03_C_K_VALUES = [1, 2, 3, 4, 6, 8]
-E03_C_FRACTIONS = [25, 50, 75, 100]
 E03_C_TRAVEL_WEIGHTS_TOSCA = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
 E03_C_TRAVEL_WEIGHTS_DUKE = [0.01, 0.02, 0.03, 0.06, 0.1]
-E03_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]  # default 15
-E03_C_MAXITER_VALUES = [5, 10, 20, 40]  # default 20
+E03_C_POPSIZE_VALUES = [5, 10, 15, 25, 40]
+E03_C_MAXITER_VALUES = [5, 10, 20, 40]
 
-# E17: Sampler routing impact
-E17_STRATEGIES = ["weighted", "weighted_curvature", "targeted_25", "targeted_50", "cmaes_100"]
-E17_CMAES_TRAVEL_WEIGHTS = [0.0, 0.1, 0.3]
-E17_N_ROBOTS = 5
-E17_N_CANDIDATES = 1500
-
-# E19: VRP time-limit sweep
-E19_TIME_LIMITS = [120, 240, 360, 600]
-E19_FLEET_SIZE = 5
-E19_N_WAYPOINTS = 75
+# E09: Sampler routing impact
+E09_N_ROBOTS = 5
+E09_N_CANDIDATES = 1500

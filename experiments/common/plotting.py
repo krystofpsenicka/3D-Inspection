@@ -22,18 +22,6 @@ CATEGORICAL_COLORS = plt.cm.tab10.colors[:10]
 SEQUENTIAL_CMAP = "viridis"
 DIVERGING_CMAP = "RdBu_r"
 
-# ── Strategy display names ─────────────────────────────────────────────────
-
-STRATEGY_DISPLAY_NAMES = {
-    "cmaes_100": "cmaes",
-    "targeted_100": "targeted",
-}
-
-
-def display_strategy(name: str) -> str:
-    return STRATEGY_DISPLAY_NAMES.get(name, name)
-
-
 def setup_thesis_style():
     """Set publication rcParams + suppress all 'title above plot' so the LaTeX
     caption is the only label. Axis labels, ticks and legends unaffected.
@@ -133,31 +121,6 @@ def grouped_bar(
     if title:
         ax.set_title(title)
     ax.legend()
-
-
-def violin_with_swarm(ax, data: dict[str, list[float]], ylabel: str = "", title: str = ""):
-    """Violin + overlaid jittered scatter."""
-    labels = list(data.keys())
-    values = [np.asarray(data[k]) for k in labels]
-
-    parts = ax.violinplot(values, positions=range(len(labels)), showmedians=True, showextrema=False)
-    for pc in parts["bodies"]:
-        pc.set_alpha(0.4)
-
-    for i, vals in enumerate(values):
-        jitter = np.random.default_rng(42).uniform(-0.15, 0.15, len(vals))
-        ax.scatter(
-            np.full(len(vals), i) + jitter, vals,
-            s=12, alpha=0.7, zorder=3,
-            color=CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)],
-        )
-
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=30, ha="right")
-    if ylabel:
-        ax.set_ylabel(ylabel)
-    if title:
-        ax.set_title(title)
 
 
 def stacked_bar(

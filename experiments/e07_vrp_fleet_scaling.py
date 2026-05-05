@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E6: VRP Fleet Scaling — sweep fleet sizes (≤10) × waypoint counts × seeds with LBs.
+"""E07: VRP Fleet Scaling - sweep fleet sizes (<=10) x waypoint counts x seeds with LBs.
 
     conda run -n isaaclab python -m experiments.e07_vrp_fleet_scaling
     conda run -n isaaclab python -m experiments.e07_vrp_fleet_scaling --fleet_sizes 1 2 3 --waypoint_counts 10 20
@@ -27,8 +27,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import (
-    E06_FLEET_SIZES,
-    E06_WAYPOINT_COUNTS,
+    E07_FLEET_SIZES,
+    E07_WAYPOINT_COUNTS,
     RESULTS_DIR,
     SEEDS_5,
     ModelConfig,
@@ -408,7 +408,7 @@ def _recompute_lbs_for_row(
     m: RunMetrics, og, sampler, bmin, bmax, *, include_cuopt: bool = False
 ) -> dict:
     """Re-generate the instance deterministically (sampler is deterministic given a CuPy RNG seed
-    — same as ``run_single``). ``include_cuopt`` runs a short cuOpt solve to extract a dual bound;
+    - same as ``run_single``). ``include_cuopt`` runs a short cuOpt solve to extract a dual bound;
     expensive, intended only for augmenting a few rows of interest."""
     cp.random.seed(m.seed)
     pos_gpu, _ = sampler.sample(m.n_waypoints, side=Side.OUTSIDE)
@@ -435,9 +435,9 @@ def _recompute_lbs_for_row(
 
 
 def main():
-    p = argparse.ArgumentParser(description="E6: VRP Fleet Scaling")
-    p.add_argument("--fleet_sizes", type=int, nargs="+", default=E06_FLEET_SIZES)
-    p.add_argument("--waypoint_counts", type=int, nargs="+", default=E06_WAYPOINT_COUNTS)
+    p = argparse.ArgumentParser(description="E07: VRP Fleet Scaling")
+    p.add_argument("--fleet_sizes", type=int, nargs="+", default=E07_FLEET_SIZES)
+    p.add_argument("--waypoint_counts", type=int, nargs="+", default=E07_WAYPOINT_COUNTS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_5)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e07_vrp_fleet_scaling"))
     p.add_argument("--plots_only", action="store_true")

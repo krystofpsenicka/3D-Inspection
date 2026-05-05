@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""E17: Sampler Routing Impact — does the sampler choice affect downstream VRP makespan/total_cost?
+"""E09: Sampler Routing Impact - does the sampler choice affect downstream VRP makespan/total_cost?
 
-Strategies: weighted, weighted_curvature, targeted_100 (spi=100, k=3), cmaes_100 (popsize=40,
-maxiter=40, k=3). CMA-ES travel_weight per-model-group (Duke uses E03_C_TRAVEL_WEIGHTS_DUKE,
-TOSCA uses E03_C_TRAVEL_WEIGHTS_TOSCA). Models: Duke + TOSCA_REPRESENTATIVE
-(wolf0, cat0, david0). Fixed: 5 robots, 1500 candidates, 0.95 target coverage, 3 seeds.
+Strategies: weighted, weighted_curvature, targeted (spi=100, k=3), cmaes (popsize=40,
+maxiter=40, k=3). CMA-ES travel_weight sweep over E03_C_TRAVEL_WEIGHTS_DUKE.
+Model: Duke. Fixed: 5 robots, 1500 candidates, 0.95 target coverage, 3 seeds.
 
     conda run -n isaaclab python -m experiments.e09_sampler_routing_impact
     conda run -n isaaclab python -m experiments.e09_sampler_routing_impact --plots_only
@@ -30,12 +29,10 @@ if _PROJECT_ROOT not in sys.path:
 
 from experiments.common.config import (
     E03_C_TRAVEL_WEIGHTS_DUKE,
-    E03_C_TRAVEL_WEIGHTS_TOSCA,
-    E17_N_CANDIDATES,
-    E17_N_ROBOTS,
+    E09_N_CANDIDATES,
+    E09_N_ROBOTS,
     RESULTS_DIR,
     SEEDS_3,
-    TOSCA_REPRESENTATIVE,
     ModelConfig,
 )
 from experiments.common.lb_sidecar import (
@@ -79,27 +76,14 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-_E09_STRATEGIES = ["weighted", "weighted_curvature", "targeted_100", "cmaes_100"]
-_E09_MODELS = ["duke_of_lancaster"] + list(TOSCA_REPRESENTATIVE)
-
-
-def _is_duke(model_name: str) -> bool:
-    return model_name == "duke_of_lancaster"
-
-
-def _cmaes_travel_weights(model_name: str) -> list[float]:
-    """Per-model-group TW sweep matching e03 §2B."""
-    return (
-        list(E03_C_TRAVEL_WEIGHTS_DUKE)
-        if _is_duke(model_name)
-        else list(E03_C_TRAVEL_WEIGHTS_TOSCA)
-    )
+_E09_STRATEGIES = ["weighted", "weighted_curvature", "targeted", "cmaes"]
+_E09_MODELS = ["duke_of_lancaster"]
 
 
 def _strategy_kwargs_e09(strategy: str, travel_weight: float | None) -> dict:
-    if strategy == "targeted_100":
+    if strategy == "targeted":
         return {"k_coverage": 3, "samples_per_iteration": 100}
-    if strategy == "cmaes_100":
+    if strategy == "cmaes":
         return {
             "k_coverage": 3,
             "popsize": 40,
@@ -113,7 +97,6 @@ from experiments.common.persistence import load_run_result, save_run_result
 from experiments.common.plotting import (
     CATEGORICAL_COLORS,
     DOUBLE_COL,
-    display_strategy,
     save_figure,
     setup_thesis_style,
 )
@@ -125,17 +108,16 @@ logger = logging.getLogger(__name__)
 
 
 def _display_label(strategy: str, travel_weight) -> str:
-    name = display_strategy(strategy)
     if travel_weight is not None:
-        return f"{name}\ntw={travel_weight}"
-    return name.replace("weighted_curvature", "w_curv")
+        return f"{strategy}\ntw={travel_weight}"
+    return strategy.replace("weighted_curvature", "w_curv")
 
 
 def _build_run_configs(strategies, cmaes_travel_weights):
     """Expand strategies into (strategy, travel_weight) tuples; one TW entry per cmaes."""
     configs = []
     for s in strategies:
-        if s.startswith("cmaes_"):
+        if s == "cmaes":
             for tw in cmaes_travel_weights:
                 configs.append((s, tw))
         else:
@@ -159,7 +141,7 @@ def _rebuild_instance_for_lb(
     target_coverage: float,
 ) -> tuple:
     """Mirror stages 1-6 of ``run_single`` without VRP. Returns ``(K, home_indices, dist_matrix,
-    num_viewpoints)``. Logic deliberately duplicated with ``run_single`` — changing run_single
+    num_viewpoints)``. Logic deliberately duplicated with ``run_single`` - changing run_single
     risks behaviour drift for the main experiment."""
     set_seed(seed)
     model_cfg = ctx.model
@@ -169,7 +151,7 @@ def _rebuild_instance_for_lb(
     pos_gpu, rot_gpu, *_ = sample_strategy(
         ctx,
         strategy,
-        E17_N_CANDIDATES,
+        E09_N_CANDIDATES,
         target_points,
         normals,
         vis_query,
@@ -186,7 +168,7 @@ def _rebuild_instance_for_lb(
         max_viewpoints=1000,
     )
 
-    K = E17_N_ROBOTS
+    K = E09_N_ROBOTS
     _, o3d_mesh = ctx.load_mesh()
     bmin, bmax = ctx.mesh_bounds
     robot_xyzs = compute_start_grid(K, bmin, bmax)
@@ -235,7 +217,7 @@ def run_single(
         pos_gpu, rot_gpu, n_base, n_iter, base_name, n_ws_fb = sample_strategy(
             ctx,
             strategy,
-            E17_N_CANDIDATES,
+            E09_N_CANDIDATES,
             target_points,
             normals,
             vis_query,
@@ -261,7 +243,7 @@ def run_single(
     redundancy = float(opt_result.redundancy)
 
     with timed() as t_vrp:
-        K = E17_N_ROBOTS
+        K = E09_N_ROBOTS
         _, o3d_mesh = ctx.load_mesh()
         bmin, bmax = ctx.mesh_bounds
 
@@ -280,7 +262,7 @@ def run_single(
         # og_vrp must accept every viewpoint the sampling OG accepts. At 0.20m resolution
         # (kept coarse because cuGraph OOMs on the 0.10m sampling grid), worst-case voxel
         # alignment mismatch is ~0.67m, so any inflation > 1 voxel can reject a viewpoint
-        # the sampling OG considers feasible. Inflate by 1 voxel only (0.20m clearance) —
+        # the sampling OG considers feasible. Inflate by 1 voxel only (0.20m clearance) -
         # OK for VRP distance estimation (no MAPF in e09; paths only pair waypoints for
         # route ordering). Match sampling OG's padding so grid origins align.
         import trimesh
@@ -385,10 +367,6 @@ def generate_plots(
 def _generate_plots_for_model(
     ok: list[dict], fig_dir: str, model_name: str, lb_by_stem: dict, target_coverage: float
 ):
-    # Thesis chapter only uses Duke for E09; TOSCA per-model figures not rendered.
-    if model_name != "duke_of_lancaster":
-        logger.info("Skipping E09 plots for %s (Duke-only in thesis)", model_name)
-        return
     seen = set()
     run_cfgs = []
     for r in ok:
@@ -482,7 +460,7 @@ def _generate_plots_for_model(
 
 
 def main():
-    p = argparse.ArgumentParser(description="E17: Sampler Routing Impact")
+    p = argparse.ArgumentParser(description="E09: Sampler Routing Impact")
     p.add_argument(
         "--models",
         nargs="+",
@@ -494,7 +472,7 @@ def main():
         type=float,
         nargs="+",
         default=None,
-        help="Override per-model TW sweep; defaults to E03_C_TRAVEL_WEIGHTS_{DUKE,TOSCA}.",
+        help="Override the CMA-ES travel-weight sweep; defaults to E03_C_TRAVEL_WEIGHTS_DUKE.",
     )
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--target_coverage", type=float, default=0.95)
@@ -622,7 +600,7 @@ def main():
             tws = (
                 list(args.cmaes_travel_weights)
                 if args.cmaes_travel_weights is not None
-                else _cmaes_travel_weights(model_name)
+                else list(E03_C_TRAVEL_WEIGHTS_DUKE)
             )
             run_cfgs = _build_run_configs(args.strategies, tws)
             combos = [(s, tw, seed) for s, tw in run_cfgs for seed in args.seeds]
@@ -630,7 +608,7 @@ def main():
 
             logger.info("=" * 60)
             logger.info(
-                "E17 — Model: %s — %d runs (%d configs x %d seeds)",
+                "E09 - Model: %s - %d runs (%d configs x %d seeds)",
                 model_name,
                 total,
                 len(run_cfgs),
@@ -707,7 +685,7 @@ def main():
 
         models = sorted(set(r.get("model", "unknown") for r in all_results))
         for model_name in models:
-            logger.info("\n%s\nE17 SUMMARY — %s\n%s", "=" * 80, model_name, "=" * 80)
+            logger.info("\n%s\nE09 SUMMARY - %s\n%s", "=" * 80, model_name, "=" * 80)
             logger.info(
                 "%-22s %6s %8s %10s %10s %10s %8s",
                 "Strategy",
@@ -722,7 +700,7 @@ def main():
             tws = (
                 list(args.cmaes_travel_weights)
                 if args.cmaes_travel_weights is not None
-                else _cmaes_travel_weights(model_name)
+                else list(E03_C_TRAVEL_WEIGHTS_DUKE)
             )
             run_cfgs = _build_run_configs(args.strategies, tws)
             for s, tw in run_cfgs:
@@ -738,7 +716,7 @@ def main():
                     logger.info(
                         "%-22s %6s %8.0f %10.2f %10.1f %10.1f %8.1f",
                         s,
-                        f"{tw}" if tw is not None else "—",
+                        f"{tw}" if tw is not None else "-",
                         np.mean([r["num_viewpoints"] for r in sr]),
                         np.mean([r["coverage"] * 100 for r in sr]),
                         np.mean([r["makespan"] for r in sr]),

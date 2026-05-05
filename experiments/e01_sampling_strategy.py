@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""E1: Sampling Strategy Comparison.
+"""E01: Sampling Strategy Comparison.
 
-Compares 3 strategies on Duke + TOSCA_REPRESENTATIVE × 3 seeds:
-  weighted             – SDF^2 uniform
-  weighted_curvature   – SDF^2 + curvature bias
-  cmaes_100            – 100% CMA-ES (k_coverage=3, popsize=40, maxiter=40,
-                         travel_weight=0.1 TOSCA / 0.0 Duke; e03 §2B)
+Compares 3 strategies on Duke + TOSCA_REPRESENTATIVE x 3 seeds:
+  weighted             - SDF^2 uniform
+  weighted_curvature   - SDF^2 + curvature bias
+  cmaes                - CMA-ES (k_coverage=3, popsize=40, maxiter=40,
+                         travel_weight=0.1 TOSCA / 0.0 Duke; e03 2A)
 
-The k_coverage and k×travel_weight sweeps live in e03; this experiment fixes the CMA-ES
-hyperparameters and asks how the three samplers compare. Targeted sampler excluded — it
+The k_coverage and k x travel_weight sweeps live in e03; this experiment fixes the CMA-ES
+hyperparameters and asks how the three samplers compare. Targeted sampler excluded - it
 does not outperform weighted_curvature (e03). Set-cover: LazyGreedySetCover (CPU, fastest per e06).
 
     conda run -n isaaclab python -m experiments.e01_sampling_strategy
@@ -61,10 +61,10 @@ except ImportError as _e:
     _RUNTIME_AVAILABLE = False
     _RUNTIME_IMPORT_ERROR = _e
 
-# Targeted sampler intentionally excluded: never outperforms weighted_curvature at k=1 (e03 §1).
-_E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes_100"]
+# Targeted sampler intentionally excluded: never outperforms weighted_curvature at k=1 (e03 1A).
+_E01_STRATEGIES = ["weighted", "weighted_curvature", "cmaes"]
 
-# Thesis-final CMA-ES configuration (e03 §2B).
+# Thesis-final CMA-ES configuration (e03 2A).
 _E01_K_COVERAGE = 3
 _E01_CMAES_POPSIZE = 40
 _E01_CMAES_MAXITER = 40
@@ -73,9 +73,9 @@ _E01_CMAES_TRAVEL_WEIGHT_TOSCA = 0.1
 
 
 def _strategy_kwargs(strategy: str, model_name: str) -> dict:
-    """``weighted`` / ``weighted_curvature`` are one-shot — kwargs ignored in dispatch's one-shot
-    branch. ``cmaes_100`` pins thesis-final hyperparameters; travel_weight per model group (e03 §2B)."""
-    if strategy == "cmaes_100":
+    """``weighted`` / ``weighted_curvature`` are one-shot - kwargs ignored in dispatch's one-shot
+    branch. ``cmaes`` pins thesis-final hyperparameters; travel_weight per model group (e03 2A)."""
+    if strategy == "cmaes":
         tw = (
             _E01_CMAES_TRAVEL_WEIGHT_DUKE
             if model_name == "duke_of_lancaster"
@@ -93,13 +93,16 @@ def _strategy_kwargs(strategy: str, model_name: str) -> dict:
 from experiments.common.persistence import load_run_result, save_run_result
 from experiments.common.plotting import (
     DOUBLE_COL,
-    display_strategy,
     grouped_bar,
     panel_title,
     save_figure,
     setup_thesis_style,
     stacked_bar,
 )
+
+
+def _short_strategy(name: str) -> str:
+    return name.replace("weighted_curvature", "w_curv")
 
 
 def _display_model(name: str) -> str:
@@ -219,7 +222,7 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
     if not mr:
         return
 
-    short_labels = [display_strategy(s).replace("weighted_curvature", "w_curv") for s in strategies]
+    short_labels = [_short_strategy(s) for s in strategies]
     models = sorted(set(r["model"] for r in mr))
     model_labels = [_display_model(m) for m in models]
 
@@ -233,7 +236,7 @@ def generate_plots_A(results: list[dict], strategies: list[str], fig_dir: str):
             vals = [r["num_viewpoints"] for r in mr if r["strategy"] == s and r["model"] == m]
             per_model_mean.append(float(np.mean(vals)) if vals else float("nan"))
             per_model_std.append(float(np.std(vals)) if len(vals) > 1 else 0.0)
-        label = display_strategy(s).replace("weighted_curvature", "w_curv")
+        label = _short_strategy(s)
         vp_data[label] = per_model_mean
         vp_err[label] = per_model_std
     grouped_bar(

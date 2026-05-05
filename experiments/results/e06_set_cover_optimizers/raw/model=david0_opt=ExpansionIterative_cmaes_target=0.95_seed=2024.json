@@ -1,0 +1,13 @@
+{
+  "model": "david0",
+  "optimizer": "ExpansionIterative_cmaes",
+  "input_strategy": "targeted",
+  "target_coverage": 0.95,
+  "seed": 2024,
+  "num_candidates": 500,
+  "num_viewpoints": 16,
+  "coverage": 0.96528,
+  "optimization_time": 7.279700161976507,
+  "redundancy": 1.416873812675476,
+  "section": "A"
+}

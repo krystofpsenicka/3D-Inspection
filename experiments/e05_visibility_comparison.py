@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E3: Visibility Method Comparison — gpu/cpu × raycast/epsilon across coverage targets.
+"""E05: Visibility Method Comparison - gpu/cpu x raycast/epsilon across coverage targets.
 
 All methods run on the same candidates per (model, target, seed). Set-cover: LazyGreedySetCover (CPU; isolates the visibility
 comparison). Actual coverage cross-validated against ground-truth gpu_raycast.
@@ -29,7 +29,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import (
-    E03_COVERAGE_TARGETS,
+    E05_COVERAGE_TARGETS,
     RESULTS_DIR,
     SEEDS_3,
     TOSCA_REPRESENTATIVE,
@@ -139,7 +139,7 @@ def _compute_iou_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float
 
 
 def _compute_f1_all_candidates(V_gt: np.ndarray, V_method: np.ndarray) -> float:
-    """Mean per-candidate F1 = 2·TP / (2·TP + FP + FN). F1 weights precision and recall equally —
+    """Mean per-candidate F1 = 2*TP / (2*TP + FP + FN). F1 weights precision and recall equally -
     the right choice because epsilon's failure mode is over-reporting (false positives inflate
     coverage downstream). When method and GT are both empty for a candidate, F1 = 1."""
     tp = (V_gt & V_method).sum(axis=1).astype(np.float32)
@@ -164,7 +164,7 @@ def run_all_methods(
     target_points, normals = ctx.sample_surface()
     set_seed(seed)
 
-    # targeted_50 candidates (consistent with e01/e02 default).
+    # weighted base + targeted refinement (50/50 split)
     sampler = ctx.build_sampler("targeted")
     num_cands = ctx.model.num_candidates
     n_base = num_cands // 2
@@ -217,7 +217,7 @@ def run_all_methods(
                     V_m_np = _cpu_batch(vis_cpu, pos_np, rot_np)
 
             else:
-                logger.warning("Unknown method %s — skipping", method)
+                logger.warning("Unknown method %s - skipping", method)
                 continue
 
         except Exception as e:
@@ -350,7 +350,7 @@ def _render_f1_table(
         for model in table_models:
             vals = by_model_method.get((model, method), [])
             if not vals:
-                row.append("—")
+                row.append("-")
             else:
                 m = float(np.mean(vals))
                 s = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
@@ -467,7 +467,7 @@ def generate_plots(
             timing_data,
             model_labels,
             ylabel="Visibility time (s)",
-            title="Visibility Timing — Cross-Model Comparison",
+            title="Visibility Timing - Cross-Model Comparison",
         )
         ax.set_xlabel("Model")
         ax.tick_params(axis="x", rotation=20)
@@ -478,7 +478,7 @@ def generate_plots(
 
 
 def main():
-    p = argparse.ArgumentParser(description="E3: Visibility Method Comparison")
+    p = argparse.ArgumentParser(description="E05: Visibility Method Comparison")
     p.add_argument(
         "--models",
         nargs="+",
@@ -490,7 +490,7 @@ def main():
         default=_ALL_METHODS,
         help="gpu_raycast gpu_epsilon cpu_raycast cpu_epsilon",
     )
-    p.add_argument("--targets", type=float, nargs="+", default=E03_COVERAGE_TARGETS)
+    p.add_argument("--targets", type=float, nargs="+", default=E05_COVERAGE_TARGETS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e05_visibility_comparison"))
     p.add_argument("--resume", action="store_true")

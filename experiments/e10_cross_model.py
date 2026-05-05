@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""E15: Cross-Model Generalization — full 8-stage pipeline on Duke + TOSCA_ALL.
+"""E10: Cross-Model Generalization - full 8-stage pipeline on Duke + TOSCA_ALL.
 
-Stages timed: mesh → surface → OG → sampling (weighted_curvature, e01) → visibility (GPU
-raycast, e03) → set cover (LazyGreedy CPU, e04) → VRP (cuOpt, K=5) → MAPF (0.5m).
+Stages timed: mesh -> surface -> OG -> sampling (weighted_curvature, e01) -> visibility (GPU
+raycast, e03) -> set cover (LazyGreedy CPU, e04) -> VRP (cuOpt, K=5) -> MAPF (0.5m).
 
     conda run -n isaaclab python -m experiments.e10_cross_model
     conda run -n isaaclab python -m experiments.e10_cross_model --plots_only
@@ -85,7 +85,7 @@ VRP_ALPHA = 0.5  # blend β: 0.5·makespan + 0.5·total_cost
 LB_SIDECAR_FIELDS = tuple(JOINT_LB_FIELDS) + tuple(ALL_LB_FIELDS)
 
 _IMPLEMENTATION_CHOICES = (
-    "Sampler: weighted_curvature (SDF² + curvature bias, e01)  |  "
+    "Sampler: weighted_curvature (SDF^2 + curvature bias, e01)  |  "
     "Visibility: GPU raycast (exact, e03)  |  "
     "Set cover: LazyGreedy CPU (O(log N) heap, fastest, e04)  |  "
     "VRP: cuOpt (near-optimal, e08)  |  "
@@ -102,7 +102,7 @@ try:
 
     _VRP_AVAILABLE = True
 except ImportError as _vrp_err:
-    logger.warning("VRP/MAPF stack not available (%s) — stages 7/8 will be skipped.", _vrp_err)
+    logger.warning("VRP/MAPF stack not available (%s) - stages 7/8 will be skipped.", _vrp_err)
     _VRP_AVAILABLE = False
     AUV_CRUISE_SPEED = 2.0
     SPACE_TIME_DWELL_S = 2.0
@@ -368,9 +368,9 @@ def generate_plots(results: list[dict], output_dir: str):
     model_labels = [_display_model(m) for m in models]
 
     # Three-bar timing breakdown per model:
-    #   Bar 1 — total pipeline time as a single segment
-    #   Bar 2 — 2-group stack (sampling-pipeline / routing)
-    #   Bar 3 — full 6-stage stack
+    #   Bar 1 - total pipeline time as a single segment
+    #   Bar 2 - 2-group stack (sampling-pipeline / routing)
+    #   Bar 3 - full 6-stage stack
     GROUP_DEFS = [
         (
             "Sampling pipeline",
@@ -403,7 +403,7 @@ def generate_plots(results: list[dict], output_dir: str):
         per_group = [sum(per_stage[k] for k in keys) for _, keys, _ in GROUP_DEFS]
         total = sum(per_group)
 
-        # Bar 1: total — single segment from log floor to total.
+        # Bar 1: total - single segment from log floor to total.
         if total > LOG_FLOOR:
             ax.bar(
                 xv[mi] - bar_w,
@@ -436,7 +436,7 @@ def generate_plots(results: list[dict], output_dir: str):
                 first = False
             cumulative = new_top
 
-        # Bar 3: full 8-stage stack — same colour families, finer slices.
+        # Bar 3: full 8-stage stack - same colour families, finer slices.
         cumulative = 0.0
         flat_idx = 0
         first = True
@@ -483,7 +483,7 @@ def generate_plots(results: list[dict], output_dir: str):
     ax.set_xticklabels(model_labels, rotation=35, ha="right")
     ax.set_ylabel("Time (s, log scale)")
     ax.set_title(
-        f"Pipeline Stage Timing — total / 3-group / 8-stage breakdown "
+        f"Pipeline Stage Timing - total / 3-group / 8-stage breakdown "
         f"(K={FLEET_SIZE} robots){subtitle}"
     )
 
@@ -615,7 +615,7 @@ def _makespan_gap_pct(r: dict) -> float | None:
 
 
 def main():
-    p = argparse.ArgumentParser(description="E15: Cross-Model Generalization")
+    p = argparse.ArgumentParser(description="E10: Cross-Model Generalization")
     p.add_argument("--models", nargs="+", default=ALL_MODELS)
     p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_3)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e10_cross_model"))
@@ -637,7 +637,7 @@ def main():
 
     logger.info("Implementation choices: %s", _IMPLEMENTATION_CHOICES)
     if not _VRP_AVAILABLE:
-        logger.warning("VRP/MAPF stack not available — stages 7/8 will be skipped")
+        logger.warning("VRP/MAPF stack not available - stages 7/8 will be skipped")
 
     raw_dir = os.path.join(args.output_dir, "raw")
     raw_lb_dir = os.path.join(args.output_dir, "raw_lb")
@@ -654,7 +654,7 @@ def main():
                 try:
                     model_configs.append(ModelConfig.tosca(name))
                 except FileNotFoundError:
-                    logger.warning("Model %s not found — skipping", name)
+                    logger.warning("Model %s not found - skipping", name)
 
         total = len(model_configs) * len(args.seeds)
         run_idx = 0
@@ -724,7 +724,7 @@ def main():
     if all_results:
         generate_plots(all_results, args.output_dir)
 
-        logger.info("\n%s\nE15 SUMMARY — %s\n%s", "=" * 80, _IMPLEMENTATION_CHOICES, "=" * 80)
+        logger.info("\n%s\nE10 SUMMARY - %s\n%s", "=" * 80, _IMPLEMENTATION_CHOICES, "=" * 80)
         logger.info(
             "%-20s %7s %6s %6s %7s %9s %9s %8s %8s",
             "Model",

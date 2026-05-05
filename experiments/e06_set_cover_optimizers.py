@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""E4: Set Cover Optimizer Comparison.
+"""E06: Set Cover Optimizer Comparison.
 
-Section A — fixed input strategy (weighted_curvature):
+Fixed input strategy (weighted_curvature):
   GreedySetCover, GreedySetCoverCuda, LazyGreedySetCover, ExpansionIterative_{weighted, weighted_curvature, cmaes}.
-
-Section B — input-strategy robustness: 10 sampling strategies × 4 key optimizers.
 
 Lower bound: greedy matching (anti-chain) + trivial info-theoretic + LP relaxation, computed
 once per (model, seed) on the weighted_curvature pool. See common/lower_bounds.py.
 
     conda run -n isaaclab python -m experiments.e06_set_cover_optimizers
-    conda run -n isaaclab python -m experiments.e06_set_cover_optimizers --section A
-    conda run -n isaaclab python -m experiments.e06_set_cover_optimizers --section B
     conda run -n isaaclab python -m experiments.e06_set_cover_optimizers --plots_only
 """
 
@@ -33,12 +29,9 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import (
-    E04_COVERAGE_TARGETS,
-    E04_INPUT_STRATEGIES,
-    E04_OPTIMIZERS_A,
-    E04_OPTIMIZERS_B,
+    E06_COVERAGE_TARGETS,
+    E06_OPTIMIZERS,
     RESULTS_DIR,
-    SEEDS_3,
     SEEDS_5,
     TOSCA_REPRESENTATIVE,
     ModelConfig,
@@ -164,8 +157,8 @@ def _make_optimizer(
 
 
 def _save_viz(opt_result, target_points, normals, viz_path, meta):
-    """``target_points`` / ``normals`` may be CuPy when called from the main pipeline — route
-    through ``cp.asnumpy`` rather than ``np.asarray`` (which would raise on implicit GPU→CPU copy)."""
+    """``target_points`` / ``normals`` may be CuPy when called from the main pipeline - route
+    through ``cp.asnumpy`` rather than ``np.asarray`` (which would raise on implicit GPU->CPU copy)."""
     data = {
         "positions": (
             opt_result.positions.get()
@@ -373,8 +366,8 @@ def _display_model(name: str) -> str:
     return "duke" if name == "duke_of_lancaster" else name
 
 
-def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[str], fig_dir: str):
-    mr = [r for r in results if r.get("section") == "A"]
+def generate_plots(results: list[dict], lower_bounds: dict, optimizers: list[str], fig_dir: str):
+    mr = list(results)
     if not mr:
         return
 
@@ -430,7 +423,7 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
             labels.append("LP LB")
             ax.legend(handles, labels)
             ax.set_xlabel("Target coverage")
-            save_figure(fig, os.path.join(fig_dir, f"{duke}_e06_A_viewpoints_vs_lb"))
+            save_figure(fig, os.path.join(fig_dir, f"{duke}_e06_viewpoints_vs_lb"))
 
     if models:
         target_95 = min(targets, key=lambda t: abs(t - 0.95))
@@ -449,7 +442,7 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
             vp_data,
             model_labels,
             ylabel="Selected viewpoints",
-            title=f"Viewpoints at {target_95 * 100:.0f}% — per model",
+            title=f"Viewpoints at {target_95 * 100:.0f}% - per model",
         )
         for i, md in enumerate(models):
             lb_seeds = lower_bounds.get((md, target_95), {}).get("best", [])
@@ -468,7 +461,7 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
         ax.legend(handles, labels)
         ax.set_xlabel("Model")
         ax.tick_params(axis="x", rotation=20)
-        save_figure(fig, os.path.join(fig_dir, "cross_model_e06_A_viewpoints_lb"))
+        save_figure(fig, os.path.join(fig_dir, "cross_model_e06_viewpoints_lb"))
 
         # Log y so fast solvers don't get squashed by Exp_cmaes (~100× slower).
         fig, ax = plt.subplots(figsize=(DOUBLE_COL, 4))
@@ -481,27 +474,23 @@ def generate_plots_A(results: list[dict], lower_bounds: dict, optimizers: list[s
             time_data,
             model_labels,
             ylabel="Optimization time (s, log scale)",
-            title=f"Optimizer Timing at {target_95 * 100:.0f}% — per model",
+            title=f"Optimizer Timing at {target_95 * 100:.0f}% - per model",
         )
         ax.set_yscale("log")
         ax.set_xlabel("Model")
         ax.tick_params(axis="x", rotation=20)
-        save_figure(fig, os.path.join(fig_dir, "cross_model_e06_A_timing"))
-        logger.info("Cross-model A figures saved (target=%.2f)", target_95)
+        save_figure(fig, os.path.join(fig_dir, "cross_model_e06_timing"))
+        logger.info("Cross-model figures saved (target=%.2f)", target_95)
 
-    logger.info("Section A figures saved to %s", fig_dir)
+    logger.info("Figures saved to %s", fig_dir)
 
 
 def main():
-    p = argparse.ArgumentParser(description="E4: Set Cover Optimizer Comparison")
-    p.add_argument("--section", choices=["A", "B", "both"], default="both")
+    p = argparse.ArgumentParser(description="E06: Set Cover Optimizer Comparison")
     p.add_argument("--models", nargs="+", default=["duke_of_lancaster"] + TOSCA_REPRESENTATIVE)
-    p.add_argument("--optimizers_A", nargs="+", default=E04_OPTIMIZERS_A)
-    p.add_argument("--optimizers_B", nargs="+", default=E04_OPTIMIZERS_B)
-    p.add_argument("--strategies_B", nargs="+", default=E04_INPUT_STRATEGIES)
-    p.add_argument("--targets", type=float, nargs="+", default=E04_COVERAGE_TARGETS)
-    p.add_argument("--seeds_A", type=int, nargs="+", default=SEEDS_5)
-    p.add_argument("--seeds_B", type=int, nargs="+", default=SEEDS_3)
+    p.add_argument("--optimizers", nargs="+", default=E06_OPTIMIZERS)
+    p.add_argument("--targets", type=float, nargs="+", default=E06_COVERAGE_TARGETS)
+    p.add_argument("--seeds", type=int, nargs="+", default=SEEDS_5)
     p.add_argument("--output_dir", default=os.path.join(RESULTS_DIR, "e06_set_cover_optimizers"))
     p.add_argument("--resume", action="store_true")
     p.add_argument("--plots_only", action="store_true")
@@ -539,12 +528,6 @@ def main():
     all_results: list[dict] = []
     lower_bounds: dict = {}
 
-    run_A = args.section in ("A", "both")
-
-    if args.lb_only:
-        # LB is computed inside Section A's candidate-gen loop — force it on.
-        run_A = True
-
     if not args.plots_only:
         for model_name in args.models:
             cfg = (
@@ -563,110 +546,106 @@ def main():
                 logger.warning("Skipping %s: degenerate normals", model_name)
                 continue
 
-            if run_A:
-                logger.info("--- Section A (weighted_curvature) ---")
-                for seed in args.seeds_A:
-                    # Try LB cache first so --lb_only --resume can skip candidate generation.
-                    lb_this = None
-                    if args.lb and args.resume:
-                        lb_this = _load_lb(raw_dir, model_name, seed, args.targets)
-                    if args.lb_only and lb_this is not None:
-                        logger.info("  seed=%d: LB loaded from cache", seed)
-                        _accumulate_lb(lower_bounds, model_name, lb_this)
-                        continue
+            for seed in args.seeds:
+                # Try LB cache first so --lb_only --resume can skip candidate generation.
+                lb_this = None
+                if args.lb and args.resume:
+                    lb_this = _load_lb(raw_dir, model_name, seed, args.targets)
+                if args.lb_only and lb_this is not None:
+                    logger.info("  seed=%d: LB loaded from cache", seed)
+                    _accumulate_lb(lower_bounds, model_name, lb_this)
+                    continue
 
-                    logger.info("  seed=%d: generating candidates (weighted_curvature)", seed)
-                    set_seed(seed)
-                    target_points, normals = ctx.sample_surface()
-                    vis_query = ctx.build_visibility_query("raycast")
+                logger.info("  seed=%d: generating candidates (weighted_curvature)", seed)
+                set_seed(seed)
+                target_points, normals = ctx.sample_surface()
+                vis_query = ctx.build_visibility_query("raycast")
 
-                    with timed() as t_cand:
-                        pos_gpu, rot_gpu, n_base, n_iter, _, _ = sample_strategy(
-                            ctx,
-                            "weighted_curvature",
-                            cfg.num_candidates,
-                            target_points,
-                            normals,
-                            vis_query,
-                            cfg,
+                with timed() as t_cand:
+                    pos_gpu, rot_gpu, n_base, n_iter, _, _ = sample_strategy(
+                        ctx,
+                        "weighted_curvature",
+                        cfg.num_candidates,
+                        target_points,
+                        normals,
+                        vis_query,
+                        cfg,
+                    )
+                V_gpu, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
+                V_np = cp.asnumpy(V_gpu)
+                num_points = int(len(target_points))
+                logger.info("  %d candidates (%.1fs)", len(pos_gpu), t_cand.elapsed)
+
+                if args.lb:
+                    if lb_this is None:
+                        logger.info("  Computing lower bounds...")
+                        with timed() as t_lb:
+                            lb_this = compute_lower_bounds(V_np, num_points, args.targets)
+                        logger.info("  Lower bounds computed in %.2fs", t_lb.elapsed)
+                        _save_lb(raw_dir, model_name, seed, num_points, lb_this)
+                    else:
+                        logger.info("  Lower bounds loaded from cache")
+                    _accumulate_lb(lower_bounds, model_name, lb_this)
+
+                if args.lb_only:
+                    continue
+
+                for opt_name in args.optimizers:
+                    for target in args.targets:
+                        rpath = os.path.join(
+                            raw_dir,
+                            f"model={model_name}_opt={opt_name}_target={target}_seed={seed}",
                         )
-                    V_gpu, _ = vis_query.compute_visibility_batch(pos_gpu, rot_gpu)
-                    V_np = cp.asnumpy(V_gpu)
-                    num_points = int(len(target_points))
-                    logger.info("  %d candidates (%.1fs)", len(pos_gpu), t_cand.elapsed)
+                        if args.resume and os.path.exists(rpath + ".json"):
+                            r = load_run_result(rpath)
+                            all_results.append(r)
+                            continue
 
-                    if args.lb:
-                        if lb_this is None:
-                            logger.info("  Computing lower bounds...")
-                            with timed() as t_lb:
-                                lb_this = compute_lower_bounds(V_np, num_points, args.targets)
-                            logger.info("  Lower bounds computed in %.2fs", t_lb.elapsed)
-                            _save_lb(raw_dir, model_name, seed, num_points, lb_this)
-                        else:
-                            logger.info("  Lower bounds loaded from cache")
-                        _accumulate_lb(lower_bounds, model_name, lb_this)
-
-                    if args.lb_only:
-                        continue
-
-                    for opt_name in args.optimizers_A:
-                        for target in args.targets:
-                            rpath = os.path.join(
-                                raw_dir,
-                                f"A_model={model_name}_opt={opt_name}_target={target}_seed={seed}",
+                        logger.info("  %s target=%.2f", opt_name, target)
+                        try:
+                            viz_path = None
+                            if (
+                                model_name == "duke_of_lancaster"
+                                and seed == args.seeds[0]
+                                and abs(target - 0.95) < 1e-6
+                            ):
+                                viz_dir = os.path.join(args.output_dir, "viz")
+                                os.makedirs(viz_dir, exist_ok=True)
+                                viz_path = os.path.join(
+                                    viz_dir, f"opt={opt_name}_target={target}_seed={seed}"
+                                )
+                            result = run_single(
+                                ctx,
+                                opt_name,
+                                "weighted_curvature",
+                                target,
+                                seed,
+                                pos_gpu,
+                                rot_gpu,
+                                V_gpu,
+                                V_np,
+                                num_points,
+                                viz_path=viz_path,
+                                target_points_viz=target_points,
+                                normals_viz=normals,
                             )
-                            if args.resume and os.path.exists(rpath + ".json"):
-                                r = load_run_result(rpath)
-                                r.setdefault("section", "A")
-                                all_results.append(r)
-                                continue
-
-                            logger.info("  [A] %s target=%.2f", opt_name, target)
-                            try:
-                                viz_path = None
-                                if (
-                                    model_name == "duke_of_lancaster"
-                                    and seed == SEEDS_3[0]
-                                    and abs(target - 0.95) < 1e-6
-                                ):
-                                    viz_dir = os.path.join(args.output_dir, "viz")
-                                    os.makedirs(viz_dir, exist_ok=True)
-                                    viz_path = os.path.join(
-                                        viz_dir, f"opt={opt_name}_target={target}_seed={seed}"
-                                    )
-                                result = run_single(
-                                    ctx,
-                                    opt_name,
-                                    "weighted_curvature",
-                                    target,
-                                    seed,
-                                    pos_gpu,
-                                    rot_gpu,
-                                    V_gpu,
-                                    V_np,
-                                    num_points,
-                                    viz_path=viz_path,
-                                    target_points_viz=target_points,
-                                    normals_viz=normals,
-                                )
-                                result["section"] = "A"
-                                all_results.append(result)
-                                save_run_result(result, rpath)
-                                logger.info(
-                                    "    VPs=%d cov=%.2f%% t=%.2fs",
-                                    result["num_viewpoints"],
-                                    result["coverage"] * 100,
-                                    result["optimization_time"],
-                                )
-                            except Exception as e:
-                                handle_row_exception(
-                                    e,
-                                    f"A model={model_name} opt={opt_name} "
-                                    f"target={target} seed={seed}",
-                                    resume=args.resume,
-                                )
-                            finally:
-                                free_gpu_memory()
+                            all_results.append(result)
+                            save_run_result(result, rpath)
+                            logger.info(
+                                "    VPs=%d cov=%.2f%% t=%.2fs",
+                                result["num_viewpoints"],
+                                result["coverage"] * 100,
+                                result["optimization_time"],
+                            )
+                        except Exception as e:
+                            handle_row_exception(
+                                e,
+                                f"model={model_name} opt={opt_name} "
+                                f"target={target} seed={seed}",
+                                resume=args.resume,
+                            )
+                        finally:
+                            free_gpu_memory()
 
     else:
         for fname in sorted(os.listdir(raw_dir)):
@@ -696,17 +675,13 @@ def main():
                     acc["lp"].append(int(r["lp"][i]) if has_lp else 0)
                     acc["K"].append(K)
             else:
-                if "section" not in r:
-                    r["section"] = "A" if fname.startswith("A_") else "B"
                 all_results.append(r)
 
     if all_results:
         setup_thesis_style()
         fig_dir = os.path.join(args.output_dir, "figures")
         os.makedirs(fig_dir, exist_ok=True)
-
-        if run_A:
-            generate_plots_A(all_results, lower_bounds, args.optimizers_A, fig_dir)
+        generate_plots(all_results, lower_bounds, args.optimizers, fig_dir)
 
 
 if __name__ == "__main__":

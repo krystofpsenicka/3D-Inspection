@@ -1,5 +1,5 @@
 {
-  "strategy": "targeted_100",
+  "strategy": "targeted",
   "model": "duke_of_lancaster",
   "seed": 42,
   "num_candidates": 1500,

@@ -1,0 +1,21 @@
+{
+  "model": "duke_of_lancaster",
+  "strategy": "cmaes",
+  "travel_weight": 0.1,
+  "seed": 123,
+  "n_base_candidates": 0,
+  "n_iterative_candidates": 1500,
+  "n_warmstart_fallbacks": 0,
+  "num_candidates": 32,
+  "num_viewpoints": 29,
+  "coverage": 0.17136,
+  "redundancy": 2.4286298751831055,
+  "makespan": 21.422096252441406,
+  "total_cost": 89.83893394470215,
+  "vrp_status": "success",
+  "t_sample": 92.03405737399589,
+  "t_vis": 0.0020504110725596547,
+  "t_opt": 0.023175462032668293,
+  "t_vrp": 143.88818709598854,
+  "t_total": 235.94747034308966
+}

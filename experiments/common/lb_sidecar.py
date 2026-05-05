@@ -117,7 +117,7 @@ def compute_all_lbs(
         and out["vrp_objective_lb_m"] > out[_CUOPT_FIELD] + 1e-6
     ):
         logger.info(
-            "Analytical LB (%.3f) beats cuOpt bound (%.3f) — cuOpt likely terminated very early.",
+            "Analytical LB (%.3f) beats cuOpt bound (%.3f) - cuOpt likely terminated very early.",
             out["vrp_objective_lb_m"], out[_CUOPT_FIELD],
         )
     return out

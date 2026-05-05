@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E04: Curvature Sensitivity — sweep ``curvature_knn_k`` × ``position_weight``.
+"""E04: Curvature Sensitivity - sweep ``curvature_knn_k`` x ``position_weight``.
 
   curvature_knn_k  {5, 10, 20, 40, 80}
   position_weight  {1.0, 2.5, 5.0, 10.0}

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""E03: Iterative Sampler Parameter Sweep — TOSCA (3 models) + Duke.
+"""E03: Iterative Sampler Parameter Sweep - TOSCA (3 models) + Duke.
 
-Candidate budget scales as ``cfg.num_candidates × k_coverage`` (TOSCA -> 500·k, Duke -> 1500·k).
+Candidate budget scales as ``cfg.num_candidates x k_coverage`` (TOSCA -> 500*k, Duke -> 1500*k).
 Set-cover cap: 1000 (TOSCA), 2000 (Duke). Set-cover: LazyGreedySetCover (CPU; fastest per e06).
 
-Section 1 — Targeted sampler:
-  Sub-B: spi sweep at k=4, fraction=100%. Confirms targeted does not improve over
+Section 1 - Targeted sampler:
+  Sub-A: spi sweep at k=4, fraction=100%. Confirms targeted does not improve over
   weighted_curvature.
 
-Section 2 — CMA-ES sampler (travel_weight is per-model-group):
-  Sub-B: k × travel_weight 2-D heatmap.
+Section 2 - CMA-ES sampler (travel_weight is per-model-group):
+  Sub-A: k x travel_weight 2-D heatmap.
          TOSCA tw: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]; Duke tw: [0.01, 0.02, 0.03, 0.06, 0.1].
-  Sub-C: popsize × maxiter heatmap at k=4, fraction=100%, tw fixed (TOSCA tw=0.1, Duke tw=0.0).
+  Sub-B: popsize x maxiter heatmap at k=4, fraction=100%, tw fixed (TOSCA tw=0.1, Duke tw=0.0).
 
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params
     conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --model_group tosca
@@ -86,13 +86,13 @@ except ImportError as _e:
 
 logger = logging.getLogger(__name__)
 
-_S1B_K = 4
-_S1B_FRACTION = 100
+_S1A_K = 4
+_S1A_FRACTION = 100
+_S2A_FRACTION = 100
+_S2B_K = 4
 _S2B_FRACTION = 100
-_S2C_K = 4
-_S2C_FRACTION = 100
-_S2C_TRAVEL_WEIGHT_TOSCA = 0.1
-_S2C_TRAVEL_WEIGHT_DUKE = 0.0
+_S2B_TRAVEL_WEIGHT_TOSCA = 0.1
+_S2B_TRAVEL_WEIGHT_DUKE = 0.0
 
 
 def _max_viewpoints_for(model) -> int:
@@ -103,11 +103,11 @@ def _is_duke(model) -> bool:
     return model.name == "duke_of_lancaster"
 
 
-def _s2c_travel_weight_for(model) -> float:
-    return _S2C_TRAVEL_WEIGHT_DUKE if _is_duke(model) else _S2C_TRAVEL_WEIGHT_TOSCA
+def _s2b_travel_weight_for(model) -> float:
+    return _S2B_TRAVEL_WEIGHT_DUKE if _is_duke(model) else _S2B_TRAVEL_WEIGHT_TOSCA
 
 
-def _s2b_travel_weights_for(model) -> list:
+def _s2a_travel_weights_for(model) -> list:
     return E03_C_TRAVEL_WEIGHTS_DUKE if _is_duke(model) else E03_C_TRAVEL_WEIGHTS_TOSCA
 
 
@@ -401,8 +401,8 @@ def _coverage_below_target_mask(
 def generate_plots_section1_combined(
     groups: list[tuple[str, str, list[dict]]], spi_values: list, fig_dir: str
 ) -> None:
-    """One combined Section 1B figure with Duke + TOSCA side-by-side. Drops coverage panel
-    (always ≥ target) and shows two metrics (selected viewpoints, sampling time) per group."""
+    """One combined Section 1A figure with Duke + TOSCA side-by-side. Drops coverage panel
+    (always >= target) and shows two metrics (selected viewpoints, sampling time) per group."""
     spi_labels = ["all-at-once" if s is None else str(s) for s in spi_values]
     metrics = [
         ("num_viewpoints", 1.0, "Selected viewpoints"),
@@ -412,23 +412,23 @@ def generate_plots_section1_combined(
         len(groups), len(metrics), figsize=(DOUBLE_COL, 3.4 * len(groups)), squeeze=False
     )
     for row, (_tag, label, results) in enumerate(groups):
-        r1B = [r for r in results if r.get("section") == "1B"]
-        if not r1B:
+        r1A = [r for r in results if r.get("section") == "1A"]
+        if not r1A:
             continue
         for col, (metric, mult, ylabel) in enumerate(metrics):
             ax = axes[row][col]
-            means = [_mean(r1B, metric, spi=s) * mult for s in spi_values]
-            stds = [_std(r1B, metric, spi=s) * mult for s in spi_values]
+            means = [_mean(r1A, metric, spi=s) * mult for s in spi_values]
+            stds = [_std(r1A, metric, spi=s) * mult for s in spi_values]
             colors = [
                 CATEGORICAL_COLORS[0] if s is None else CATEGORICAL_COLORS[2] for s in spi_values
             ]
             ax.bar(spi_labels, means, yerr=stds, color=colors, capsize=3, alpha=0.85)
             ax.set_ylabel(ylabel)
             ax.tick_params(axis="x", rotation=20)
-            panel_title(ax, f"{label} — {ylabel}")
+            panel_title(ax, f"{label} - {ylabel}")
     fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, "e03_combined_s1B_spi_sweep"))
-    logger.info("Section 1B combined figure saved.")
+    save_figure(fig, os.path.join(fig_dir, "e03_combined_s1A_spi_sweep"))
+    logger.info("Section 1A combined figure saved.")
 
 
 def generate_plots_section2_combined(
@@ -443,17 +443,17 @@ def generate_plots_section2_combined(
     can see where CMA-ES failed to meet the target."""
     fig, axes = plt.subplots(1, len(groups), figsize=(DOUBLE_COL, 3.5), squeeze=False)
     for col, (_tag, label, results) in enumerate(groups):
-        r2B = [r for r in results if r.get("section") == "2B"]
-        if not r2B:
+        r2A = [r for r in results if r.get("section") == "2A"]
+        if not r2A:
             continue
-        tws = sorted(set(r["travel_weight"] for r in r2B))
+        tws = sorted(set(r["travel_weight"] for r in r2A))
         below = _coverage_below_target_mask(
-            r2B, "k_coverage", k_values, "travel_weight", tws, target_coverage
+            r2A, "k_coverage", k_values, "travel_weight", tws, target_coverage
         )
         ax = axes[0][col]
         _heatmap_2d(
             ax,
-            r2B,
+            r2A,
             "k_coverage",
             k_values,
             "travel_weight",
@@ -468,21 +468,21 @@ def generate_plots_section2_combined(
         )
         panel_title(ax, label)
     fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, "e03_combined_s2B_k_tw_heatmap"))
-    logger.info("Section 2B combined figure saved.")
+    save_figure(fig, os.path.join(fig_dir, "e03_combined_s2A_k_tw_heatmap"))
+    logger.info("Section 2A combined figure saved.")
 
     fig, axes = plt.subplots(1, len(groups), figsize=(DOUBLE_COL, 3.5), squeeze=False)
     for col, (_tag, label, results) in enumerate(groups):
-        r2C = [r for r in results if r.get("section") == "2C"]
-        if not r2C:
+        r2B = [r for r in results if r.get("section") == "2B"]
+        if not r2B:
             continue
         below = _coverage_below_target_mask(
-            r2C, "popsize", popsize_values, "maxiter", maxiter_values, target_coverage
+            r2B, "popsize", popsize_values, "maxiter", maxiter_values, target_coverage
         )
         ax = axes[0][col]
         _heatmap_2d(
             ax,
-            r2C,
+            r2B,
             "popsize",
             popsize_values,
             "maxiter",
@@ -497,8 +497,8 @@ def generate_plots_section2_combined(
         )
         panel_title(ax, label)
     fig.tight_layout()
-    save_figure(fig, os.path.join(fig_dir, "e03_combined_s2C_popsize_maxiter"))
-    logger.info("Section 2C combined figure saved.")
+    save_figure(fig, os.path.join(fig_dir, "e03_combined_s2B_popsize_maxiter"))
+    logger.info("Section 2B combined figure saved.")
 
 
 def _add_derived(results: list[dict]) -> list[dict]:
@@ -572,7 +572,7 @@ def main():
         if run_s1:
             for cfg in cfgs:
                 logger.info("=" * 60)
-                logger.info("Section 1 — Targeted — Model: %s", cfg.name)
+                logger.info("Section 1 - Targeted - Model: %s", cfg.name)
                 try:
                     ctx = PipelineContext(cfg)
                     ctx.load_mesh()
@@ -582,22 +582,22 @@ def main():
                     logger.warning("Skipping %s: %s", cfg.name, e)
                     continue
 
-                # Sub-B: spi sweep at k=_S1B_K, fraction=_S1B_FRACTION
-                combos_1B = [(spi, seed) for spi in E03_T_SPI_VALUES for seed in args.seeds]
+                # Sub-A: spi sweep at k=_S1A_K, fraction=_S1A_FRACTION
+                combos_1A = [(spi, seed) for spi in E03_T_SPI_VALUES for seed in args.seeds]
                 logger.info(
-                    "  Sub-B: %d combos (spi sweep, k=%d frac=%d%%)",
-                    len(combos_1B),
-                    _S1B_K,
-                    _S1B_FRACTION,
+                    "  Sub-A: %d combos (spi sweep, k=%d frac=%d%%)",
+                    len(combos_1A),
+                    _S1A_K,
+                    _S1A_FRACTION,
                 )
-                for idx, (spi, seed) in enumerate(combos_1B, 1):
+                for idx, (spi, seed) in enumerate(combos_1A, 1):
                     spi_tag = "all" if spi is None else str(spi)
-                    rpath = os.path.join(raw_dir, f"1B_model={cfg.name}_spi={spi_tag}_seed={seed}")
+                    rpath = os.path.join(raw_dir, f"1A_model={cfg.name}_spi={spi_tag}_seed={seed}")
                     if args.skip_existing and os.path.exists(rpath + ".json"):
                         logger.info(
-                            "[1B %d/%d] SKIP %s spi=%s seed=%d",
+                            "[1A %d/%d] SKIP %s spi=%s seed=%d",
                             idx,
-                            len(combos_1B),
+                            len(combos_1A),
                             cfg.name,
                             spi_tag,
                             seed,
@@ -605,23 +605,23 @@ def main():
                         all_results.append(load_run_result(rpath))
                         continue
                     logger.info(
-                        "[1B %d/%d] model=%s k=%d frac=%d%% spi=%s seed=%d",
+                        "[1A %d/%d] model=%s k=%d frac=%d%% spi=%s seed=%d",
                         idx,
-                        len(combos_1B),
+                        len(combos_1A),
                         cfg.name,
-                        _S1B_K,
-                        _S1B_FRACTION,
+                        _S1A_K,
+                        _S1A_FRACTION,
                         spi_tag,
                         seed,
                     )
                     try:
                         result = run_single_targeted(
                             ctx,
-                            _S1B_K,
-                            _S1B_FRACTION,
+                            _S1A_K,
+                            _S1A_FRACTION,
                             spi=spi,
                             seed=seed,
-                            section_tag="1B",
+                            section_tag="1A",
                             target_coverage=args.target_coverage,
                         )
                         result = _add_derived([result])[0]
@@ -643,7 +643,7 @@ def main():
         if run_s2:
             for cfg in cfgs:
                 logger.info("=" * 60)
-                logger.info("Section 2 — CMA-ES — Model: %s", cfg.name)
+                logger.info("Section 2 - CMA-ES - Model: %s", cfg.name)
                 try:
                     ctx = PipelineContext(cfg)
                     ctx.load_mesh()
@@ -653,25 +653,25 @@ def main():
                     logger.warning("Skipping %s: %s", cfg.name, e)
                     continue
 
-                # Sub-B: joint k × travel_weight at fraction=_S2B_FRACTION
-                s2b_tws = _s2b_travel_weights_for(cfg)
-                combos_2B = [
-                    (k, tw, seed) for k in E03_C_K_VALUES for tw in s2b_tws for seed in args.seeds
+                # Sub-A: joint k x travel_weight at fraction=_S2A_FRACTION
+                s2a_tws = _s2a_travel_weights_for(cfg)
+                combos_2A = [
+                    (k, tw, seed) for k in E03_C_K_VALUES for tw in s2a_tws for seed in args.seeds
                 ]
                 logger.info(
-                    "  Sub-B: %d combos (k × travel_weight, k=%s, tw=%s, frac=%d%%)",
-                    len(combos_2B),
+                    "  Sub-A: %d combos (k x travel_weight, k=%s, tw=%s, frac=%d%%)",
+                    len(combos_2A),
                     E03_C_K_VALUES,
-                    s2b_tws,
-                    _S2B_FRACTION,
+                    s2a_tws,
+                    _S2A_FRACTION,
                 )
-                for idx, (k, tw, seed) in enumerate(combos_2B, 1):
-                    rpath = os.path.join(raw_dir, f"2B_model={cfg.name}_k={k}_tw={tw}_seed={seed}")
+                for idx, (k, tw, seed) in enumerate(combos_2A, 1):
+                    rpath = os.path.join(raw_dir, f"2A_model={cfg.name}_k={k}_tw={tw}_seed={seed}")
                     if args.skip_existing and os.path.exists(rpath + ".json"):
                         logger.info(
-                            "[2B %d/%d] SKIP %s k=%d tw=%s seed=%d",
+                            "[2A %d/%d] SKIP %s k=%d tw=%s seed=%d",
                             idx,
-                            len(combos_2B),
+                            len(combos_2A),
                             cfg.name,
                             k,
                             tw,
@@ -680,12 +680,12 @@ def main():
                         all_results.append(load_run_result(rpath))
                         continue
                     logger.info(
-                        "[2B %d/%d] model=%s k=%d frac=%d%% tw=%s seed=%d",
+                        "[2A %d/%d] model=%s k=%d frac=%d%% tw=%s seed=%d",
                         idx,
-                        len(combos_2B),
+                        len(combos_2A),
                         cfg.name,
                         k,
-                        _S2B_FRACTION,
+                        _S2A_FRACTION,
                         tw,
                         seed,
                     )
@@ -693,10 +693,10 @@ def main():
                         result = run_single_cmaes(
                             ctx,
                             k,
-                            _S2B_FRACTION,
+                            _S2A_FRACTION,
                             travel_weight=tw,
                             seed=seed,
-                            section_tag="2B",
+                            section_tag="2A",
                             target_coverage=args.target_coverage,
                         )
                         result = _add_derived([result])[0]
@@ -715,30 +715,30 @@ def main():
                     finally:
                         free_gpu_memory()
 
-                # Sub-C: popsize × maxiter at k=_S2C_K, fraction=_S2C_FRACTION; tw fixed per group
-                s2c_tw = _s2c_travel_weight_for(cfg)
-                combos_2C = [
+                # Sub-B: popsize x maxiter at k=_S2B_K, fraction=_S2B_FRACTION; tw fixed per group
+                s2b_tw = _s2b_travel_weight_for(cfg)
+                combos_2B = [
                     (pop, mi, seed)
                     for pop in E03_C_POPSIZE_VALUES
                     for mi in E03_C_MAXITER_VALUES
                     for seed in args.seeds
                 ]
                 logger.info(
-                    "  Sub-C: %d combos (popsize × maxiter, k=%d frac=%d%% tw=%.2f)",
-                    len(combos_2C),
-                    _S2C_K,
-                    _S2C_FRACTION,
-                    s2c_tw,
+                    "  Sub-B: %d combos (popsize x maxiter, k=%d frac=%d%% tw=%.2f)",
+                    len(combos_2B),
+                    _S2B_K,
+                    _S2B_FRACTION,
+                    s2b_tw,
                 )
-                for idx, (pop, mi, seed) in enumerate(combos_2C, 1):
+                for idx, (pop, mi, seed) in enumerate(combos_2B, 1):
                     rpath = os.path.join(
-                        raw_dir, f"2C_model={cfg.name}_pop={pop}_mi={mi}_seed={seed}"
+                        raw_dir, f"2B_model={cfg.name}_pop={pop}_mi={mi}_seed={seed}"
                     )
                     if args.skip_existing and os.path.exists(rpath + ".json"):
                         logger.info(
-                            "[2C %d/%d] SKIP %s pop=%d mi=%d seed=%d",
+                            "[2B %d/%d] SKIP %s pop=%d mi=%d seed=%d",
                             idx,
-                            len(combos_2C),
+                            len(combos_2B),
                             cfg.name,
                             pop,
                             mi,
@@ -747,13 +747,13 @@ def main():
                         all_results.append(load_run_result(rpath))
                         continue
                     logger.info(
-                        "[2C %d/%d] model=%s k=%d frac=%d%% tw=%.2f pop=%d mi=%d seed=%d",
+                        "[2B %d/%d] model=%s k=%d frac=%d%% tw=%.2f pop=%d mi=%d seed=%d",
                         idx,
-                        len(combos_2C),
+                        len(combos_2B),
                         cfg.name,
-                        _S2C_K,
-                        _S2C_FRACTION,
-                        s2c_tw,
+                        _S2B_K,
+                        _S2B_FRACTION,
+                        s2b_tw,
                         pop,
                         mi,
                         seed,
@@ -761,11 +761,11 @@ def main():
                     try:
                         result = run_single_cmaes(
                             ctx,
-                            _S2C_K,
-                            _S2C_FRACTION,
-                            travel_weight=s2c_tw,
+                            _S2B_K,
+                            _S2B_FRACTION,
+                            travel_weight=s2b_tw,
                             seed=seed,
-                            section_tag="2C",
+                            section_tag="2B",
                             target_coverage=args.target_coverage,
                             popsize=pop,
                             maxiter=mi,
@@ -822,20 +822,20 @@ def main():
             if not group_results:
                 continue
 
-            r2B = [r for r in group_results if r.get("section") == "2B"]
+            r2A = [r for r in group_results if r.get("section") == "2A"]
             logger.info(
-                "\n%s\nE03 SECTION 2B SUMMARY — %s (CMA-ES: k × travel_weight, frac=100%%)\n%s",
+                "\n%s\nE03 SECTION 2A SUMMARY - %s (CMA-ES: k x travel_weight, frac=100%%)\n%s",
                 "=" * 80,
                 label,
                 "=" * 80,
             )
-            if r2B:
-                tws = sorted(set(r["travel_weight"] for r in r2B))
+            if r2A:
+                tws = sorted(set(r["travel_weight"] for r in r2A))
                 logger.info("%-4s %-6s %8s %10s %10s", "k", "tw", "VPs", "Coverage%", "Time(s)")
                 logger.info("-" * 50)
                 for k in E03_C_K_VALUES:
                     for tw in tws:
-                        rows = [r for r in r2B if r["k_coverage"] == k and r["travel_weight"] == tw]
+                        rows = [r for r in r2A if r["k_coverage"] == k and r["travel_weight"] == tw]
                         if rows:
                             logger.info(
                                 "%-4d %-6.3f %8.0f %10.2f %10.1f",
@@ -846,21 +846,21 @@ def main():
                                 np.mean([r["total_time"] for r in rows]),
                             )
 
-            r2C = [r for r in group_results if r.get("section") == "2C"]
-            s2c_tw = r2C[0]["travel_weight"] if r2C else None
+            r2B = [r for r in group_results if r.get("section") == "2B"]
+            s2b_tw = r2B[0]["travel_weight"] if r2B else None
             logger.info(
-                "\n%s\nE03 SECTION 2C SUMMARY — %s (CMA-ES: popsize × maxiter, tw=%s)\n%s",
+                "\n%s\nE03 SECTION 2B SUMMARY - %s (CMA-ES: popsize x maxiter, tw=%s)\n%s",
                 "=" * 80,
                 label,
-                s2c_tw,
+                s2b_tw,
                 "=" * 80,
             )
-            if r2C:
+            if r2B:
                 logger.info("%-8s %-8s %8s %10s %10s", "pop", "mi", "VPs", "Coverage%", "Time(s)")
                 logger.info("-" * 50)
                 for pop in E03_C_POPSIZE_VALUES:
                     for mi in E03_C_MAXITER_VALUES:
-                        rows = [r for r in r2C if r["popsize"] == pop and r["maxiter"] == mi]
+                        rows = [r for r in r2B if r["popsize"] == pop and r["maxiter"] == mi]
                         if rows:
                             logger.info(
                                 "%-8d %-8d %8.0f %10.2f %10.1f",
