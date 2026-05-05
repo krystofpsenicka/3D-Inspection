@@ -1,8 +1,4 @@
-"""Render the dataset figures referenced by Bachelor-Thesis/chap03.tex § 3.3.
-
-Outputs:
-  Bachelor-Thesis/img/datasets/duke_of_lancaster.png
-  Bachelor-Thesis/img/datasets/tosca_samples.png
+"""Render the dataset figures
 
   conda run -n isaaclab python 3D-Inspection/scripts/generate_dataset_figures.py
 """
@@ -21,14 +17,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("dataset_figures")
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-INSPECTION_ROOT = REPO_ROOT / "3D-Inspection"
-THESIS_IMG = REPO_ROOT / "Bachelor-Thesis" / "img" / "datasets"
+INSPECTION_ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = INSPECTION_ROOT / "models"
 
 DUKE_GLB = INSPECTION_ROOT / "models" / "duke_of_lancaster_uk_clipped.glb"
 TOSCA_DIR = INSPECTION_ROOT / "models" / "TOSCA-dataset"
 
-DUKE_TARGET_LENGTH = 50.0  # matches pipeline-time scaling per thesis chap03 § "Test Environment"
+DUKE_TARGET_LENGTH = 50.0  # matches pipeline-time scaling
 
 
 def _trimesh_to_o3d(mesh: trimesh.Trimesh) -> o3d.geometry.TriangleMesh:
@@ -153,12 +148,12 @@ def render_duke(out_path: Path) -> None:
     log.info("Saved %s (%dx%d)", out_path, pil.width, pil.height)
 
 
-# Six TOSCA classes, lowest-index pose available.
+# Six TOSCA classes
 TOSCA_PICKS: list[tuple[str, str]] = [
     ("cat0", "Cat"),
     ("centaur0", "Centaur"),
     ("david0", "David"),
-    ("gorilla1", "Gorilla"),  # gorilla0.off is not present in the dataset
+    ("gorilla1", "Gorilla"),
     ("horse0", "Horse"),
     ("michael0", "Michael"),
 ]
@@ -228,9 +223,9 @@ def render_tosca(out_path: Path) -> None:
 
 
 def main() -> None:
-    THESIS_IMG.mkdir(parents=True, exist_ok=True)
-    render_duke(THESIS_IMG / "duke_of_lancaster.png")
-    render_tosca(THESIS_IMG / "tosca_samples.png")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    render_duke(OUTPUT_DIR / "duke_of_lancaster.png")
+    render_tosca(OUTPUT_DIR / "tosca_samples.png")
     log.info("Done.")
 
 

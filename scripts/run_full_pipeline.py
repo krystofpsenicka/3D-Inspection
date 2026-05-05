@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--solver", choices=["cuopt", "highs"], default="cuopt")
     p.add_argument("--alpha", type=float, default=0.5, help="1.0=makespan, 0.0=total distance.")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--curvature_weighting", action="store_true", help="Bias sampling toward complex regions.")
+    p.add_argument("--curvature_weighting", action="store_true", default=True, help="Bias sampling toward complex regions.")
     p.add_argument(
         "--resample_fraction",
         type=float,
@@ -235,7 +235,6 @@ def main() -> None:
         frustum_params=frustum_params,
     )
 
-    # [5/9] Greedy set cover (with optional resampling)
     if args.resample_fraction > 0:
         n_targeted = int(args.num_candidates * args.resample_fraction)
         n_uniform = args.num_candidates - n_targeted
