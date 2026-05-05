@@ -1,8 +1,0 @@
-{
-  "strategy": "cmaes",
-  "model": "duke_of_lancaster",
-  "seed": 42,
-  "num_candidates": 381,
-  "num_viewpoints": 276,
-  "coverage": 0.84877
-}
