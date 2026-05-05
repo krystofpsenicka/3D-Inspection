@@ -4,9 +4,9 @@
 Stages timed: mesh -> surface -> OG -> sampling (weighted_curvature, e01) -> visibility (GPU
 raycast, e03) -> set cover (LazyGreedy CPU, e04) -> VRP (cuOpt, K=5) -> MAPF (0.5m).
 
-    conda run -n isaaclab python -m experiments.e10_cross_model
-    conda run -n isaaclab python -m experiments.e10_cross_model --plots_only
-    conda run -n isaaclab python -m experiments.e10_cross_model --models duke_of_lancaster wolf0
+    python -m experiments.e10_cross_model
+    python -m experiments.e10_cross_model --plots_only
+    python -m experiments.e10_cross_model --models duke_of_lancaster wolf0
 """
 
 from __future__ import annotations

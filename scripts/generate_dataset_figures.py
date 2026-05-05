@@ -1,6 +1,6 @@
 """Render the dataset figures
 
-  conda run -n isaaclab python 3D-Inspection/scripts/generate_dataset_figures.py
+  python 3D-Inspection/scripts/generate_dataset_figures.py
 """
 
 from __future__ import annotations

@@ -10,8 +10,8 @@ Strategies:
   targeted             - targeted toward uncovered (iterative)
   cmaes                - CMA-ES optimised (iterative)
 
-    conda run -n isaaclab python -m experiments.e02_candidate_scaling
-    conda run -n isaaclab python -m experiments.e02_candidate_scaling --plots_only
+    python -m experiments.e02_candidate_scaling
+    python -m experiments.e02_candidate_scaling --plots_only
 """
 
 from __future__ import annotations

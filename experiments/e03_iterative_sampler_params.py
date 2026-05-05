@@ -13,12 +13,12 @@ Section 2 - CMA-ES sampler (travel_weight is per-model-group):
          TOSCA tw: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]; Duke tw: [0.01, 0.02, 0.03, 0.06, 0.1].
   Sub-B: popsize x maxiter heatmap at k=4, fraction=100%, tw fixed (TOSCA tw=0.1, Duke tw=0.0).
 
-    conda run -n isaaclab python -m experiments.e03_iterative_sampler_params
-    conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --model_group tosca
-    conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --model_group duke
-    conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --section 1
-    conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --models wolf0 duke_of_lancaster
-    conda run -n isaaclab python -m experiments.e03_iterative_sampler_params --plots_only
+    python -m experiments.e03_iterative_sampler_params
+    python -m experiments.e03_iterative_sampler_params --model_group tosca
+    python -m experiments.e03_iterative_sampler_params --model_group duke
+    python -m experiments.e03_iterative_sampler_params --section 1
+    python -m experiments.e03_iterative_sampler_params --models wolf0 duke_of_lancaster
+    python -m experiments.e03_iterative_sampler_params --plots_only
 """
 
 from __future__ import annotations

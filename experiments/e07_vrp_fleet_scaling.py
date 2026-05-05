@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """E07: VRP Fleet Scaling - sweep fleet sizes (<=10) x waypoint counts x seeds with LBs.
 
-    conda run -n isaaclab python -m experiments.e07_vrp_fleet_scaling
-    conda run -n isaaclab python -m experiments.e07_vrp_fleet_scaling --fleet_sizes 1 2 3 --waypoint_counts 10 20
+    python -m experiments.e07_vrp_fleet_scaling
+    python -m experiments.e07_vrp_fleet_scaling --fleet_sizes 1 2 3 --waypoint_counts 10 20
 """
 
 from __future__ import annotations

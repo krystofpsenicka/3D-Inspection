@@ -5,8 +5,8 @@
   position_weight  {1.0, 2.5, 5.0, 10.0}
   3 seeds; per combo: sample with curvature weighting -> visibility -> set cover.
 
-    conda run -n isaaclab python -m experiments.e04_curvature_sensitivity
-    conda run -n isaaclab python -m experiments.e04_curvature_sensitivity --plots_only
+    python -m experiments.e04_curvature_sensitivity
+    python -m experiments.e04_curvature_sensitivity --plots_only
 """
 
 from __future__ import annotations

@@ -5,9 +5,9 @@ Strategies: weighted, weighted_curvature, targeted (spi=100, k=3), cmaes (popsiz
 maxiter=40, k=3). CMA-ES travel_weight sweep over E03_C_TRAVEL_WEIGHTS_DUKE.
 Model: Duke. Fixed: 5 robots, 1500 candidates, 0.95 target coverage, 3 seeds.
 
-    conda run -n isaaclab python -m experiments.e09_sampler_routing_impact
-    conda run -n isaaclab python -m experiments.e09_sampler_routing_impact --plots_only
-    conda run -n isaaclab python -m experiments.e09_sampler_routing_impact --resume
+    python -m experiments.e09_sampler_routing_impact
+    python -m experiments.e09_sampler_routing_impact --plots_only
+    python -m experiments.e09_sampler_routing_impact --resume
 """
 
 from __future__ import annotations

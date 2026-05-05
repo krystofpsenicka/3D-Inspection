@@ -7,8 +7,8 @@ Fixed input strategy (weighted_curvature):
 Lower bound: greedy matching (anti-chain) + trivial info-theoretic + LP relaxation, computed
 once per (model, seed) on the weighted_curvature pool. See common/lower_bounds.py.
 
-    conda run -n isaaclab python -m experiments.e06_set_cover_optimizers
-    conda run -n isaaclab python -m experiments.e06_set_cover_optimizers --plots_only
+    python -m experiments.e06_set_cover_optimizers
+    python -m experiments.e06_set_cover_optimizers --plots_only
 """
 
 from __future__ import annotations

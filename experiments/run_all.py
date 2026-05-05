@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Master runner for all experiments.
 
-    conda run -n isaaclab python -m experiments.run_all
-    conda run -n isaaclab python -m experiments.run_all --experiments e01 e06 e07
-    conda run -n isaaclab python -m experiments.run_all --skip e10
-    conda run -n isaaclab python -m experiments.run_all --list
+    python -m experiments.run_all
+    python -m experiments.run_all --experiments e01 e06 e07
+    python -m experiments.run_all --skip e10
+    python -m experiments.run_all --list
 
 """
 

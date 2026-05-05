@@ -1,5 +1,7 @@
 ### Review
 
-- remove all conda run -n isaaclab, just keep python -m
+- add the isaac_duke in the headline of README.md
 
-- Visualization review
+- docs
+
+- visualization_isaac

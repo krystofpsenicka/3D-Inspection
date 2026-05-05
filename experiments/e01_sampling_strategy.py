@@ -11,8 +11,8 @@ The k_coverage and k x travel_weight sweeps live in e03; this experiment fixes t
 hyperparameters and asks how the three samplers compare. Targeted sampler excluded - it
 does not outperform weighted_curvature (e03). Set-cover: LazyGreedySetCover (CPU, fastest per e06).
 
-    conda run -n isaaclab python -m experiments.e01_sampling_strategy
-    conda run -n isaaclab python -m experiments.e01_sampling_strategy --plots_only
+    python -m experiments.e01_sampling_strategy
+    python -m experiments.e01_sampling_strategy --plots_only
 """
 
 from __future__ import annotations

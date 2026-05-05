@@ -5,9 +5,9 @@ All methods run on the same candidates per (model, target, seed). Set-cover: Laz
 comparison). Actual coverage cross-validated against ground-truth gpu_raycast.
 
 
-    conda run -n isaaclab python -m experiments.e05_visibility_comparison
-    conda run -n isaaclab python -m experiments.e05_visibility_comparison --plots_only
-    conda run -n isaaclab python -m experiments.e05_visibility_comparison --methods gpu_raycast gpu_epsilon
+    python -m experiments.e05_visibility_comparison
+    python -m experiments.e05_visibility_comparison --plots_only
+    python -m experiments.e05_visibility_comparison --methods gpu_raycast gpu_epsilon
 """
 
 from __future__ import annotations

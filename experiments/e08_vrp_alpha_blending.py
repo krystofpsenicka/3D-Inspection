@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """E08: VRP Alpha Blending - sweep alpha (makespan vs. total-distance weighting), measure tradeoff.
 
-    conda run -n isaaclab python -m experiments.e08_vrp_alpha_blending
+    python -m experiments.e08_vrp_alpha_blending
 """
 
 from __future__ import annotations

@@ -7,8 +7,8 @@ counterfactual) -> count pairwise collision events via ``find_trajectory_collisi
 Reports per fleet size: mean collision events, events per robot-pair, fraction of pairs with at
 least one event, fraction of fleets with at least one event. Output: ``results/mapf_conflict_density.csv``.
 
-    conda run -n isaaclab python -m scripts.measure_mapf_conflict_density
-    conda run -n isaaclab python -m scripts.measure_mapf_conflict_density \\
+    python -m scripts.measure_mapf_conflict_density
+    python -m scripts.measure_mapf_conflict_density \\
         --fleet_sizes 2 3 4 5 6 7 8 9 10 --n_waypoints 100 --seeds 1 2 3
 """
 
