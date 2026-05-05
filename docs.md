@@ -50,17 +50,16 @@ mesh (.glb)
 
 | Path | Purpose |
 |------|---------|
-| `VRP/` | VRP MIP, MAPF, occupancy-grid Dijkstra |
+| `VRP/` | VRP MIP, MAPF, occupancy-grid A* |
 | `visibility/` | Viewpoint generation, visibility queries, set cover |
 | `shared/` | Mesh, surface sampling, occupancy grid, geometry |
 | `visualization_isaac/` | Isaac Sim wrapper + per-phase visualisers + replay |
 | `scripts/` | Entry points |
-| `tests/` | pytest unit tests (18 files) |
+| `tests/` | pytest unit tests |
 | `experiments/` | `e01..e10` parametric studies (thesis figures) |
-| `models/` | Default mesh + optional TOSCA |
+| `models/` | Default ship mesh + TOSCA |
 | `assets/` | Optional BROV USD |
 | `outputs/` | Pipeline artefacts |
-| `Bachelor-Thesis/` | LaTeX sources, figures, primary-source PDFs |
 
 ---
 

@@ -42,7 +42,6 @@ isaac = [
     # IsaacSim + IsaacLab — install with:
     #   pip install "isaacsim[all]==5.0.0.0" isaaclab==2.2.0 --extra-index-url https://pypi.nvidia.com
     "isaacsim==5.0.0.0",
-    "isaaclab==2.2.0",
 ]
 test = ["pytest>=7.0"]
 

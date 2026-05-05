@@ -1,7 +1,5 @@
 ### Review
 
-- README.md
-
 - scripts review: generate_dataset_figures, measure_mapf_conflict_density
 
 - Visualization review

@@ -18,7 +18,7 @@ OptiX is gated behind a free NVIDIA developer account (<https://developer.nvidia
 
 ## Setup
 
-One conda env, all steps:
+One conda env:
 
 ```bash
 conda create -n inspection python=3.11 -y
@@ -28,8 +28,8 @@ conda activate inspection
 pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 \
     --index-url https://download.pytorch.org/whl/cu128
 
-# IsaacSim 5.0 + IsaacLab 2.2 (~12.6 GB)
-pip install "isaacsim[all]==5.0.0.0" isaaclab==2.2.0 \
+# IsaacSim 5.0 (~12 GB)
+pip install "isaacsim[all]==5.0.0.0" \
     --extra-index-url https://pypi.nvidia.com
 
 # RAPIDS pinned to 26.2 (26.4 ships numba 0.64 which conflicts with isaacsim-core's numba==0.59.1).
@@ -45,7 +45,7 @@ pip install -e .          # add [test] for pytest
 
 ## External assets
 
-- **Mesh:** default `models/duke_of_lancaster_uk_clipped.glb` (loaded by `VRP/core/constants.py:MESH_PATH`, rescaled to 50 m via `--mesh_target_length`). Drop other `.glb`/`.obj`/`.stl` into `models/` to swap. Optional TOSCA dataset: `models/TOSCA-dataset/`.
+- **Mesh:** default `models/duke_of_lancaster_uk_clipped.glb` (loaded by `VRP/core/constants.py:MESH_PATH`, rescaled to 50 m via `--mesh_target_length`). Drop other `.glb`/`.obj`/`.stl` into `models/` to swap. TOSCA dataset: `models/TOSCA-dataset/` — Bronstein, Bronstein & Kimmel, *Numerical Geometry of Non-Rigid Shapes*, Springer, 2009 (<https://doi.org/10.1007/978-0-387-73301-2>).
 - **BROV USD** (optional, replay only, ~345 MB): `assets/robot/brov/BROV_high.usd`. Without it, `--use-brov-usd` falls back to cuboids. Source: NVIDIA's OceanSim README (<https://github.com/umfieldrobotics/OceanSim>).
 
 ## Quickstart
@@ -54,7 +54,6 @@ pip install -e .          # add [test] for pytest
 conda activate inspection
 
 python scripts/run_full_pipeline.py --solver cuopt    # writes outputs/full_pipeline/
-python scripts/run_full_pipeline.py --solver highs    # CPU fallback (HiGHS)
 
 # Isaac Sim replay. Keys: N/→ next, P/← prev, Q/Esc quit.
 python scripts/visualize_full_pipeline.py outputs/full_pipeline
@@ -67,10 +66,9 @@ Full CLI reference: *Scripts* section of [`docs.md`](docs.md).
 ## Documentation
 
 - [`docs.md`](docs.md) — architecture, layout, full module reference, constants, CLI flags, experiment/test indices.
-- [`VRP/docs/README.md`](VRP/docs/README.md) — RAPIDS GPU stack deep-dive.
 
 ## Use of AI tools
 
-Developed as part of a Bachelor thesis at MFF UK (Charles University). Per Article 4 of Dean's Directive 26/2023: I used **Claude Code** (Anthropic's coding assistant, primarily Claude Opus 4 family) throughout this codebase — visibility kernels, routing/MIP layer, MAPF stage, Isaac Sim integration, experiments under `e00`–`e16`. Work was driven by detailed specifications I authored, refined, and reviewed line by line; AI output was never accepted unmodified.
+Developed as part of a Bachelor thesis at MFF UK (Charles University). Per Article 4 of Dean's Directive 26/2023: I used **Claude Code** (Anthropic's coding assistant, primarily Claude Opus 4 family) throughout this codebase. Work was driven by detailed specifications I authored, refined, and reviewed line by line; AI output was never accepted unmodified.
 
-Algorithmic contributions claimed in the thesis (GPU batch adaptation of Lien's ε-visibility, β-aware per-vehicle tour upper bound with forbidden-pair cuts, 4D space-time extension of Zhou & Zeng's GPU parallel-frontier A*) are my own designs; AI was an implementation aid. Detailed disclosure including thesis text and literature review: thesis Preface "Use of AI tools".
+Algorithmic contributions claimed in the thesis (GPU batch adaptation of Lien's ε-visibility, β-aware per-vehicle tour upper bound with forbidden-pair cuts, 4D space-time extension of Zhou & Zeng's GPU parallel-frontier A*) are my own designs; AI was an implementation aid. Detailed disclosure in thesis Preface "Use of AI tools".
