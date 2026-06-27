@@ -57,9 +57,12 @@ from frustum_gt import build_camera_frame, points_inside_frustum, compute_ground
 GAMMA_EXPS = [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]
 GAMMA_SWEEP = [-math.exp(-e) for e in GAMMA_EXPS]
 DEF_GAMMA = -math.exp(-7.0)
+# Higher sharpness -> sharper frustum boundary -> higher F1 (approaches the hard
+# cull), but steeper sigmoids = smaller gradient basins for downstream viewpoint
+# optimisation (Stage 2). 50 is a deliberate accuracy/optimizability compromise.
 DEF_SHARPNESS = 50.0
 DEF_K = 10
-DEF_THRESH = 0.6
+DEF_THRESH = 0.5
 
 # One-at-a-time sweep grids (each varies one param, others held at default).
 SHARPNESS_SWEEP = [10.0, 20.0, 50.0, 100.0, 200.0]
