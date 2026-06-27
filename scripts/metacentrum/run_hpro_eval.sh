@@ -20,11 +20,12 @@ set -euo pipefail
 MESH_DIR="${MESH_DIR:-hpro}"
 NUM_POSES="${NUM_POSES:-20}"
 NUM_POINTS="${NUM_POINTS:-10000}"
+CONDA_ENV="${CONDA_ENV:-inspection}"   # override: qsub -v CONDA_ENV=hpro ...
 
 # ── Modules ──────────────────────────────────────────────────────────
 module load cuda/cuda-12.6.3-gcc
 module load mambaforge
-conda activate inspection
+conda activate "${CONDA_ENV}"
 
 # ── Copy repo to fast scratch ────────────────────────────────────────
 REPO_DIR="${PBS_O_WORKDIR}"
