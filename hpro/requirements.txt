@@ -3,3 +3,10 @@ matplotlib
 scipy
 rtree
 trimesh
+# torch is required (CPU build is enough for the operator + smoke test):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch
+# Optional but strongly recommended for the evaluation harness: Embree BVH
+# raycasting backend (trimesh auto-detects it), ~100-1000x faster ground-truth
+# occlusion than the pure-Python ray_triangle fallback.
+embreex

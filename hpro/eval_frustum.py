@@ -43,7 +43,7 @@ import trimesh                   # noqa: E402
 
 from HPRO import HPRO                       # noqa: E402
 from HPRO_limited import HPRO_limited       # noqa: E402
-from frustum_gt import build_camera_frame, points_inside_frustum, compute_ground_truth  # noqa: E402
+from frustum_gt import build_camera_frame, points_inside_frustum, compute_ground_truth_batched  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -80,16 +80,24 @@ CSV_FIELDS = [
 # Mesh / pose helpers
 # ---------------------------------------------------------------------------
 
-def load_meshes(mesh_dir):
-    """Load and unit-normalise every mesh under ``mesh_dir`` (or a single file)."""
+def load_meshes(mesh_dir, max_meshes=0, seed=0):
+    """Load and unit-normalise meshes under ``mesh_dir`` (or a single file).
+
+    If ``max_meshes > 0`` and more are found, a deterministic random subset of
+    that size is selected (for tuning on a manageable slice of a large set).
+    """
     if os.path.isfile(mesh_dir):
         paths = [mesh_dir]
     else:
         paths = []
-        for ext in ("*.off", "*.obj", "*.ply", "*.stl"):
+        for ext in ("*.off", "*.obj", "*.ply", "*.stl", "*.glb"):
             paths.extend(sorted(glob.glob(os.path.join(mesh_dir, ext))))
     if not paths:
         raise FileNotFoundError(f"No meshes found under {mesh_dir!r}")
+
+    if max_meshes and len(paths) > max_meshes:
+        rng = np.random.default_rng(seed)
+        paths = sorted(rng.choice(paths, size=max_meshes, replace=False).tolist())
 
     meshes = []
     for p in paths:
@@ -277,6 +285,8 @@ def main():
                          "(default: hpro/ -> bundled lamp_0001.off).")
     ap.add_argument("--num_points", type=int, default=10000)
     ap.add_argument("--num_poses", type=int, default=20)
+    ap.add_argument("--max_meshes", type=int, default=0,
+                    help="If >0, randomly subsample this many meshes from --mesh_dir.")
     ap.add_argument("--seed", type=int, default=17)
     ap.add_argument("--radius", type=float, default=2.0,
                     help="Stand-off distance of viewpoints from the centred object.")
@@ -300,7 +310,7 @@ def main():
     cfg = dict(fov_h=math.radians(args.fov_h), fov_v=math.radians(args.fov_v),
                near=args.near, far=args.far)
 
-    meshes = load_meshes(args.mesh_dir)
+    meshes = load_meshes(args.mesh_dir, max_meshes=args.max_meshes, seed=args.seed)
     poses = make_poses(args.num_poses, args.radius, args.seed)
     combos = build_combos()
 
@@ -316,13 +326,13 @@ def main():
         pts_np, _ = trimesh.sample.sample_surface(mesh, count=args.num_points)
         pts_np = np.asarray(pts_np, dtype=np.float64)
         pts_t = torch.tensor(pts_np.T[np.newaxis], dtype=torch.float64, device=device)
-        intersector = trimesh.ray.ray_triangle.RayMeshIntersector(mesh)
+        intersector = mesh.ray   # Embree BVH (ray_pyembree) if embreex present
 
         for pose_idx, (vp_np, look_approx, up_approx) in enumerate(poses):
             look, up, right = build_camera_frame(look_approx, up_approx)
 
-            # Ground truth: inside frustum AND unoccluded (ray-cast vs mesh).
-            gt_idx, frustum_idx = compute_ground_truth(
+            # Ground truth: inside frustum AND unoccluded (batched ray-cast vs mesh).
+            gt_idx, frustum_idx = compute_ground_truth_batched(
                 mesh, vp_np, pts_np, look, up, right,
                 cfg["fov_h"], cfg["fov_v"], cfg["near"], cfg["far"],
                 intersector=intersector,

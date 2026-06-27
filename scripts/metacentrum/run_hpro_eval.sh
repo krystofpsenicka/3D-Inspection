@@ -20,7 +20,8 @@ set -euo pipefail
 MESH_DIR="${MESH_DIR:-hpro}"
 NUM_POSES="${NUM_POSES:-20}"
 NUM_POINTS="${NUM_POINTS:-10000}"
-CONDA_ENV="${CONDA_ENV:-inspection}"   # override: qsub -v CONDA_ENV=hpro ...
+MAX_MESHES="${MAX_MESHES:-0}"          # 0 = use all meshes in MESH_DIR
+CONDA_ENV="${CONDA_ENV:-inspection}"   # override: qsub -v CONDA_ENV=... ...
 
 # ── Modules ──────────────────────────────────────────────────────────
 module load cuda/cuda-12.6.3-gcc
@@ -32,21 +33,24 @@ REPO_DIR="${PBS_O_WORKDIR}"
 WORK_DIR="${SCRATCHDIR}/3d-inspection"
 mkdir -p "${WORK_DIR}"
 cp -a "${REPO_DIR}/." "${WORK_DIR}/"
-cd "${WORK_DIR}/hpro"
+# Run from the repo root: the flat hpro/ imports still resolve (Python adds the
+# script's dir to sys.path), and mesh paths like models/... resolve correctly.
+cd "${WORK_DIR}"
 
 echo "=== GPU info ==="
 nvidia-smi
 
 # ── 1. CPU smoke test (correctness gate) ─────────────────────────────
 echo "=== Smoke test ==="
-python smoke_test.py 2>&1 | tee "${REPO_DIR}/hpro_smoke.log"
+python hpro/smoke_test.py 2>&1 | tee "${REPO_DIR}/hpro_smoke.log"
 
 # ── 2. Quantitative evaluation ───────────────────────────────────────
 echo "=== Evaluation ==="
-python eval_frustum.py \
+python hpro/eval_frustum.py \
     --mesh_dir "${MESH_DIR}" \
     --num_poses "${NUM_POSES}" \
     --num_points "${NUM_POINTS}" \
+    --max_meshes "${MAX_MESHES}" \
     --out results \
     --no_show 2>&1 | tee "${REPO_DIR}/hpro_eval.log"
 

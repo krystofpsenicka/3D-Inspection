@@ -110,7 +110,9 @@ def compute_ground_truth(mesh, viewpoint_np, pts_np,
     frustum_indices = list(np.where(in_frustum)[0])
 
     if intersector is None:
-        intersector = trimesh.ray.ray_triangle.RayMeshIntersector(mesh)
+        # mesh.ray auto-selects the Embree BVH backend (ray_pyembree) when
+        # embreex is installed, falling back to the pure-Python ray_triangle.
+        intersector = mesh.ray
 
     gt_indices = [
         idx for idx in frustum_indices
@@ -119,6 +121,62 @@ def compute_ground_truth(mesh, viewpoint_np, pts_np,
         )
     ]
     return gt_indices, frustum_indices
+
+
+def compute_ground_truth_batched(mesh, viewpoint_np, pts_np,
+                                 look, up, right,
+                                 fov_h, fov_v, near, far,
+                                 intersector=None, tol=1e-6):
+    """
+    Vectorised equivalent of :func:`compute_ground_truth`.
+
+    Casts **all** frustum rays in a single ``intersects_location`` call instead
+    of one Python call per point, then marks a point visible iff the nearest
+    ray–mesh hit coincides with the point itself (``< tol``). This matches the
+    semantics of :meth:`GroundTruthGenerator.singleRayIntersection` exactly but
+    is orders of magnitude faster for dense clouds / many meshes — essential for
+    multi-mesh evaluation. Falls back to no-hit = not-visible.
+
+    Returns:
+        gt_indices, frustum_indices  (both list[int]).
+    """
+    in_frustum = points_inside_frustum(
+        pts_np, viewpoint_np, look, up, right, fov_h, fov_v, near, far
+    )
+    frustum_indices = np.where(in_frustum)[0]
+    if len(frustum_indices) == 0:
+        return [], []
+
+    if intersector is None:
+        # mesh.ray auto-selects the Embree BVH backend (ray_pyembree) when
+        # embreex is installed, falling back to the pure-Python ray_triangle.
+        intersector = mesh.ray
+
+    targets = pts_np[frustum_indices]                       # (M, 3)
+    origins = np.repeat(viewpoint_np[np.newaxis], len(frustum_indices), axis=0)
+    directions = targets - viewpoint_np[np.newaxis]         # (M, 3), unnormalised
+
+    locs, idx_ray, _ = intersector.intersects_location(
+        ray_origins=origins, ray_directions=directions, multiple_hits=True
+    )
+
+    visible = np.zeros(len(frustum_indices), dtype=bool)
+    if len(idx_ray) > 0:
+        # Nearest hit per ray = first after sorting by (ray, distance-to-viewpoint).
+        d_hit = np.linalg.norm(locs - viewpoint_np[np.newaxis], axis=1)
+        order = np.lexsort((d_hit, idx_ray))
+        rays_s = idx_ray[order]
+        locs_s = locs[order]
+        first = np.ones(len(rays_s), dtype=bool)
+        first[1:] = rays_s[1:] != rays_s[:-1]
+        nearest_ray = rays_s[first]                         # ray (local) indices
+        nearest_loc = locs_s[first]                         # their nearest hit
+        # Visible iff that nearest hit is the target point itself.
+        dd = np.linalg.norm(nearest_loc - targets[nearest_ray], axis=1)
+        visible[nearest_ray[dd < tol]] = True
+
+    gt_indices = list(frustum_indices[visible])
+    return gt_indices, list(frustum_indices)
 
 
 # ---------------------------------------------------------------------------
