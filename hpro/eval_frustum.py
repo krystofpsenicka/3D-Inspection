@@ -50,13 +50,18 @@ from frustum_gt import build_camera_frame, points_inside_frustum, compute_ground
 # Defaults (centred on the values that work in demo_limited.py)
 # ---------------------------------------------------------------------------
 
-DEF_GAMMA = -math.exp(-3.0)
+# gamma must be negative and — for frustum-limited dense views — close to 0
+# (the HPRO paper notes γ should sit "slightly closer to 0"; empirically larger
+# |γ| collapses recall). The sweep spans e^-3 .. e^-11; the default sits near the
+# observed optimum.
+GAMMA_EXPS = [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]
+GAMMA_SWEEP = [-math.exp(-e) for e in GAMMA_EXPS]
+DEF_GAMMA = -math.exp(-7.0)
 DEF_SHARPNESS = 50.0
 DEF_K = 10
 DEF_THRESH = 0.6
 
 # One-at-a-time sweep grids (each varies one param, others held at default).
-GAMMA_SWEEP = [-math.exp(-e) for e in (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)]
 SHARPNESS_SWEEP = [10.0, 20.0, 50.0, 100.0, 200.0]
 K_SWEEP = [5, 10, 20, 40]
 THRESH_SWEEP = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
@@ -185,11 +190,11 @@ def baseline_scores(hpro, pts_t, vp_t, pts_np, vp_np, look, up, right, cfg, gamm
 # Plotting
 # ---------------------------------------------------------------------------
 
-def _agg_f1_by(rows, key, fixed):
+def _agg_f1_by(rows, key, fixed, method="hpro_limited"):
     """Mean/std F1 grouped by ``rows[key]`` among rows matching ``fixed`` dict."""
     buckets = {}
     for r in rows:
-        if r["method"] != "hpro_limited":
+        if r["method"] != method:
             continue
         if any(abs(float(r[k]) - v) > 1e-12 for k, v in fixed.items()):
             continue
@@ -198,6 +203,32 @@ def _agg_f1_by(rows, key, fixed):
     means = [float(np.mean(buckets[x])) for x in xs]
     stds = [float(np.std(buckets[x])) for x in xs]
     return xs, means, stds
+
+
+def plot_gamma(rows, path):
+    """F1 vs |gamma| (log x) for HPRO_limited and the HPRO+hard-cull baseline."""
+    fixed = dict(sharpness=DEF_SHARPNESS, k=DEF_K, thresh=DEF_THRESH)
+    xs_l, m_l, s_l = _agg_f1_by(rows, "gamma", fixed, method="hpro_limited")
+    xs_b, m_b, s_b = _agg_f1_by(rows, "gamma", {"k": DEF_K}, method="baseline")
+    if not xs_l:
+        return
+    fig, ax = plt.subplots(figsize=(6, 4))
+    # x = |gamma|; both methods share the same gamma grid.
+    ax.errorbar([-x for x in xs_l], m_l, yerr=s_l, marker="o", capsize=3,
+                color="royalblue", label="HPRO_limited (soft frustum)")
+    if xs_b:
+        ax.errorbar([-x for x in xs_b], m_b, yerr=s_b, marker="s", capsize=3,
+                    color="crimson", label="baseline (HPRO + hard cull)")
+    ax.axvline(-DEF_GAMMA, color="grey", linestyle=":", label=f"default |γ|={-DEF_GAMMA:.2g}")
+    ax.set_xscale("log")
+    ax.set_xlabel("|gamma|  (closer to 0 → right)")
+    ax.set_ylabel("F1 (mean ± std over poses)")
+    ax.set_ylim(0, 1)
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
 
 
 def plot_sweep(rows, key, fixed, xlabel, path, logx=False, baseline_f1=None):
@@ -296,8 +327,8 @@ def main():
             if len(gt_idx) == 0:
                 continue   # pose sees nothing — skip to avoid degenerate metrics
 
-            vp_t = torch.tensor([vp_np], dtype=torch.float64, device=device)
-            rot_t = torch.tensor([np.concatenate([look_approx, up_approx])],
+            vp_t = torch.tensor(vp_np[np.newaxis], dtype=torch.float64, device=device)
+            rot_t = torch.tensor(np.concatenate([look_approx, up_approx])[np.newaxis],
                                  dtype=torch.float64, device=device)
 
             # HPRO_limited: compute w once per (gamma, sharpness, k); threshold post-hoc.
@@ -316,18 +347,20 @@ def main():
                         tp=tp, precision=p, recall=r, f1=f1, iou=iou, op_time_s=dt,
                     ))
 
-            # Baseline: plain HPRO (360) + hard frustum cull.
+            # Baseline: plain HPRO (360) + hard frustum cull, at every swept gamma
+            # (so the soft vs hard frustum comparison is fair across gamma).
             if not args.no_baseline:
-                pred_b, dt_b = baseline_scores(
-                    hpro_plain, pts_t, vp_t, pts_np, vp_np, look, up, right,
-                    cfg, DEF_GAMMA, DEF_K)
-                p, r, f1, iou, tp = score(pred_b, gt_idx)
-                rows.append(dict(
-                    mesh=mesh_name, pose_idx=pose_idx, method="baseline",
-                    gamma=DEF_GAMMA, sharpness=float("nan"), k=DEF_K, thresh=float("nan"),
-                    n_points=args.num_points, n_gt=len(gt_idx), n_pred=len(pred_b),
-                    tp=tp, precision=p, recall=r, f1=f1, iou=iou, op_time_s=dt_b,
-                ))
+                for gamma in GAMMA_SWEEP:
+                    pred_b, dt_b = baseline_scores(
+                        hpro_plain, pts_t, vp_t, pts_np, vp_np, look, up, right,
+                        cfg, gamma, DEF_K)
+                    p, r, f1, iou, tp = score(pred_b, gt_idx)
+                    rows.append(dict(
+                        mesh=mesh_name, pose_idx=pose_idx, method="baseline",
+                        gamma=gamma, sharpness=float("nan"), k=DEF_K, thresh=float("nan"),
+                        n_points=args.num_points, n_gt=len(gt_idx), n_pred=len(pred_b),
+                        tp=tp, precision=p, recall=r, f1=f1, iou=iou, op_time_s=dt_b,
+                    ))
 
         print(f"  [{mesh_name}] done ({len([r for r in rows if r['mesh']==mesh_name])} rows)")
 
@@ -348,14 +381,11 @@ def main():
 
     default_f1 = mean_f1("hpro_limited", gamma=DEF_GAMMA, sharpness=DEF_SHARPNESS,
                          k=DEF_K, thresh=DEF_THRESH)
-    baseline_f1 = mean_f1("baseline") if not args.no_baseline else None
+    # Fair baseline reference: same (tuned) gamma as the HPRO_limited default.
+    baseline_f1 = mean_f1("baseline", gamma=DEF_GAMMA) if not args.no_baseline else None
 
     # ---- Plots --------------------------------------------------------------
-    plot_sweep(rows, "gamma",
-               dict(sharpness=DEF_SHARPNESS, k=DEF_K, thresh=DEF_THRESH),
-               "gamma (negative; |γ| log axis)",
-               os.path.join(args.out, "f1_vs_gamma.png"),
-               logx=False, baseline_f1=baseline_f1)
+    plot_gamma(rows, os.path.join(args.out, "f1_vs_gamma.png"))
     plot_sweep(rows, "sharpness",
                dict(gamma=DEF_GAMMA, k=DEF_K, thresh=DEF_THRESH),
                "frustum_sharpness", os.path.join(args.out, "f1_vs_sharpness.png"),
@@ -396,12 +426,23 @@ def main():
             f"HPRO_limited (default): P={d['precision']:.3f} R={d['recall']:.3f} "
             f"F1={d['f1']:.3f} IoU={d['iou']:.3f}  t={d['op_time_s']*1e3:.1f}ms  (n={d['n']})")
     if baseline_f1 is not None:
-        b = headline("baseline")
+        b = headline("baseline", gamma=DEF_GAMMA)
         summary_lines.append(
             f"baseline HPRO+cull   : P={b['precision']:.3f} R={b['recall']:.3f} "
             f"F1={b['f1']:.3f} IoU={b['iou']:.3f}  t={b['op_time_s']*1e3:.1f}ms  (n={b['n']})")
         summary_lines.append(
-            f"\nF1 gap (baseline - HPRO_limited): {baseline_f1 - default_f1:+.3f}")
+            f"  (both at tuned default gamma={DEF_GAMMA:.5g})")
+        # Best baseline across the gamma sweep, for reference.
+        base_by_g = {}
+        for r in rows:
+            if r["method"] == "baseline":
+                base_by_g.setdefault(r["gamma"], []).append(r["f1"])
+        if base_by_g:
+            bg = max(base_by_g.items(), key=lambda kv: np.mean(kv[1]))
+            summary_lines.append(
+                f"  best baseline over gamma: F1={np.mean(bg[1]):.3f} at gamma={bg[0]:.5g}")
+        summary_lines.append(
+            f"\nF1 gap (HPRO_limited - baseline) at default gamma: {default_f1 - baseline_f1:+.3f}")
 
     # Best HPRO_limited config by mean F1 across the swept points.
     by_cfg = {}
