@@ -107,21 +107,16 @@ def fibonacci_sphere(n):
 # Greedy baseline
 # ---------------------------------------------------------------------------
 
-def greedy_baseline(
-    mesh, pts_np, V, fov_h, fov_v, near, far,
-    n_candidates=100, seed=17,
+def compute_baseline_gt(
+    mesh, pts_np, fov_h, fov_v, near, far,
+    n_candidates=50, seed=17,
 ):
     """
-    Discrete greedy set-cover baseline.
-
-    Samples ``n_candidates`` viewpoints on a Fibonacci sphere (same radius
-    convention as the optimiser's Fibonacci init), computes exact GT coverage
-    for each candidate via ray-casting, then greedily selects V candidates
-    maximising the union of covered points.
+    Pre-compute GT visibility sets for all Fibonacci-sphere candidates.
 
     Returns:
-        covered_union  — set[int] of union-covered point indices.
-        wall_time_s    — float.
+        candidate_gt  — list[set[int]], one set per candidate.
+        elapsed_s     — float, wall time for the ray-casting phase.
     """
     t0 = time.perf_counter()
     rng = np.random.default_rng(seed)
@@ -135,7 +130,6 @@ def greedy_baseline(
     world_up = np.array([0.0, 0.0, 1.0])
     intersector = mesh.ray
 
-    # Pre-compute GT visibility for all candidates
     candidate_gt = []
     for d in dirs:
         vp = centroid + radius * d
@@ -149,7 +143,20 @@ def greedy_baseline(
         )
         candidate_gt.append(set(int(i) for i in gt_idx))
 
-    # Greedy selection
+    return candidate_gt, time.perf_counter() - t0
+
+
+def greedy_select(candidate_gt, V):
+    """
+    Greedy set-cover selection from pre-computed candidate GT sets.
+
+    Args:
+        candidate_gt: list[set[int]] from compute_baseline_gt.
+        V: number of candidates to select.
+
+    Returns:
+        covered_union — set[int].
+    """
     covered = set()
     for _ in range(V):
         best_gain = -1
@@ -160,8 +167,7 @@ def greedy_baseline(
                 best_gain = gain
                 best_j = j
         covered |= candidate_gt[best_j]
-
-    return covered, time.perf_counter() - t0
+    return covered
 
 
 # ---------------------------------------------------------------------------
@@ -321,8 +327,8 @@ def parse_args():
                    help="HPRO gamma (default: -exp(-7)).")
     p.add_argument("--k",              type=int, default=10)
     p.add_argument("--min_inter_dist", type=float, default=0.3)
-    p.add_argument("--n_candidates",   type=int, default=100,
-                   help="Fibonacci candidates for greedy baseline.")
+    p.add_argument("--n_candidates",   type=int, default=50,
+                   help="Fibonacci candidates for greedy baseline (computed once per mesh).")
     p.add_argument("--max_meshes",     type=int, default=0,
                    help="Limit number of meshes (0 = all).")
     p.add_argument("--out",            default=os.path.join(_DIR, "results"),
@@ -392,6 +398,19 @@ def main():
             )   # (N, 3) float64
             N = len(pts_np)
 
+            # Pre-compute baseline GT once per mesh — reused for all V values.
+            candidate_gt = None
+            bas_ray_time = 0.0
+            if not args.no_baseline:
+                print(f"  Computing greedy baseline GT ({args.n_candidates} candidates) ...")
+                candidate_gt, bas_ray_time = compute_baseline_gt(
+                    mesh, pts_np,
+                    fov_h, fov_v, args.near, args.far,
+                    n_candidates=args.n_candidates,
+                    seed=args.seed,
+                )
+                print(f"    Ray-cast done in {bas_ray_time:.1f}s")
+
             for V in V_values:
                 print(f"\n  V={V} ...")
 
@@ -399,19 +418,14 @@ def main():
                 print(f"    Running optimizer ...")
                 opt = eval_optimizer(mesh_name, mesh, pts_np, V, model, cfg, args.seed)
 
-                # --- Greedy baseline -------------------------------------
+                # --- Greedy baseline (selection only — GT already computed) --
                 bas_coverage = ""
                 bas_time = ""
-                if not args.no_baseline:
-                    print(f"    Running greedy baseline ...")
-                    covered_bas, t_bas = greedy_baseline(
-                        mesh, pts_np, V,
-                        fov_h, fov_v, args.near, args.far,
-                        n_candidates=args.n_candidates,
-                        seed=args.seed,
-                    )
+                if not args.no_baseline and candidate_gt is not None:
+                    t_sel = time.perf_counter()
+                    covered_bas = greedy_select(candidate_gt, V)
+                    bas_time = bas_ray_time / len(V_values) + (time.perf_counter() - t_sel)
                     bas_coverage = len(covered_bas) / N if N > 0 else 0.0
-                    bas_time = t_bas
 
                 row = {
                     "mesh": mesh_name,
