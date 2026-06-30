@@ -95,8 +95,11 @@ class HPRO(nn.Module):
                 r_i_2 = r_i_2.reshape(batch_size, n_pts, n_pts)
 
                 mk_k_2 = torch.topk(r_i_2, k, dim=2, largest=True, sorted=True)
-                r_i_2 = (transformed_points_with_noise_norm * directions - center).norm(dim=1, keepdim=False)
-                w_2 = (r_i_2 - mk_k_2[0][:, :, k - 1]) / (mk_k_2[0][:, :, 0] - mk_k_2[0][:, :, k - 1])
+                # norm of each point's position relative to the virtual centre,
+                # in the transformed space (with noise applied); used as the
+                # per-point score in the second-pass visibility comparison.
+                norm_i_2 = (transformed_points_with_noise_norm * directions - center).norm(dim=1, keepdim=False)
+                w_2 = (norm_i_2 - mk_k_2[0][:, :, k - 1]) / (mk_k_2[0][:, :, 0] - mk_k_2[0][:, :, k - 1])
                 w_2 = self.elu(w_2)
             else:
                 # Memory-efficient computation for second transformation
