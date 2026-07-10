@@ -1,5 +1,8 @@
 # Frustum-Restricted HPRO — Stage 1 Results
 
+> **Continuation:** Stage-2 diagnostics, the NVPS backbone integration, and the full
+> publication strategy live in [`RESEARCH_PLAN.md`](RESEARCH_PLAN.md) (2026-07-10).
+
 First results subsection for the paper. Numbers below are from `eval_frustum.py`
 on the bundled `lamp_0001.off` (ModelNet-40), **12 poses on a sphere, 3000
 surface points, CPU** (accuracy is device-independent; GPU is only needed for the

@@ -169,3 +169,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# External assets (NVPS clone + pretrained checkpoint) — see diagnostics/ and RESEARCH_PLAN.md
+external/
