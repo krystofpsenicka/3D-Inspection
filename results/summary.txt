@@ -1,0 +1,13 @@
+HPRO_limited frustum evaluation summary
+==========================================
+device=cpu  meshes=1  poses=12  points=3000
+default config: gamma=-0.00091188  sharpness=50.0  k=10  thresh=0.5
+
+HPRO_limited (default): P=0.925 R=0.900 F1=0.911 IoU=0.838  t=107.4ms  (n=12)
+baseline HPRO+cull   : P=0.959 R=0.788 F1=0.863 IoU=0.764  t=93.5ms  (n=12)
+  (both at tuned default gamma=-0.00091188)
+  best baseline over gamma: F1=0.907 at gamma=-0.00033546
+
+F1 gap (HPRO_limited - baseline) at default gamma: +0.048
+
+best swept config: gamma=-0.00091188 sharpness=200.0 k=10 thresh=0.5 -> mean F1=0.914
