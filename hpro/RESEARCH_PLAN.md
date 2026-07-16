@@ -73,11 +73,35 @@ cudf/cugraph/cuopt-cu12 26.2, open3d, ompl 2.0.1, and the repo installed via
 `pip install -e . --no-deps` (`--no-deps` is required because `pyproject.toml` lists `triro`,
 which is not on PyPI).
 
-- `pytest tests/` → **125 passed, 1 failed**.
-- The one failure is `TestRaycastCpuVsCuda`, which needs `triro` → the **NVIDIA OptiX SDK**.
-  OptiX is behind a free NVIDIA developer login and is not on this machine; finish with
-  `export OptiX_INSTALL_DIR=$HOME/NVIDIA-OptiX-SDK-8.0.0 && pip install
-  "git+https://github.com/lcp29/trimesh-ray-optix.git"`.
+- `pytest tests/` → **125 passed, 1 failed**. The one failure is `TestRaycastCpuVsCuda`,
+  which needs `triro` → the **NVIDIA OptiX SDK**.
+- **triro / OptiX status (2026-07-16): builds, but needs OptiX 8.x — 9.1 does not work.**
+  Three separate obstacles, in order:
+  1. `pip install git+…` fails with `ModuleNotFoundError: No module named 'torch'` —
+     PEP 517 build isolation hides the env's torch from `setup.py`. Use
+     **`--no-build-isolation`**.
+  2. Then it needs `nvcc`, which torch's wheels do not ship (the pip
+     `nvidia-cuda-nvcc-cu12` package contains only `ptxas`, not the compiler driver).
+     Installed **`cuda-nvcc=12.8.*`** into the env to match `torch.version.cuda == 12.8`
+     — note plain `conda install -c nvidia cuda-nvcc` silently resolves to **13.3**, which
+     mismatches torch; the version must be pinned. Also export
+     `CPATH=$CONDA_PREFIX/targets/x86_64-linux/include` so `cuda_runtime.h` is found.
+  3. With OptiX **9.1** it then *builds and installs* but **segfaults on import**, inside
+     `create_optix_context`. Root cause established, not guessed: `optixInit()` returns
+     **7801 = `OPTIX_ERROR_UNSUPPORTED_ABI_VERSION`** — the 580.159.03 driver does not
+     accept OptiX 9.1's `OPTIX_ABI_VERSION 118` — and triro does not check the return
+     code, so it dereferences a null function table. triro's backend header is literally
+     `optix8.h`. **Fix: install OptiX SDK 8.0.0** (the version README.md specifies), which
+     is an older ABI the driver accepts. Working recipe once 8.0.0 is unpacked:
+
+     ```bash
+     export OptiX_INSTALL_DIR=$HOME/NVIDIA-OptiX-SDK-8.0.0
+     export CUDA_HOME=/home/troja-lab-02/miniconda3/envs/inspection
+     export PATH=$CUDA_HOME/bin:$PATH
+     export CPATH=$CUDA_HOME/targets/x86_64-linux/include:$CPATH
+     export TORCH_CUDA_ARCH_LIST="8.6"
+     pip install --no-build-isolation "git+https://github.com/lcp29/trimesh-ray-optix.git"
+     ```
 - Importing `isaacsim` prompts for the Omniverse EULA and dies with `EOFError` in a
   non-tty — set `OMNI_KIT_ACCEPT_EULA=YES`.
 
@@ -249,26 +273,45 @@ set-cover on hard ray-cast visibility → nearest-neighbour + 2-opt routing. 3 s
 | greedy+route V=10 | 0.886 | 10.75 | 0.082 |
 | greedy+route V=20 | 0.966 | 15.89 | 0.061 |
 | greedy+route V=40 | 0.990 | 23.56 | 0.042 |
-| receding-horizon, NVPS (default weights) | 0.533 | 3.52 | 0.157 |
-| receding-horizon, NVPS (**tuned**, seed 0) | 0.933 | 13.57 | 0.069 |
-| receding-horizon, HPRO | 0.241 | 2.33 | 0.106 |
+| receding-horizon, NVPS (weights as shipped) | 0.742 | 8.77 | 0.087 |
+| receding-horizon, HPRO | 0.401 | 5.27 | 0.082 |
 
-**Read this honestly — the offline race is currently a tie at best, not a win.**
+**Read this honestly — oracle greedy still wins the offline race.** Interpolating the
+baseline between V=5 and V=10 puts it at ≈0.78 coverage at the planner's 8.77 m, versus the
+planner's 0.742. The `viz_trajectory.py` coverage-vs-metres panel shows the same thing
+geometrically: the greedy curve lies **above** the planner's at every path length. The gap
+is small (~4 points) but it is a gap, in the baseline's favour.
 
-1. **cov/m is a trap and must not be the headline metric.** The planner's apparent 2×
-   advantage (0.157 vs 0.082) is mostly an artifact of *stopping early*: it covers 53 % and
-   quits, and a planner that takes one good photo and halts scores infinite cov/m. The
-   honest comparison is **path length at matched coverage**, and there the tuned planner
-   (0.933 @ 13.57 m) merely ties oracle greedy (0.966 @ 15.89 m) — on one tuned seed, with
-   erratic neighbours (λ_terminal=2 collapses to 0.607). Report matched-coverage path
-   length, and treat cov/m as diagnostic only.
-2. **The stall was a real bug, now fixed but not cured.** With the original weights the
+1. **cov/m is a trap and must not be the headline metric.** An earlier run showed the
+   planner at 0.157 cov/m vs greedy's 0.082 and that looked like a 2× win. It was an
+   artifact of *stopping early*: it covered 53 % and quit, and a planner that takes one
+   good photo and halts scores infinite cov/m. The honest comparison is **path length at
+   matched coverage**. Report that; treat cov/m as diagnostic only.
+
+   ⚠️ **A retracted number, and the lesson behind it.** An earlier draft of this section
+   reported a "tuned" 0.933 @ 13.57 m and called the race a tie. **That number does not
+   reproduce** (the same config and seed now yields 0.563 @ 7.15 m) and was a lone outlier
+   in an otherwise ~0.6 band — the λ_length=0.01 column of the sweep read 0.658, 0.608,
+   0.607, **0.933**, 0.643. The rollout *is* bit-deterministic within a process (verified:
+   σ=0.000 over 4 repeats), so the outlier came from chaotic sensitivity to float-level
+   differences in process state, amplified over 40 cycles × 30 Adam steps. **Never tune
+   this planner on a single seed, and never promote a single cell of a sweep**: the
+   objective is chaotic in its weights, so one cell carries no signal. λ_length=0.01 is
+   genuinely supported (it beats 0.05 in all five sweep rows); λ_terminal is **not**
+   discriminative (0.658/0.608/0.607/0.643 across two orders of magnitude), so the shipped
+   λ_terminal=5.0 is essentially arbitrary and should be re-derived over seeds.
+2. **The stall was a real bug, mitigated but not cured.** With the original weights the
    robot crawled at ~0.05 m/cycle: once local demand is exhausted the coverage gradient is
    ~0, and `λ_length·length` (0.18) outvoted `λ_terminal·terminal` (0.08) — the only term
-   that can steer toward fresh geometry. Defaults are now λ_length=0.01, λ_terminal=5.0.
-   The weights remain sensitive and non-monotone; restarts/annealing (§7 step 6) or a real
-   two-timescale global pass (§6.4 item 4, currently only a single soft-min attractor) are
-   the principled fixes.
+   that can steer toward fresh geometry. Defaults are now λ_length=0.01, λ_terminal=5.0,
+   which roughly doubles coverage (0.53 → 0.74 over 3 seeds). But `viz_trajectory.py`'s
+   *motion-per-cycle* panel shows the stall is still there: motion decays from ~0.7 m/cycle
+   to ~0.05 by cycle 25 for **both** backbones, i.e. the last ~15 of 40 cycles buy almost
+   nothing. **This is the single biggest lever left in Stage B** — the planner is not
+   coverage-limited, it is *mobility*-limited. Fixes, in order of principle: a real
+   two-timescale global pass (§6.4 item 4 — currently just one soft-min attractor, not the
+   promised greedy/TSP over demand clusters), restarts/annealing (§7 step 6), or an
+   explicit "leave exhausted region" term.
 3. **⚠️ The warm-start claim does not survive the static setting.** Measured: warm replan
    **233 ms** (NVPS) vs a discrete **re-solve of 240–360 ms**. That is ~1.3×, *not* the
    order of magnitude §6.4(iii) assumes. The reason is structural and should have been
@@ -277,11 +320,14 @@ set-cover on hard ray-cast visibility → nearest-neighbour + 2-opt routing. 3 s
    ~1.5 s of ray-casting again when **the world changes**. Therefore the outdated-mesh /
    no-prior experiment (§7 step 5) is **not garnish — it is the only place the headline can
    be won**, and until it is run, Stage B has not cleared §6.6's go/no-go bar.
-4. **HPRO is unusable as a trajectory backbone** — 0.241 coverage, and the audit explains
-   it: predicted-visible minus actually-seen is **+482…+632 points per cycle** (~20 % of the
-   cloud), versus NVPS's −13…+40. §3.2's surrogate exploitation reappears at the trajectory
-   level, now measured *directly* from execution feedback rather than inferred from the
-   soft-vs-GT gap. This is C2's cleanest evidence so far and comes free from the audit loop.
+4. **HPRO is unusable as a trajectory backbone** — 0.401 coverage vs NVPS's 0.742, and the
+   audit explains it: predicted-visible minus actually-seen is **+482…+632 points per
+   cycle** (~20 % of the cloud), versus NVPS's −13…+40. §3.2's surrogate exploitation
+   reappears at the trajectory level, now measured *directly* from execution feedback
+   rather than inferred from the soft-vs-GT gap. This is C2's cleanest evidence so far and
+   comes free from the audit loop. `viz_trajectory.py`'s *surrogate-vs-truth* panel renders
+   it: at HPRO's worst pose the claimed-visible set is a red halo of points the ray-cast
+   says are occluded.
 5. **Warm-starting does work mechanically**: cold 1038 ms → warm 233 ms (NVPS), 2616 → 519
    (HPRO), a 4.5–5× reduction from reusing the previous horizon. The mechanism is sound;
    what is missing is a setting where the *competitor* is forced to pay full price.
@@ -291,7 +337,16 @@ Reproduce:
 ```bash
 $ipy hpro/eval_trajectory.py --seeds 3 --max_cycles 40 --budgets "5,10,20,30,40" \
     --n_candidates 300 --backbones nvps,hpro --no_show
+# and look at it, don't just read the scalars:
+$ipy hpro/viz_trajectory.py --backbones nvps,hpro --max_cycles 40 [--animate]
 ```
+
+`viz_trajectory.py` writes `rollout_3d.png` (cloud by coverage + executed path + frustums),
+`surrogate_vs_truth.png` (claimed-visible vs actually-seen at the worst pose — the C2 story
+rendered), and `diagnostics.png` (coverage-vs-metres, motion-per-cycle, audit gap). Both
+findings above — that greedy's curve lies above ours, and that motion decays to a stall —
+are *visible* there and were not obvious from the summary table. Look at the pictures before
+trusting a number.
 
 ---
 

@@ -358,18 +358,34 @@ def plot_curves(curves, out_dir, show):
 
 
 def summarise(rows):
-    print("\n=== summary (mean over seeds) ===")
+    """Report mean ± std with n, and the per-seed spread.
+
+    Means alone are dangerous here: the rollout is bimodal (§3.4 / trajectory.py),
+    so a mean over 3 seeds can hide a 0.33-vs-0.75 split, and a single run can be
+    a lucky draw. Print the spread next to the mean so it cannot be quoted away.
+    Note ``cov/m`` is diagnostic only -- a planner that stalls early scores well
+    on it precisely because it gave up; judge on coverage at comparable length.
+    """
+    print("\n=== summary (mean ± std over seeds; cov/m is diagnostic only) ===")
     by = {}
     for r in rows:
         key = (r["method"], r["backbone"])
         by.setdefault(key, []).append(
             (float(r["gt_coverage"]), float(r["path_length"]),
              float(r["coverage_per_m"])))
-    print(f"{'method':<28} {'backbone':<9} {'coverage':>9} {'length':>9} {'cov/m':>8}")
+    print(f"{'method':<26} {'backbone':<9} {'coverage':>16} {'length':>15} "
+          f"{'cov/m':>8}  {'n':>2}  per-seed coverage")
     for (m, b), v in sorted(by.items()):
         a = np.array(v)
-        print(f"{m:<28} {b:<9} {a[:,0].mean():>9.3f} {a[:,1].mean():>9.2f} "
-              f"{a[:,2].mean():>8.3f}")
+        spread = " ".join(f"{x:.3f}" for x in a[:, 0])
+        print(f"{m:<26} {b:<9} {a[:,0].mean():>7.3f} ± {a[:,0].std():<6.3f} "
+              f"{a[:,1].mean():>7.2f} ± {a[:,1].std():<5.2f} {a[:,2].mean():>8.3f}  "
+              f"{len(a):>2}  [{spread}]")
+
+    print("\nNote: identical config+seed is reproducible within a process but NOT\n"
+          "across processes (GPU float non-determinism amplified by the audit\n"
+          "threshold). Observed: 0.563 in 7/8 processes, 0.933 in the 8th.\n"
+          "Treat any single rollout as one sample, never as the result.")
 
 
 if __name__ == "__main__":

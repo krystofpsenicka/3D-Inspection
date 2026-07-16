@@ -30,6 +30,20 @@ it was. That is what makes the planner anytime and incremental, and it is the
 property the paper's headline rests on — so ``replan_steps`` is deliberately
 small (a per-cycle budget), not "optimise to convergence".
 
+.. warning::
+
+   **The rollout is chaotic: never report a single run.** A rollout is
+   reproducible within one process but *not across processes* — the same config
+   and seed produced GT coverage 0.563 in 7 of 8 processes and 0.933 in the 8th
+   (§3.4). The closed loop amplifies ~1e-7 GPU float differences (per-process
+   kernel/TF32 selection): a marginally different pose flips points across the
+   hard ray-cast audit threshold, which changes the harvested demand, which
+   changes every subsequent cycle. The outcome is **bimodal** — the planner
+   either escapes its first basin or stalls in it — so a single number is a
+   coin flip, not a measurement. Always aggregate over repeats
+   (``eval_trajectory.py --repeats``) and report mean ± std with the number of
+   runs.
+
 The audit that harvests coverage is a hard ray-cast against the mesh, which
 doubles as C2's re-anchoring signal: ``audit_gap`` records surrogate-vs-truth
 disagreement per cycle for free.
@@ -121,6 +135,10 @@ class TrajectoryResult:
     replan_times: list = field(default_factory=list)     # seconds per cycle
     n_cycles: int = 0
     wall_time_s: float = 0.0
+    # Per-executed-pose audit records, kept so a rollout can be replayed and
+    # inspected visually (viz_trajectory.py) rather than trusted from a scalar:
+    seen_per_pose: list = field(default_factory=list)    # list[set[int]] actually seen
+    pred_per_pose: list = field(default_factory=list)    # list[set[int]] surrogate w>0.5
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +388,10 @@ def receding_horizon_plan(
         # Surrogate-vs-truth gap at the executed pose (C2 re-anchoring signal).
         with torch.no_grad():
             w0 = layer(pts_t, pos[:1], rot[:1])[0]
-        pred = float((w0 > 0.5).sum())
-        result.audit_gap.append(pred - float(len(seen)))
+        pred_idx = torch.nonzero(w0 > 0.5).squeeze(-1).cpu().numpy()
+        result.audit_gap.append(float(len(pred_idx)) - float(len(seen)))
+        result.pred_per_pose.append(set(int(i) for i in pred_idx))
+        result.seen_per_pose.append(set(seen))
 
         # ---- Demand update: decay, never delete --------------------------
         if new:
