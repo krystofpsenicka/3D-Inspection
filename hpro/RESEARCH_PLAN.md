@@ -65,8 +65,21 @@ ipy hpro/smoke_test.py          # 5/5 checks pass
 ipy hpro/eval_multi.py ...      # runs on GPU, ~1–5 s per optimization at N=3000
 ```
 
-The heavier `inspection` env (isaacsim, cuOpt, triro/OptiX) is only needed for the legacy
-pipeline and Isaac Sim replay, not for the HPRO/NVPS work.
+The heavier `inspection` env is needed for the legacy pipeline, the root `tests/` suite and
+the Isaac Sim replay — i.e. for Stage B/C's comparison against the thesis pipeline, not for
+the operator work. **Built 2026-07-16** per [`README.md`](../README.md) (~15 GB):
+`/home/troja-lab-02/miniconda3/envs/inspection/bin/python`, with isaacsim 5.0.0.0, cupy,
+cudf/cugraph/cuopt-cu12 26.2, open3d, ompl 2.0.1, and the repo installed via
+`pip install -e . --no-deps` (`--no-deps` is required because `pyproject.toml` lists `triro`,
+which is not on PyPI).
+
+- `pytest tests/` → **125 passed, 1 failed**.
+- The one failure is `TestRaycastCpuVsCuda`, which needs `triro` → the **NVIDIA OptiX SDK**.
+  OptiX is behind a free NVIDIA developer login and is not on this machine; finish with
+  `export OptiX_INSTALL_DIR=$HOME/NVIDIA-OptiX-SDK-8.0.0 && pip install
+  "git+https://github.com/lcp29/trimesh-ray-optix.git"`.
+- Importing `isaacsim` prompts for the Omniverse EULA and dies with `EOFError` in a
+  non-tty — set `OMNI_KIT_ACCEPT_EULA=YES`.
 
 NVPS assets live in `hpro/external/` (git-ignored):
 `neural-visibility/` (clone of <https://github.com/octree-nn/neural-visibility>) and

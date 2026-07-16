@@ -21,6 +21,9 @@ does against ray-cast ground truth). Specifically:
      (regression guard for the alpha-frame and float32-accumulator fixes).
   7. ``GatedVisibilityLayer(HPROBackbone)`` reproduces ``HPRO_limited`` exactly,
      pinning the backbone interface to the Stage-1-validated operator.
+  8. Analytic properties of the receding-horizon trajectory losses, including
+     that the terminal attractor follows remaining demand rather than the
+     object's (interior) centroid.
 
 Exit code is non-zero if any check fails.
 """
@@ -139,6 +142,92 @@ def check_finite_gradients(model, pts, cfg, gamma):
     gn = float(vp.grad.norm() + rot.grad.norm())
     assert gn > 0, "gradients are exactly zero everywhere (no signal)"
     print(f"  [ok] finite gradients: |grad| = {gn:.4g}")
+
+
+def check_trajectory_losses():
+    """Analytic properties of the receding-horizon loss terms (trajectory.py).
+
+    All are deterministic and closed-form, so they belong in the CPU smoke test
+    rather than in a rollout. The terminal-cost check is a regression guard: the
+    first implementation pulled toward the demand-weighted *centroid*, which for a
+    closed surface lies inside the object, so it dragged the camera into the hull
+    and deadlocked against the standoff penalty (the HPRO rollout froze at 0.46
+    coverage for 18 cycles).
+    """
+    import trajectory as tj
+
+    # --- demand_weighted_coverage -------------------------------------------
+    N = 20
+    w_all = torch.ones(2, N, dtype=DTYPE)
+    d_all = torch.ones(N, dtype=DTYPE)
+    c = float(tj.demand_weighted_coverage(w_all, d_all))
+    assert abs(c - 1.0) < 1e-6, f"w=1, d=1 should give coverage 1, got {c}"
+
+    c0 = float(tj.demand_weighted_coverage(torch.zeros(2, N, dtype=DTYPE), d_all))
+    assert abs(c0) < 1e-9, f"w=0 should give coverage 0, got {c0}"
+
+    # Satisfied demand must not contribute: covering only zero-demand points
+    # scores 0, which is what stops covered points attracting the trajectory.
+    d_half = torch.cat([torch.ones(N // 2, dtype=DTYPE),
+                        torch.zeros(N // 2, dtype=DTYPE)])
+    w_second = torch.zeros(1, N, dtype=DTYPE)
+    w_second[0, N // 2:] = 1.0
+    c_wasted = float(tj.demand_weighted_coverage(w_second, d_half))
+    assert abs(c_wasted) < 1e-9, \
+        f"covering only satisfied points should score 0, got {c_wasted}"
+
+    # --- path_length ---------------------------------------------------------
+    start = torch.tensor([0.0, 0.0, 0.0], dtype=DTYPE)
+    pos = torch.tensor([[1.0, 0.0, 0.0], [1.0, 2.0, 0.0]], dtype=DTYPE)
+    L = float(tj.path_length(pos, start))
+    assert abs(L - 3.0) < 1e-9, f"path length should be 1+2=3, got {L}"
+
+    # A straight, evenly-spaced path has zero curvature.
+    straight = torch.tensor([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+                            dtype=DTYPE)
+    s = float(tj.smoothness(straight, start))
+    assert s < 1e-9, f"straight path should have zero smoothness cost, got {s}"
+
+    # --- terminal_cost -------------------------------------------------------
+    # A hollow shell: every surface point is on a sphere of radius 1, so the
+    # centroid (the origin) is empty space *inside* the object. Demand survives
+    # on one side only.
+    ang = torch.linspace(0, 2 * math.pi, 33, dtype=DTYPE)[:-1]
+    shell = torch.stack([torch.cos(ang), torch.sin(ang),
+                         torch.zeros_like(ang)], dim=1)          # (32, 3)
+    demand = (shell[:, 0] > 0.7).to(DTYPE)                        # +x side only
+    assert float(demand.sum()) > 0
+
+    target = 0.5
+    # Pose already at the correct standoff from the demanded (+x) region.
+    good = torch.tensor([[1.0 + target, 0.0, 0.0]], dtype=DTYPE)
+    # Pose at the centroid — the old implementation's attractor, and the worst
+    # possible place to be (inside the object).
+    centre = torch.tensor([[0.0, 0.0, 0.0]], dtype=DTYPE)
+
+    c_good = float(tj.terminal_cost(good, shell, demand, target))
+    c_centre = float(tj.terminal_cost(centre, shell, demand, target))
+    # Not ~0: the soft-min averages over several nearby demanded points, so the
+    # effective distance overshoots the true nearest by O(tau). Bound it loosely
+    # -- the load-bearing assertions are the comparisons below.
+    assert c_good < 0.02, f"pose at correct standoff should cost ~0, got {c_good}"
+    assert c_centre > 10 * c_good,\
+        (f"the object's centroid must NOT be the terminal attractor "
+         f"(centre={c_centre:.4g} <= standoff pose={c_good:.4g})")
+
+    # No demand left -> no terminal pull at all.
+    c_none = float(tj.terminal_cost(good, shell, torch.zeros_like(demand), target))
+    assert abs(c_none) < 1e-12, f"zero demand should give zero terminal cost, got {c_none}"
+
+    # The attractor must follow demand: with demand on -x, the +x pose is bad.
+    demand_neg = (shell[:, 0] < -0.7).to(DTYPE)
+    c_far = float(tj.terminal_cost(good, shell, demand_neg, target))
+    assert c_far > c_good, \
+        f"terminal cost must track where demand is (got {c_far:.4g} vs {c_good:.4g})"
+
+    print(f"  [ok] trajectory losses: coverage/length/smoothness exact; "
+          f"terminal attractor tracks demand, not centroid "
+          f"(centre {c_centre:.3f} > standoff {c_good:.3f})")
 
 
 def check_backbone_layer_matches_hpro_limited(pts, cfg, gamma):
@@ -290,6 +379,7 @@ def main():
         ("mem-path==batched", lambda: check_memory_path_matches_batched(pts, gamma)),
         ("backbone-layer==HPRO_limited",
          lambda: check_backbone_layer_matches_hpro_limited(pts, cfg, gamma)),
+        ("trajectory-losses", check_trajectory_losses),
     ]
 
     print(f"Running HPRO_limited smoke test on {DEVICE} (dtype={DTYPE})...\n")
