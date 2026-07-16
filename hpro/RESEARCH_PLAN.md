@@ -59,20 +59,34 @@ tells you where the work actually stands.*
 
 ### 0.1 Repo state — nothing is merged
 
-All of the below lives on branch **`research/stage-a-operator-infra`**, **7 commits, not
+All of the below lives on branch **`research/stage-a-operator-infra`**, **10 commits, not
 pushed, no merge request opened**. `main` is untouched and still contains the pre-NeOF
-world-view. The commits are self-contained and each carries its evidence in the message:
+world-view. Listed oldest-first (`git log --oneline main..HEAD`; no SHAs here — the branch
+has been rewritten once already and hashes go stale):
 
 ```
-9346f04  Measure the Stage B chaos: the rollout is bimodal, not merely noisy
-cca17da  Visual rollout inspection; retract an unreproducible Stage B number
-b044bd1  Stage B eval: receding-horizon vs sample-and-select (honest result: a tie)   ← title now wrong, see §3.4
-c794308  Stage B: receding-horizon differentiable inspection trajectories
-874ba30  Wire delta/alpha through the Stage-1 harness and ablate
-4a673bd  Add VisibilityBackbone interface (HPRO | NVPS | ensemble)
-8bd8f7c  Fix two defects in HPRO's memory-efficient path (alpha frame, float32 accumulator)
-bbeb8a6  Reposition research plan: NeOF (RA-L 2024) occupies differentiable placement
+Reposition the research plan after finding that NeOF (RA-L 2024) already does …
+Fix two defects in HPRO's memory-efficient path: the alpha pass used the wrong frame …
+Add a VisibilityBackbone interface so HPRO, NVPS and ensemble occlusion models …
+Wire HPRO's delta and alpha parameters through the Stage-1 harness and ablate them.
+────────── Stage A ends here; everything above is finished and defensible ──────────
+Add the Stage B receding-horizon differentiable inspection trajectory planner.
+Add the Stage B evaluation harness comparing receding-horizon planning against …
+Add visual rollout inspection and retract an unreproducible Stage B number.
+Measure the Stage B rollout's cross-process bimodality and make the rollout figure legible.
+Document the state of play in RESEARCH_PLAN.md section 0 for returning to this work.
+Correct the commit inventory in the resume section.
 ```
+
+**Stage A could be merged on its own** — the operator work is finished and its claims hold.
+**Stage B is exploratory and its conclusions are negative**; merging it is fine as a record,
+but nothing in it should be cited as a result.
+
+⚠️ **The commit messages are one-liners by request, so they no longer carry their own
+evidence.** The reasoning, measurements and counter-evidence for every commit live *only*
+in this document (§2 for the HPRO fixes, §3.3 for δ/α, §3.4 for all of Stage B) and in the
+session memory files. Do not reconstruct the history from `git log` alone — it will read as
+a series of confident additions and will not tell you that Stage B's headline was retracted.
 
 Before opening an MR: `b044bd1`'s subject line ("honest result: a tie") is **superseded** —
 the tie was retracted in `9346f04`. Squash or re-word it, or the history reads as a claim
