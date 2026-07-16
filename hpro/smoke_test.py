@@ -16,6 +16,9 @@ does against ray-cast ground truth). Specifically:
   4. Finite gradients flow to both ``viewpoint`` and ``rot_6d``.
   5. Batched (B>1) operator output matches looping single (B=1) calls
      (regression guard for the batch-broadcast fix in ``HPRO.detect_max_in_direction``).
+  6. The memory-efficient path (``fits_in_memory=False``) matches the batched
+     path across alpha/delta configurations, and preserves input dtype
+     (regression guard for the alpha-frame and float32-accumulator fixes).
 
 Exit code is non-zero if any check fails.
 """
@@ -26,6 +29,7 @@ import sys
 import numpy as np
 import torch
 
+from HPRO import HPRO
 from HPRO_limited import HPRO_limited
 from frustum_gt import build_camera_frame, points_inside_frustum
 
@@ -135,6 +139,47 @@ def check_finite_gradients(model, pts, cfg, gamma):
     print(f"  [ok] finite gradients: |grad| = {gn:.4g}")
 
 
+def check_memory_path_matches_batched(pts, gamma):
+    """``fits_in_memory=False`` must reproduce the batched path exactly.
+
+    Guards two fixed defects in ``HPRO.detect_max_in_direction``:
+
+    * the alpha (second-direction) pass projected against the *unshifted*
+      points and scored against ``||F(p_i)||`` instead of ``||F(p_i) - C*||``,
+      so the score and its top-k reference lived in different frames
+      (divergence ~1.5 in a score of order 1);
+    * the per-point accumulators were allocated by ``torch.zeros`` without
+      ``dtype=``, i.e. always float32, truncating float64 clouds (residual
+      disagreement ~5e-8 = float32 epsilon, present even with ``alphas=[]``).
+
+    Both paths implement the same maths, so on identical float64 input they
+    must agree to float64 round-off -- in practice bit-exactly.
+    """
+    pts_t = _to_tensor(pts.T[np.newaxis])              # (1, 3, N)
+    vp_t = _to_tensor([[0.0, 0.0, -3.0]])
+
+    configs = [([], 0.0), ([0.5], 0.0), ([0.5], 0.02), ([0.3, 0.7], 0.01)]
+    worst = 0.0
+    for alphas, delta in configs:
+        ws = []
+        for fits in (True, False):
+            m = HPRO(fits_in_memory=fits, device=DEVICE)
+            _, _, w = m(pts_t, vp_t, gamma=gamma, alphas=alphas, delta=delta, k=10)
+            assert w.dtype == DTYPE, (
+                f"alphas={alphas}, fits_in_memory={fits}: score dtype {w.dtype} "
+                f"!= input dtype {DTYPE} (accumulator lost precision)"
+            )
+            ws.append(w.reshape(-1))
+        diff = float((ws[0] - ws[1]).abs().max())
+        worst = max(worst, diff)
+        assert diff < 1e-12, (
+            f"alphas={alphas}, delta={delta}: memory-efficient path disagrees "
+            f"with batched path by {diff:.3g}"
+        )
+    print(f"  [ok] mem-path==batched over {len(configs)} alpha/delta configs: "
+          f"max |Δw| = {worst:.2e}")
+
+
 def check_batch_matches_loop(model, pts, gamma):
     """Batched (B=2) output must equal two separate B=1 calls (broadcast fix)."""
     poses = [
@@ -195,6 +240,7 @@ def main():
         ("behind-camera-zero", lambda: check_behind_camera_zero(model, cfg, gamma)),
         ("finite-gradients", lambda: check_finite_gradients(model, pts, cfg, gamma)),
         ("batch==loop", lambda: check_batch_matches_loop(model, pts, gamma)),
+        ("mem-path==batched", lambda: check_memory_path_matches_batched(pts, gamma)),
     ]
 
     print(f"Running HPRO_limited smoke test on {DEVICE} (dtype={DTYPE})...\n")

@@ -71,8 +71,13 @@ class HPRO(nn.Module):
                     mk_k[0][:, :, 0] - mk_k[0][:, :, k - 1])
             w = self.elu(w)
         else:
-            # Memory-efficient computation
-            w = torch.zeros((batch_size, n_pts), device=centered_points.device)
+            # Memory-efficient computation.
+            # dtype must be taken from the input: torch.zeros defaults to
+            # float32, which silently truncated float64 clouds to ~1e-7
+            # precision (the batched path, having no such accumulator, stayed
+            # exact -- so the two paths disagreed by float32 epsilon).
+            w = torch.zeros((batch_size, n_pts), dtype=centered_points.dtype,
+                            device=centered_points.device)
             for i in range(n_pts):
                 r_i = (transformed_points * directions[:, :, [i]]).sum(dim=1)
                 mk_k = torch.topk(r_i, k, dim=1, largest=True, sorted=True)
@@ -85,29 +90,40 @@ class HPRO(nn.Module):
         # Iterating through additional alphas for further transformations
         for alpha in alphas:
             center = transformed_points.mean(dim=2, keepdim=True) * alpha
-            directions2 = torch.nn.functional.normalize(transformed_points - center, dim=1)
+            # Positions relative to the shifted virtual centre C*. Every quantity
+            # in the second pass -- projections, directions and the per-point
+            # score -- must be expressed in this shifted frame, otherwise the
+            # score and the top-k values it is compared against live in
+            # different coordinate systems.
+            shifted_points = transformed_points - center
+            directions2 = torch.nn.functional.normalize(shifted_points, dim=1)
+
+            # Norm of each point's position relative to the virtual centre, in
+            # the transformed space (with noise applied); used as the per-point
+            # score in the second-pass visibility comparison. This equals the
+            # self-projection <F(p_i) - C*, d2_i>, which is what the top-k of
+            # r_i_2 is drawn from -- hoisted out of the branch so both paths
+            # provably use the same quantity.
+            norm_i_2 = (transformed_points_with_noise_norm * directions - center).norm(dim=1, keepdim=False)
 
             if self.fits_in_memory:
                 # Parallel computation for second transformation
-                r_i_2 = ((transformed_points - center).repeat(1, 1, n_pts) * directions2.repeat_interleave(n_pts,
-                                                                                                           dim=2)).sum(
+                r_i_2 = (shifted_points.repeat(1, 1, n_pts) * directions2.repeat_interleave(n_pts,
+                                                                                            dim=2)).sum(
                     dim=1, keepdim=True)
                 r_i_2 = r_i_2.reshape(batch_size, n_pts, n_pts)
 
                 mk_k_2 = torch.topk(r_i_2, k, dim=2, largest=True, sorted=True)
-                # norm of each point's position relative to the virtual centre,
-                # in the transformed space (with noise applied); used as the
-                # per-point score in the second-pass visibility comparison.
-                norm_i_2 = (transformed_points_with_noise_norm * directions - center).norm(dim=1, keepdim=False)
                 w_2 = (norm_i_2 - mk_k_2[0][:, :, k - 1]) / (mk_k_2[0][:, :, 0] - mk_k_2[0][:, :, k - 1])
                 w_2 = self.elu(w_2)
             else:
                 # Memory-efficient computation for second transformation
-                w_2 = torch.zeros((batch_size, n_pts), device=centered_points.device)
+                w_2 = torch.zeros((batch_size, n_pts), dtype=centered_points.dtype,
+                                  device=centered_points.device)
                 for i in range(n_pts):
-                    r_i_2 = (transformed_points * directions2[:, :, [i]]).sum(dim=1)
+                    r_i_2 = (shifted_points * directions2[:, :, [i]]).sum(dim=1)
                     mk_k = torch.topk(r_i_2, k, dim=1, largest=True, sorted=True)
-                    w_2[:, i] = (transformed_points_with_noise_norm[:, 0, i] - mk_k[0][:, k - 1]) / (
+                    w_2[:, i] = (norm_i_2[:, i] - mk_k[0][:, k - 1]) / (
                                 mk_k[0][:, 0] - mk_k[0][:, k - 1])
                 w_2 = self.elu(w_2)
 
