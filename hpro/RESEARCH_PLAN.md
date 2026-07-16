@@ -5,6 +5,10 @@ integration of the NVPS neural visibility model as an alternative backbone, diag
 experiments (all reproducible via `diagnostics/`), and the research strategy toward a
 publishable paper.*
 
+**👉 Returning to this work? Read [§0 Resume here](#0--resume-here) first** — state of play,
+next actions, open decisions, and the file map. The rest of this document is the evidence
+behind it.
+
 **TL;DR.** The core HPRO port and the Stage-1 frustum extension are correct and validated.
 The Stage-2 multi-viewpoint optimizer is correctly *coded* but was methodologically
 incomplete: with the HPRO backbone, gradient refinement *reduces* true coverage on the
@@ -12,6 +16,13 @@ concave wreck mesh while the soft objective climbs to ≈1.0 — the optimizer e
 miscalibrated visibility proxy. Swapping in the pretrained NVPS backbone flips the result:
 **refinement beats oracle greedy on the wreck (0.941 vs 0.938 at V=5)** where HPRO lost
 (0.915). The two operators fail in exactly complementary ways.
+
+**Status 2026-07-16.** Stage A (operator infrastructure) is **done** — backbone interface,
+two real HPRO bugs fixed, δ/α ablated (§3.3). Stage B (trajectories, the headline) is
+**built but not passing**: oracle greedy still wins the offline race, warm-starting is only
+1.3× on a static mesh, the planner stalls, and the rollout is **bimodal**, which already
+cost one retracted result (§3.4). Nothing is merged — 7 commits on
+`research/stage-a-operator-infra` (§0.1).
 
 **⚠ Positioning corrected 2026-07-16 (see §5).** An earlier draft of this plan claimed that
 *"nobody offers gradient-based joint refinement of camera positions and orientations
@@ -28,6 +39,7 @@ thesis's own combinatorial (set-cover + VRP) pipeline.
 
 ## Contents
 
+0. [**Resume here** — state of play, next actions, open decisions](#0--resume-here)
 1. [Environment](#1-environment)
 2. [Implementation audit vs. the HPRO paper](#2-implementation-audit-vs-the-hpro-paper)
 3. [Diagnostic experiments](#3-diagnostic-experiments)
@@ -36,6 +48,100 @@ thesis's own combinatorial (set-cover + VRP) pipeline.
 6. [The strongest paper](#6-the-strongest-paper)
 7. [Order of work](#7-order-of-work)
 8. [Reproducing everything](#8-reproducing-everything)
+
+---
+
+## 0 · Resume here
+
+*Written 2026-07-16 at the end of the session that did the NeOF re-positioning, the Stage-A
+operator work, and Stage B's first results. Read this first; it is the only section that
+tells you where the work actually stands.*
+
+### 0.1 Repo state — nothing is merged
+
+All of the below lives on branch **`research/stage-a-operator-infra`**, **7 commits, not
+pushed, no merge request opened**. `main` is untouched and still contains the pre-NeOF
+world-view. The commits are self-contained and each carries its evidence in the message:
+
+```
+9346f04  Measure the Stage B chaos: the rollout is bimodal, not merely noisy
+cca17da  Visual rollout inspection; retract an unreproducible Stage B number
+b044bd1  Stage B eval: receding-horizon vs sample-and-select (honest result: a tie)   ← title now wrong, see §3.4
+c794308  Stage B: receding-horizon differentiable inspection trajectories
+874ba30  Wire delta/alpha through the Stage-1 harness and ablate
+4a673bd  Add VisibilityBackbone interface (HPRO | NVPS | ensemble)
+8bd8f7c  Fix two defects in HPRO's memory-efficient path (alpha frame, float32 accumulator)
+bbeb8a6  Reposition research plan: NeOF (RA-L 2024) occupies differentiable placement
+```
+
+Before opening an MR: `b044bd1`'s subject line ("honest result: a tie") is **superseded** —
+the tie was retracted in `9346f04`. Squash or re-word it, or the history reads as a claim
+the work later disproved.
+
+### 0.2 The four things that actually matter
+
+1. **The paper's original headline is dead (§5.2).** [NeOF, RA-L
+   2024](https://arxiv.org/abs/2412.08266) already does gradient-based joint 6-DoF camera
+   placement on point clouds with normals, occlusion, FOV and a hybrid — in the target
+   venue. Static differentiable *placement* is occupied. **Decision taken (Krystof):
+   trajectories/online lead; offline placement follows as a comparison against NeOF *and*
+   the thesis's own set-cover+VRP pipeline.**
+2. **Stage B does not clear its own go/no-go bar (§3.4, §6.6).** Oracle greedy+route still
+   wins the offline race (≈0.78 vs 0.742 coverage at 8.77 m), and the warm-start advantage
+   is only **~1.3×** on a static mesh, not the order of magnitude §6.4(iii) assumed.
+3. **The rollout is bimodal — single Stage B numbers are coin flips (§3.4 item 1).**
+   Identical config+seed across 8 processes: 0.563 ×7, 0.933 ×1. This already produced one
+   retracted result. **Rule: ≥5 runs, mean ± std, n — always.**
+4. **The planner is mobility-limited, not coverage-limited (§3.4 item 2).** Motion decays
+   0.7 → 0.05 m/cycle by cycle 25; the last ~15 of 40 cycles buy nothing. This is the
+   biggest lever left.
+
+### 0.3 Next actions, in the order they should be done
+
+1. **Fix the stall** (§3.4 item 2) — the real blocker, and worth more than any further
+   weight tuning (the weights are chaotic anyway, see §3.4 item 1). Implement §6.4 item 4
+   *as designed*: a real two-timescale global pass (greedy/TSP over demand-cluster
+   centroids supplying visit order + terminal cost). Only a single soft-min attractor
+   exists today. Alternatives if that is not enough: restarts/annealing, or an explicit
+   "leave the exhausted region" term.
+2. **Make Stage B statistically honest** — aggregate ≥5 runs everywhere.
+   `eval_trajectory.py` already prints per-seed spread + the cross-process warning; the
+   λ weights must then be **re-derived over seeds** (λ_terminal=5.0 is currently arbitrary).
+3. **Optionally harden reproducibility**: `torch.use_deterministic_algorithms(True)` +
+   `CUBLAS_WORKSPACE_CONFIG=:4096:8`. This does **not** remove the chaos (different seeds
+   still diverge), but it makes tuning and debugging honest instead of a lottery.
+4. **Then, and only then, the outdated-mesh experiment** (§7 step 5) — the one place the
+   headline can still be won. Built on single rollouts today it would measure noise, which
+   is why this session stopped short of it. What is missing is only *mutating the world
+   mid-rollout*: demand updates from executed poses and the shifted warm start already
+   exist in `trajectory.py`. The baseline must be **forced to re-raycast** its candidates,
+   which is exactly what a static mesh lets it avoid.
+5. Stage A steps 2–3 (normal gate, quality weighting, self-calibration) remain undone and
+   are still prerequisites for trusting any trajectory objective.
+
+### 0.4 Open decisions for Krystof
+
+- **Is the stall fix worth it before the go/no-go?** If §6.4 item 4 does not un-stall the
+  planner, §6.6 says stop and reconsider the venue rather than pad Stage C. That call has
+  not been made.
+- **δ/α defaults stay off** (§3.3) pending Stage-2 *calibration* evidence — the ablation
+  proves they raise single-view F1, which is not the same as helping the optimizer.
+- **OptiX 8.0.0 needs a (free, gated) NVIDIA developer login** to finish `triro` and the
+  last failing test (§1). Everything else in the `inspection` env is built and green
+  (125/126).
+
+### 0.5 File map (what this session added to `hpro/`)
+
+| File | Role |
+|---|---|
+| `frustum.py` | Camera model (Zhou 6D rotation, soft frustum mask) lifted out of `HPRO_limited` so any backbone can share it. |
+| `backbones.py` | `VisibilityBackbone` ABC + `HPROBackbone`, `NVPSBackbone`, `EnsembleBackbone`, `make_backbone`. `prepare()` holds per-cloud cost; `forward()` returns (V,N) differentiable scores. ocnn imported lazily. |
+| `visibility_layer.py` | `GatedVisibilityLayer` = backbone × shared camera model. **Where the normal gate and quality weighting (Stage A step 2) should attach**, so every backbone inherits them at once. |
+| `ocnn_compat.py` | Mandatory `OCNN_DISABLE_TRITON=1` shim — **import before `ocnn`** (§1). |
+| `trajectory.py` | Receding-horizon planner (C4). Carries the bimodality warning at module level. |
+| `eval_trajectory.py` | Stage B harness vs oracle greedy+route. Prints per-seed spread. |
+| `viz_trajectory.py` | **Look at this before trusting any number** — it is what caught both the stall and the retracted result. |
+| `smoke_test.py` | 8/8 CPU checks; guards every fix above (see §8.1). |
 
 ---
 
@@ -61,7 +167,7 @@ out to be *fast* (§4) — the old "~30 s" was triton's JIT compile, not the mod
 
 ```bash
 alias ipy=/home/troja-lab-02/miniconda3/envs/isaaclab/bin/python
-ipy hpro/smoke_test.py          # 5/5 checks pass
+ipy hpro/smoke_test.py          # 8/8 checks pass (§8.1)
 ipy hpro/eval_multi.py ...      # runs on GPU, ~1–5 s per optimization at N=3000
 ```
 
@@ -514,6 +620,12 @@ scratch when the world changes, and NeOF must refit its neural field; a gradient
 on a *fitting-free* surrogate keeps stepping from its current solution. That is a property
 neither prior method has, and it is what makes the online setting ours.
 
+> ⚠️ **This headline is an aspiration, not a finding (status 2026-07-16).** §3.4 currently
+> contradicts both halves of its second sentence: we do **not** beat the discrete pipeline
+> offline (oracle greedy wins), and NeOF has not been run at all. The warm-start clause
+> survives only in the *changing-world* setting, which is untested (§7 step 5). Do not
+> write this sentence into a draft until the outdated-mesh experiment supports it.
+
 ### 6.2 Contribution stack
 
 *Presentation order is now **C4 → C2 → C1 → C3 → C5** (§6.1). C1 and C3 are supporting
@@ -731,7 +843,19 @@ distance-invariance theory, which remain unclaimed.
   there is **no paper** at RA-L — the offline half alone is too close to NeOF. Treat
   Stage B as go/no-go: if receding-horizon + warm-start cannot beat a discrete re-solve on
   wall-clock *and* match it on coverage, stop and reconsider the venue rather than padding
-  the offline section.
+  the offline section. **Status 2026-07-16: not cleared** — greedy still wins the offline
+  race and warm-start is only 1.3× on a static mesh (§3.4). The bar is not yet failed
+  either: the discriminating experiment (outdated-mesh, where the baseline must re-raycast)
+  is unrun, and the planner stalls for a reason that looks fixable (§0.3).
+- *🚨 Measurement risk: the planner is chaotic, and it has already fooled us once.* A
+  rollout is bit-deterministic within a process but **bimodal across processes** (0.563 ×7,
+  0.933 ×1 at identical config+seed — §3.4 item 1). A "tuned" 0.933 was reported as a
+  result and had to be retracted; the λ sweep behind it was fitting per-process noise. Any
+  Stage B claim from <5 runs is a coin flip. This also means **every knob tuned so far is
+  untrustworthy**, λ_terminal=5.0 above all. Re-derive over seeds before drafting anything.
+- *Process risk: look at the pictures.* Both of the above were invisible in the summary
+  tables and obvious in `viz_trajectory.py`'s output within one figure. Scalars hid a
+  stalled robot and a bimodal result for an entire session.
 - *The literature must be re-swept before drafting.* This plan asserted a false gap for
   months because nobody searched for "camera placement" (the term the graphics/vision side
   uses) as opposed to "inspection planning" (the robotics term). Sweep both vocabularies —
@@ -770,12 +894,16 @@ front.*
 
 **Stage B — trajectories and online (the headline, §6.4).**
 
-4. ~~Receding-horizon trajectory variant~~ — **done 2026-07-16** (`trajectory.py`,
-   `eval_trajectory.py`); see §3.4. Outcome: the planner works, warm-starting cuts replan
-   cost 4.5–5×, and the audit gives C2 its cleanest evidence — but **the offline race only
-   ties oracle greedy at matched coverage, and the warm-start advantage is only ~1.3× over
-   a discrete re-solve because a static mesh lets the baseline cache its ray-casts.**
-   Remaining: route with the existing VRP; Isaac Sim rollout figure.
+4. ~~Receding-horizon trajectory variant~~ — **built 2026-07-16** (`trajectory.py`,
+   `eval_trajectory.py`, `viz_trajectory.py`); see §3.4. Outcome, stated as measured:
+   the planner works, warm-starting cuts replan cost 4.5–5×, and the audit gives C2 its
+   cleanest evidence — but **oracle greedy still wins the offline race** (≈0.78 vs 0.742 at
+   8.77 m; its curve lies above ours at every path length), the warm-start advantage is only
+   **~1.3×** over a discrete re-solve because a static mesh lets the baseline cache its
+   ray-casts, and **the rollout is bimodal so single numbers are coin flips** (§3.4 item 1).
+   **Blocking issue: the planner stalls** — motion decays to ~0.05 m/cycle and the last ~15
+   of 40 cycles buy nothing. Fix that (§0.3 action 1) before anything else.
+   Remaining after that: route with the existing VRP; Isaac Sim rollout figure.
 5. **Online construction (§6.4) — now the critical path, not a follow-on.** §3.4 shows the
    static setting cannot demonstrate the headline: the discrete baseline only pays its
    ~1.5 s of candidate ray-casting when the world *changes*. So the **outdated-mesh
@@ -821,8 +949,15 @@ original frustum evaluation remain in [`RESULTS.md`](RESULTS.md).
 ### 8.1 Backbone interface (§7 step 1, added 2026-07-16)
 
 ```bash
-$ipy hpro/smoke_test.py            # 7/7, includes backbone-equivalence checks
+$ipy hpro/smoke_test.py            # 8/8 — CPU-only, no external assets, ~seconds
 ```
+
+The 8 checks are the regression net for everything this session fixed: shapes; soft-vs-hard
+frustum; behind-camera suppression; finite gradients; batch==loop; **mem-path==batched
+across α/δ configs** (guards the α-frame and float32-accumulator fixes, §2); **backbone
+layer == `HPRO_limited`** (pins the new interface to the Stage-1-validated operator);
+**trajectory losses** (guards the terminal-attractor fix — it must track remaining demand,
+never the object's interior centroid). Each was verified to *fail* on the pre-fix code.
 
 `backbones.py` exposes the occlusion models behind one interface, and
 `visibility_layer.py` gates any of them with the shared camera model from `frustum.py`:
@@ -842,3 +977,40 @@ Correctness is pinned by equivalence rather than by re-deriving the maths: `HPRO
 (max |Δ| = 0), and `NVPSBackbone` reproduces `diagnostics/diag_nvps_stage2.nvps_w_combined`
 bit-exactly — so every number in §3 stands unchanged. `make_backbone` filters kwargs per
 backbone, so one config dict can drive a sweep over all three.
+
+### 8.2 δ/α ablation (§3.3) and Stage B (§3.4), added 2026-07-16
+
+```bash
+# Stage-1 harness. The first command reproduces RESULTS.md exactly (F1=0.911,
+# baseline 0.907) and is the regression check that the δ/α wiring changed nothing.
+$ipy hpro/eval_frustum.py --mesh_dir hpro --num_poses 12 --num_points 3000 --no_show
+$ipy hpro/eval_frustum.py --num_points 10000 --num_poses 20 --no_show \
+    --out hpro/results/ablation_delta_alpha
+
+# Stage B: trajectories vs oracle greedy+route. Prints per-seed spread -- read it,
+# a mean over few seeds hides the bimodality (§3.4 item 1).
+$ipy hpro/eval_trajectory.py --seeds 3 --max_cycles 40 --budgets "5,10,20,30,40" \
+    --n_candidates 300 --backbones nvps,hpro --no_show
+
+# LOOK AT THE ROLLOUT. This is what caught both the stall and the retracted number;
+# neither was visible in the summary tables.
+$ipy hpro/viz_trajectory.py --backbones nvps,hpro --max_cycles 40 [--animate]
+```
+
+`viz_trajectory.py` writes into `hpro/results/viz/`:
+`rollout_3d.png` (cloud coloured by audited coverage + executed path + frustums — a knot of
+bunched poses *is* the stall), `surrogate_vs_truth.png` (green = claimed visible and truly
+seen, **red = claimed visible but ray-cast says occluded** — HPRO's worst pose claims 1082
+and sees 473; this is the C2 story as a picture), and `diagnostics.png` (coverage-vs-metres
+against the baseline, **motion-per-cycle** — flat means stalled, and the audit gap).
+
+**To reproduce the bimodality finding** (§3.4 item 1) you must run *separate processes* —
+repeating inside one process is bit-identical and will falsely reassure you:
+
+```bash
+for i in $(seq 1 8); do $ipy - <<'PY'
+# ... build layer, then:
+# receding_horizon_plan(layer, pts_np, audit, TrajectoryConfig(max_cycles=40, seed=0))
+PY
+done   # expect ~7x 0.563 and ~1x 0.933
+```
