@@ -90,10 +90,18 @@ class TrajectoryConfig:
     lr: float = 3e-2
     max_cycles: int = 40
     target_coverage: float = 0.95
-    lambda_length: float = 0.05
+    # Tuned on the wreck, seed 0, NVPS backbone (see RESEARCH_PLAN.md §3.4).
+    # The original lambda_length=0.05 / lambda_terminal=0.02 made the robot
+    # stall: once local demand is exhausted the coverage gradient vanishes, and
+    # the length penalty (0.05 x ~3.6 m = 0.18) outvoted the terminal pull
+    # (0.02 x ~4 = 0.08) -- the only term that can steer toward fresh geometry.
+    # The rollout then crawled at ~0.05 m/cycle and finished at 0.53 coverage.
+    # These weights are sensitive and non-monotone; treat them as a starting
+    # point, not a converged choice.
+    lambda_length: float = 0.01
     lambda_smooth: float = 0.01
     lambda_standoff: float = 1.0
-    lambda_terminal: float = 0.02
+    lambda_terminal: float = 5.0
     near_dist: float = 0.5
     far_dist: float = 1.5
     step_size: float = 0.6

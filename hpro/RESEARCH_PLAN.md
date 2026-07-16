@@ -235,6 +235,66 @@ read off a partially-pinned filter should be re-derived from the CSV.**
 
 ---
 
+### 3.4 Stage B first results — receding-horizon vs sample-and-select (2026-07-16)
+
+`trajectory.py` (planner) + `eval_trajectory.py` (harness). Wreck, N=3000, **tight camera**
+(fov 30°×35°, near/far 0.1/1.5, standoff band 0.5–1.5) — one view now sees **4.5 %** of the
+surface (mean over 8 random poses), so this is the §6.3 regime, not the old far=6.0 toy
+where a single view saw 40–80 %. Baseline: 300 normal-offset candidates → **oracle** greedy
+set-cover on hard ray-cast visibility → nearest-neighbour + 2-opt routing. 3 seeds.
+
+| Method | Coverage | Path (m) | cov/m |
+|---|---|---|---|
+| greedy+route V=5 | 0.711 | 7.49 | 0.095 |
+| greedy+route V=10 | 0.886 | 10.75 | 0.082 |
+| greedy+route V=20 | 0.966 | 15.89 | 0.061 |
+| greedy+route V=40 | 0.990 | 23.56 | 0.042 |
+| receding-horizon, NVPS (default weights) | 0.533 | 3.52 | 0.157 |
+| receding-horizon, NVPS (**tuned**, seed 0) | 0.933 | 13.57 | 0.069 |
+| receding-horizon, HPRO | 0.241 | 2.33 | 0.106 |
+
+**Read this honestly — the offline race is currently a tie at best, not a win.**
+
+1. **cov/m is a trap and must not be the headline metric.** The planner's apparent 2×
+   advantage (0.157 vs 0.082) is mostly an artifact of *stopping early*: it covers 53 % and
+   quits, and a planner that takes one good photo and halts scores infinite cov/m. The
+   honest comparison is **path length at matched coverage**, and there the tuned planner
+   (0.933 @ 13.57 m) merely ties oracle greedy (0.966 @ 15.89 m) — on one tuned seed, with
+   erratic neighbours (λ_terminal=2 collapses to 0.607). Report matched-coverage path
+   length, and treat cov/m as diagnostic only.
+2. **The stall was a real bug, now fixed but not cured.** With the original weights the
+   robot crawled at ~0.05 m/cycle: once local demand is exhausted the coverage gradient is
+   ~0, and `λ_length·length` (0.18) outvoted `λ_terminal·terminal` (0.08) — the only term
+   that can steer toward fresh geometry. Defaults are now λ_length=0.01, λ_terminal=5.0.
+   The weights remain sensitive and non-monotone; restarts/annealing (§7 step 6) or a real
+   two-timescale global pass (§6.4 item 4, currently only a single soft-min attractor) are
+   the principled fixes.
+3. **⚠️ The warm-start claim does not survive the static setting.** Measured: warm replan
+   **233 ms** (NVPS) vs a discrete **re-solve of 240–360 ms**. That is ~1.3×, *not* the
+   order of magnitude §6.4(iii) assumes. The reason is structural and should have been
+   foreseen: **for a static mesh the candidate ray-casts never change**, so re-solving is
+   just greedy over cached visibility sets — cheap. The discrete pipeline only pays its
+   ~1.5 s of ray-casting again when **the world changes**. Therefore the outdated-mesh /
+   no-prior experiment (§7 step 5) is **not garnish — it is the only place the headline can
+   be won**, and until it is run, Stage B has not cleared §6.6's go/no-go bar.
+4. **HPRO is unusable as a trajectory backbone** — 0.241 coverage, and the audit explains
+   it: predicted-visible minus actually-seen is **+482…+632 points per cycle** (~20 % of the
+   cloud), versus NVPS's −13…+40. §3.2's surrogate exploitation reappears at the trajectory
+   level, now measured *directly* from execution feedback rather than inferred from the
+   soft-vs-GT gap. This is C2's cleanest evidence so far and comes free from the audit loop.
+5. **Warm-starting does work mechanically**: cold 1038 ms → warm 233 ms (NVPS), 2616 → 519
+   (HPRO), a 4.5–5× reduction from reusing the previous horizon. The mechanism is sound;
+   what is missing is a setting where the *competitor* is forced to pay full price.
+
+Reproduce:
+
+```bash
+$ipy hpro/eval_trajectory.py --seeds 3 --max_cycles 40 --budgets "5,10,20,30,40" \
+    --n_candidates 300 --backbones nvps,hpro --no_show
+```
+
+---
+
 ## 4 · NVPS deep-dive: what we're plugging in
 
 *NVPS = Wang et al., "Neural Visibility of Point Sets", SIGGRAPH Asia 2025*
@@ -642,13 +702,22 @@ front.*
 
 **Stage B — trajectories and online (the headline, §6.4).**
 
-4. Receding-horizon trajectory variant; route with the existing VRP; compare
-   coverage-per-path-meter against the thesis pipeline; Isaac Sim rollout figure.
-5. Online construction (§6.4): demand-weighted warm-started re-optimization on top of
-   step 4's receding-horizon code (demand updates from executed poses + shifted warm
-   start + budgeted steps per cycle); run the **outdated-mesh experiment** in Isaac Sim.
-   The re-planning-cost figure (warm-start vs discrete re-solve vs NeOF field refit, as a
-   function of V/N) is the quantitative core of the headline claim.
+4. ~~Receding-horizon trajectory variant~~ — **done 2026-07-16** (`trajectory.py`,
+   `eval_trajectory.py`); see §3.4. Outcome: the planner works, warm-starting cuts replan
+   cost 4.5–5×, and the audit gives C2 its cleanest evidence — but **the offline race only
+   ties oracle greedy at matched coverage, and the warm-start advantage is only ~1.3× over
+   a discrete re-solve because a static mesh lets the baseline cache its ray-casts.**
+   Remaining: route with the existing VRP; Isaac Sim rollout figure.
+5. **Online construction (§6.4) — now the critical path, not a follow-on.** §3.4 shows the
+   static setting cannot demonstrate the headline: the discrete baseline only pays its
+   ~1.5 s of candidate ray-casting when the world *changes*. So the **outdated-mesh
+   experiment** and the no-prior setting are the only places warm-starting can win.
+   Implement demand-weighted warm-started re-optimization on top of step 4 (the delta is
+   small — demand updates from executed poses + shifted warm start are already in
+   `trajectory.py`; what is missing is mutating the world mid-rollout), then measure
+   re-planning cost vs a discrete re-solve **that is forced to re-raycast**, and vs NeOF's
+   field refit, as a function of V/N. If this does not produce a clear win, §6.6's
+   go/no-go says stop and reconsider the venue rather than pad Stage C.
 
 **Stage C — offline placement, positioned as comparison.**
 
