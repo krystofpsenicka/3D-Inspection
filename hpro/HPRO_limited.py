@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from HPRO import HPRO
+import frustum as _frustum
 
 
 class HPRO_limited(nn.Module):
@@ -147,17 +148,13 @@ class HPRO_limited(nn.Module):
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 ``(look, up, right)`` each of shape ``(B, 3)``.
+
+        Note:
+            Thin wrapper kept for backward compatibility; the implementation
+            lives in :func:`frustum.six_d_to_rotation_matrix` so that non-HPRO
+            backbones can share it.
         """
-        a1 = rot_6d[:, :3]   # (B, 3) — approximate look direction
-        a2 = rot_6d[:, 3:6]  # (B, 3) — approximate up direction
-
-        # Gram–Schmidt
-        look = F.normalize(a1, dim=-1)                              # (B, 3)
-        up = a2 - (a2 * look).sum(dim=-1, keepdim=True) * look      # orthogonalise
-        up = F.normalize(up, dim=-1)                                 # (B, 3)
-        right = torch.linalg.cross(look, up)                        # (B, 3)
-
-        return look, up, right
+        return _frustum.six_d_to_rotation_matrix(rot_6d)
 
     def compute_frustum_mask(
         self,
@@ -202,38 +199,16 @@ class HPRO_limited(nn.Module):
 
         Returns:
             torch.Tensor: Frustum scores, shape ``(B, N)``, values in (0, 1).
+
+        Note:
+            Thin wrapper kept for backward compatibility; the implementation
+            lives in :func:`frustum.compute_frustum_mask` so that non-HPRO
+            backbones can share it.
         """
-        eps = 1e-6
-
-        # Vectors from viewpoint to each point: (B, 3, N)
-        v = pts - viewpoint  # viewpoint already (B, 3, 1) — broadcasts
-
-        # Project onto camera axes → (B, N)
-        depth = (v * look.unsqueeze(-1)).sum(dim=1)     # along gaze (+forward)
-        h_coord = (v * right.unsqueeze(-1)).sum(dim=1)  # along right
-        v_coord = (v * up.unsqueeze(-1)).sum(dim=1)     # along up
-
-        # Tangent-space angular coordinates (perspective divide).
-        # Clamp the denominator to a positive floor so points at or behind the
-        # camera (depth <= 0) cannot produce an exploding / div-by-zero tangent
-        # (which would yield NaN gradients). Such points are out of the frustum
-        # anyway and are suppressed by the f_near gate below, so this clamp does
-        # not affect the score of any genuinely in-frustum point.
-        depth_pos = torch.clamp(depth, min=eps)   # (B, N)
-        h_tan = h_coord / depth_pos   # (B, N)
-        v_tan = v_coord / depth_pos   # (B, N)
-
-        # FOV half-angle limits in tangent space
-        tan_h = math.tan(fov_h / 2.0)
-        tan_v = math.tan(fov_v / 2.0)
-
-        # Sigmoid gates — positive argument = inside frustum
-        f_h    = torch.sigmoid(sharpness * (tan_h - h_tan.abs()))
-        f_v    = torch.sigmoid(sharpness * (tan_v - v_tan.abs()))
-        f_near = torch.sigmoid(sharpness * (depth - near))
-        f_far  = torch.sigmoid(sharpness * (far - depth))
-
-        return f_h * f_v * f_near * f_far  # (B, N)
+        return _frustum.compute_frustum_mask(
+            pts, viewpoint, look, up, right,
+            fov_h, fov_v, near, far, sharpness,
+        )
 
     # ------------------------------------------------------------------
     # Forward pass

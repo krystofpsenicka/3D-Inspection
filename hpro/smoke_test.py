@@ -19,6 +19,8 @@ does against ray-cast ground truth). Specifically:
   6. The memory-efficient path (``fits_in_memory=False``) matches the batched
      path across alpha/delta configurations, and preserves input dtype
      (regression guard for the alpha-frame and float32-accumulator fixes).
+  7. ``GatedVisibilityLayer(HPROBackbone)`` reproduces ``HPRO_limited`` exactly,
+     pinning the backbone interface to the Stage-1-validated operator.
 
 Exit code is non-zero if any check fails.
 """
@@ -139,6 +141,51 @@ def check_finite_gradients(model, pts, cfg, gamma):
     print(f"  [ok] finite gradients: |grad| = {gn:.4g}")
 
 
+def check_backbone_layer_matches_hpro_limited(pts, cfg, gamma):
+    """``HPROBackbone`` + ``GatedVisibilityLayer`` must equal ``HPRO_limited``.
+
+    ``HPRO_limited`` is the Stage-1-validated operator (F1 0.911 on the lamp), so
+    the generalised backbone interface is pinned to it by equivalence rather than
+    by re-deriving the maths: any drift here silently invalidates §3 of
+    RESEARCH_PLAN.md. Both compute clamp(w_hpro, 0) x f_frustum, so on identical
+    input they must agree exactly, not merely closely.
+
+    NVPS/ensemble equivalence needs a GPU and the git-ignored external assets, so
+    it is verified separately (see RESEARCH_PLAN.md §8.1); this check keeps the
+    CPU-only smoke test dependency-free.
+    """
+    from backbones import HPROBackbone
+    from visibility_layer import GatedVisibilityLayer
+
+    V = 3
+    rng = np.random.default_rng(11)
+    vps_np = rng.normal(size=(V, 3))
+    vps_np = 2.0 * vps_np / np.linalg.norm(vps_np, axis=1, keepdims=True)
+    # look roughly at the origin, world-up +Z
+    r6_np = np.concatenate([-vps_np, np.tile([0.0, 0.0, 1.0], (V, 1))], axis=1)
+
+    pts_t = _to_tensor(pts.T)                       # (3, N)
+    vps = _to_tensor(vps_np)                        # (V, 3)
+    r6 = _to_tensor(r6_np)                          # (V, 6)
+
+    old = HPRO_limited(fits_in_memory=True, visibility_score_thresh=0.5,
+                       frustum_sharpness=50.0, device=DEVICE, **cfg)
+    _, _, w_old = old(pts_t.unsqueeze(0).expand(V, -1, -1), vps, r6, gamma=gamma)
+
+    layer = GatedVisibilityLayer(
+        HPROBackbone(gamma=gamma, k=10, device=DEVICE),
+        frustum_sharpness=50.0, device=DEVICE, **cfg,
+    )
+    w_new = layer(pts_t, vps, r6)
+
+    assert w_new.shape == w_old.shape, \
+        f"layer shape {tuple(w_new.shape)} != HPRO_limited {tuple(w_old.shape)}"
+    diff = float((w_old - w_new).abs().max())
+    assert diff == 0.0, \
+        f"GatedVisibilityLayer(HPROBackbone) differs from HPRO_limited by {diff:.3g}"
+    print(f"  [ok] backbone layer == HPRO_limited: max |Δw| = {diff:.2e}")
+
+
 def check_memory_path_matches_batched(pts, gamma):
     """``fits_in_memory=False`` must reproduce the batched path exactly.
 
@@ -241,6 +288,8 @@ def main():
         ("finite-gradients", lambda: check_finite_gradients(model, pts, cfg, gamma)),
         ("batch==loop", lambda: check_batch_matches_loop(model, pts, gamma)),
         ("mem-path==batched", lambda: check_memory_path_matches_batched(pts, gamma)),
+        ("backbone-layer==HPRO_limited",
+         lambda: check_backbone_layer_matches_hpro_limited(pts, cfg, gamma)),
     ]
 
     print(f"Running HPRO_limited smoke test on {DEVICE} (dtype={DTYPE})...\n")

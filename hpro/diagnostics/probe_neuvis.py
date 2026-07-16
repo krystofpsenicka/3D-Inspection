@@ -20,6 +20,7 @@ CKPT = os.environ.get("NEUVIS_CKPT",
 sys.path.insert(0, NV_DIR)
 sys.path.insert(0, HPRO_DIR)
 
+import ocnn_compat  # noqa: F401  -- must precede ocnn; see hpro/ocnn_compat.py
 import ocnn
 from ocnn.octree import Points, Octree
 from models import MyNet, get_embedder          # neural-visibility

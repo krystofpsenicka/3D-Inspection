@@ -48,6 +48,17 @@ The `isaaclab` conda env runs everything in `hpro/`:
 - `embreex` 4.4.0 — installed 2026-07-10 (fast Embree ray-cast ground truth).
 - `ocnn` 2.3.2 — installed 2026-07-10 (octree ops for the NVPS backbone).
 
+**ocnn × triton incompatibility (found 2026-07-16).** ocnn 2.3.2's Triton conv kernels do
+not compile under the triton 3.3 that ships with torch 2.7 — every NVPS forward pass died
+with `AttributeError("'NoneType' object has no attribute 'type'")`, i.e. *all* NVPS
+diagnostics in §8 were broken. The kernel guards its bias load with `if bias is not None`
+but passes `bias` as a plain (non-`constexpr`) argument, so newer triton traces the branch
+with `bias=None`; NVPS's convs are bias-free, so it always fires. `hpro/ocnn_compat.py`
+sets ocnn's supported `OCNN_DISABLE_TRITON=1` fallback and **must be imported before
+`ocnn`** — `backbones.py` and both NVPS diagnostics do this, so no manual env var is
+needed. Consequences: the §3.1 numbers reproduce exactly, and the pure-PyTorch path turns
+out to be *fast* (§4) — the old "~30 s" was triton's JIT compile, not the model.
+
 ```bash
 alias ipy=/home/troja-lab-02/miniconda3/envs/isaaclab/bin/python
 ipy hpro/smoke_test.py          # 5/5 checks pass
@@ -153,9 +164,15 @@ Load-bearing observations:
 
 **Mechanics.** An octree U-Net (depth 8, feature `LP` = local coords + global position,
 6 channels; cloud normalized into a [−0.8, 0.8] box) produces a view-independent 63-d
-feature per point, **once per cloud** (~30 s in pure-PyTorch `ocnn` on the 3090 — the
-paper's 75 ms does not reproduce here, but for a static inspection target it is a one-time
-cost). Per (point, view): the feature is multiplied elementwise with a 63-d NeRF-style
+feature per point, **once per cloud**. *Corrected 2026-07-16: this costs ~24 ms at
+N=3000, not the ~30 s recorded earlier — a 1000× error.* The old figure was `triton`'s
+JIT/autotune compilation being charged to the model on the first call; with ocnn's
+pure-PyTorch path (§1) the measured cost is 24 ms (N=3000), 29 ms (N=20k), 39 ms (N=100k),
+CUDA-synchronised, after a one-time ~380 ms warm-up. NVPS therefore **beats** the paper's
+reported 75 ms here rather than failing to reproduce it. This is load-bearing for §6.4:
+re-featurising a growing cloud every control cycle is affordable, so the background-refresh
+thread that item 7 was built around is unnecessary. Per (point, view): the feature is
+multiplied elementwise with a 63-d NeRF-style
 positional encoding (multires 10) of the **unit** direction point−viewpoint, and a 3-layer
 MLP outputs visible/invisible logits (**class 1 = visible** — verified empirically).
 Gradients flow to the viewpoint through the direction (verified). Checkpoint
@@ -450,9 +467,11 @@ solution — a handful of steps per control cycle suffice, making the planner *a
    poses feed recursive Platt scaling (or slow fine-tuning of the 3-layer NVPS head).
    Offline the audit is a ray-cast against the mesh; online it is the sensor itself —
    same mechanism, two instantiations. This symmetry is a selling point of the paper.
-7. **Backbones, two-timescale again.** NVPS features are per-cloud and cost ~30 s here —
-   refresh them in a background thread while optimizing against the slightly stale
-   feature set. Early in a no-prior mission the accumulated cloud is sparse and partial —
+7. **Backbones.** *(Simplified 2026-07-16 — the premise was wrong.)* NVPS features cost
+   **~24 ms per cloud, not ~30 s** (§4), so they can simply be recomputed every control
+   cycle: no background thread, no stale-feature reasoning, no two-timescale machinery
+   here. Delete that complexity from the design. What survives is the *distribution*
+   argument: early in a no-prior mission the accumulated cloud is sparse and partial —
    out-of-distribution for NVPS (trained on complete ShapeNet objects) but natural for
    HPRO (any point set works, and O(N²) is cheap at small N). So: **HPRO backbone early /
    local, NVPS as the cloud completes** — the complementarity of §3 turned into a
@@ -582,3 +601,28 @@ The NVPS scripts expect `hpro/external/neural-visibility/` and
 `hpro/external/neuvis_00040.pth` (see §1 for download commands), overridable via the
 `NEUVIS_DIR` / `NEUVIS_CKPT` env vars. Stage-1 results and reproduction commands for the
 original frustum evaluation remain in [`RESULTS.md`](RESULTS.md).
+
+### 8.1 Backbone interface (§7 step 1, added 2026-07-16)
+
+```bash
+$ipy hpro/smoke_test.py            # 7/7, includes backbone-equivalence checks
+```
+
+`backbones.py` exposes the occlusion models behind one interface, and
+`visibility_layer.py` gates any of them with the shared camera model from `frustum.py`:
+
+```python
+from backbones import make_backbone
+from visibility_layer import GatedVisibilityLayer
+
+backbone = make_backbone("nvps", device="cuda")   # "hpro" | "nvps" | "ensemble"
+backbone.prepare(pts_np, normals_np)              # one-time per cloud (~24 ms)
+layer = GatedVisibilityLayer(backbone, fov_h=..., fov_v=..., near=..., far=...)
+w = layer(pts_t, viewpoints, rot_6d)              # (V, N), differentiable
+```
+
+Correctness is pinned by equivalence rather than by re-deriving the maths: `HPROBackbone`
++ `GatedVisibilityLayer` reproduces the Stage-1-validated `HPRO_limited` **bit-exactly**
+(max |Δ| = 0), and `NVPSBackbone` reproduces `diagnostics/diag_nvps_stage2.nvps_w_combined`
+bit-exactly — so every number in §3 stands unchanged. `make_backbone` filters kwargs per
+backbone, so one config dict can drive a sweep over all three.
