@@ -1,6 +1,6 @@
 # Differentiable Inspection Planning with Visibility Surrogates — Audit, Evidence & Publication Plan
 
-*Status as of 2026-07-10. Covers: implementation audit of the HPRO extension (Stages 1–2),
+*Status as of 2026-07-16. Covers: implementation audit of the HPRO extension (Stages 1–2),
 integration of the NVPS neural visibility model as an alternative backbone, diagnostic
 experiments (all reproducible via `diagnostics/`), and the research strategy toward a
 publishable paper.*
@@ -9,11 +9,20 @@ publishable paper.*
 The Stage-2 multi-viewpoint optimizer is correctly *coded* but was methodologically
 incomplete: with the HPRO backbone, gradient refinement *reduces* true coverage on the
 concave wreck mesh while the soft objective climbs to ≈1.0 — the optimizer exploits the
-miscalibrated visibility proxy. Swapping in the pretrained NVPS backbone (integrated
-today) flips the result: **refinement beats oracle greedy on the wreck (0.941 vs 0.938 at
-V=5)** where HPRO lost (0.915). The two operators fail in exactly complementary ways, and
-that complementarity — plus the surrogate-exploitation phenomenon itself — is the
-intellectual core of a strong RA-L/ICRA paper.
+miscalibrated visibility proxy. Swapping in the pretrained NVPS backbone flips the result:
+**refinement beats oracle greedy on the wreck (0.941 vs 0.938 at V=5)** where HPRO lost
+(0.915). The two operators fail in exactly complementary ways.
+
+**⚠ Positioning corrected 2026-07-16 (see §5).** An earlier draft of this plan claimed that
+*"nobody offers gradient-based joint refinement of camera positions and orientations
+against a differentiable occlusion-aware visibility model on point clouds."* **That claim
+is false.** [NeOF (Cao et al., RA-L 2024)](https://arxiv.org/abs/2412.08266) does exactly
+that — on point clouds with normals, over full 6-DoF poses, with occlusion, FOV, a normal
+gate, and a gradient/non-gradient hybrid — in this plan's own target venue. Static
+differentiable camera *placement* is therefore **occupied ground**. What remains unclaimed
+is **trajectories and online construction** (§6.4), which is now the headline; offline
+placement follows as a second contribution, benchmarked against NeOF *and* against this
+thesis's own combinatorial (set-cover + VRP) pipeline.
 
 ---
 
@@ -34,7 +43,7 @@ intellectual core of a strong RA-L/ICRA paper.
 
 The `isaaclab` conda env runs everything in `hpro/`:
 
-- Python 3.11, torch 2.11.0+cu128 (CUDA verified, RTX 3090), trimesh 4.5.1, rtree,
+- Python 3.11, torch 2.7.0+cu128 (CUDA verified, RTX 3090, 24 GB), trimesh 4.5.1, rtree,
   scipy, matplotlib — already present.
 - `embreex` 4.4.0 — installed 2026-07-10 (fast Embree ray-cast ground truth).
 - `ocnn` 2.3.2 — installed 2026-07-10 (octree ops for the NVPS backbone).
@@ -182,20 +191,78 @@ the pretrained model already clears the bar on the wreck.
 
 ## 5 · Where a paper fits
 
-**The gap is real.** HPRO (CGF 2025) demonstrates only single-viewpoint, fixed-distance,
-angle-only optimization of a full-360° operator. NVPS (SIGGRAPH Asia 2025) beats HPRO on
-raw accuracy/speed but has **no frustum model, no multi-view coverage, no planning**,
-needs synthetic training labels, and self-reports failures on thin structures and
-multi-layer occlusion. Classical inspection planning (structural-inspection planners, CPP
-surveys, recent UAV work like QECI-CPP and multi-UAV inspection trajectory planning) is
-uniformly *sample-then-select*: discrete candidate viewpoints, set cover / ILP, then
-routing — exactly the decomposition of this thesis's pipeline, whose suboptimality
-motivates the work. **Nobody currently offers gradient-based joint refinement of camera
-positions and orientations against a differentiable occlusion-aware visibility model on
-point clouds** — nor trajectory generation on top of it.
+### 5.1 What the backbone papers do (and don't)
+
+HPRO (CGF 2025) demonstrates only single-viewpoint, fixed-distance, angle-only
+optimization of a full-360° operator. NVPS (SIGGRAPH Asia 2025) beats HPRO on raw
+accuracy/speed but has **no frustum model, no multi-view coverage, no planning**, needs
+synthetic training labels, and self-reports failures on thin structures and multi-layer
+occlusion. Neither does planning.
+
+### 5.2 The prior art that *does* occupy differentiable camera placement
+
+This is the correction of 2026-07-16. Two papers must be cited, compared against, and
+beaten — not ignored:
+
+**[NeOF — Cao et al., "Neural Observation Field Guided Hybrid Optimization of Camera
+Placement", RA-L 2024](https://arxiv.org/abs/2412.08266)**
+([code](https://github.com/yhanCao/NeOF-HybridCamOpt)). Accepted in *this plan's target
+venue*. What it already does:
+
+| Claim we might have made | NeOF's status |
+|---|---|
+| Point-cloud target, no reconstruction | Target is a point cloud `{s_j, n_j}` with normals |
+| Joint 6-DoF pose optimization | `P = ⟨p_i, r_i⟩`, positions **and** orientations in SO(3) |
+| Differentiable visibility, gradients to the pose | Neural observation field, backprop to pose in PyTorch |
+| Normal / back-face gate | Camera-to-object angle `φ^co` built from `n_j` |
+| Frustum + measurement quality | Models FOV, image blur, occlusion; camera-to-camera angle `φ^cc` |
+| Hybrid discrete–continuous | Gradient stage + non-gradient elite resampling of poor cameras |
+| Periodic ray-cast audit / re-anchoring | `ShapeAnalyze` recomputes visibility and re-fits the field every iteration |
+
+Their occlusion model is *the HPR family itself* — "spherical inverse flipping and convex
+hull construction", i.e. Katz et al., HPRO's direct ancestor. Baselines: GA, SA, PSO, DE,
+MIP, GNN. They also build a real six-camera capture rig.
+
+**[Moraza et al., "Geometry-Based Differentiable Camera Placement for Optimal 3D
+Coverage", VISAPP 2026](https://www.scitepress.org/Papers/2026/143358/143358.pdf).**
+Differentiable rendering (PyTorch3D Z-buffer) on a **known mesh**; camera *positions* are
+learnable while orientation is fixed by a look-at transform (3-DoF, not 6). Its
+"At-Least-Once" coverage loss is `L = 1/N Σ_v (1 − P_v)` with
+`P_v = 1 − Π_i (1 − P_{i,v})` — **algebraically identical to our soft set-cover `C`** — and
+it already includes an incidence-angle term `σ(θ) = 1/(1+e^{−β(cos θ − cos τ)})`. So C1's
+"photogrammetric terms none of the visibility papers model" is **already claimed**. It
+beats NeOF on COG/OAQ on 4 meshes at M ∈ {3,5,7,9}.
+
+### 5.3 What is genuinely left
+
+1. **Trajectories and online construction (§6.4) — wide open.** Both NeOF and Moraza et al.
+   solve *static placement* of a camera set. Neither has trajectories, receding-horizon
+   replanning, warm-starting, demand-weighted coverage, or no-prior exploration. **This is
+   the headline.**
+2. **Surrogate exploitation as a named, characterized phenomenon (C2).** NeOF *works
+   around* it — refitting its field against recomputed visibility every iteration is an
+   implicit re-anchoring — but never names it, never shows the failure, never contrasts
+   backbones. Our §3 evidence (soft C → 1.0 while GT coverage falls; standoff collapse
+   2.7→2.0; the HPRO/NVPS inversion) is a real diagnosis. Note this *reduces* C2's novelty
+   from "nobody does audits" to "nobody explains why audits are necessary" — still
+   publishable, but as analysis, not invention.
+3. **Direct differentiable operator vs. fitted field.** NeOF must *fit and continually
+   refit a per-scene neural field* to obtain gradients; HPRO/NVPS differentiate the
+   visibility operator directly, with no per-scene fitting. Defensible and architecturally
+   cleaner — but a subtler claim than "we introduce gradients here", and it must be shown
+   empirically (accuracy, wall-clock, scaling in V), not asserted.
+4. **Comparison against a real combinatorial inspection pipeline.** Neither prior paper
+   compares to a full sample→set-cover→VRP inspection stack. This thesis has one; that
+   comparison is ours to make.
+
+Classical inspection planning (structural-inspection planners, CPP surveys, QECI-CPP,
+multi-UAV inspection) remains uniformly *sample-then-select* — the decomposition whose
+suboptimality motivates the work.
 
 Key references: [HPRO](https://www.ee.technion.ac.il/~ayellet/Ps/25-KT.pdf) ·
 [NVPS](https://arxiv.org/abs/2509.24150) ·
+[NeOF, RA-L 2024](https://arxiv.org/abs/2412.08266) ·
+[Moraza et al., VISAPP 2026](https://www.scitepress.org/Papers/2026/143358/143358.pdf) ·
 [QECI-CPP, Drones 2024](https://www.mdpi.com/2504-446X/8/8/394) ·
 [Multi-UAV 3D inspection, 2022](https://arxiv.org/pdf/2204.10070) ·
 [Multiobjective CPP, 2019](https://arxiv.org/pdf/1901.07272).
@@ -206,40 +273,69 @@ Key references: [HPRO](https://www.ee.technion.ac.il/~ayellet/Ps/25-KT.pdf) ·
 
 ### 6.1 Headline claim
 
-> *Joint gradient-based optimization of full 6-DoF camera poses — and trajectories — over
-> differentiable point-cloud visibility surrogates produces inspection plans that beat
-> discrete sample-and-select planning, without surface reconstruction and without
-> target-specific training.*
+*Revised 2026-07-16 to sit in the ground §5.3 leaves open. The old headline ("joint
+gradient-based optimization of 6-DoF poses beats sample-and-select") is, as stated, NeOF's
+claim from 2024 — it cannot lead this paper.*
+
+> *Differentiable point-cloud visibility surrogates turn inspection planning from a
+> static pose-selection problem into a continuously re-optimizable **trajectory** problem:
+> a receding-horizon planner that warm-starts across updates, repairs plans online when
+> the world contradicts the prior model, and needs no surface reconstruction and no
+> target-specific training. Gradient-based **placement** is the special case, where we
+> also beat the discrete set-cover + VRP pipeline and match/exceed NeOF.*
+
+The load-bearing word is **warm-starting**: discrete set-cover/VRP must re-solve from
+scratch when the world changes, and NeOF must refit its neural field; a gradient optimizer
+on a *fitting-free* surrogate keeps stepping from its current solution. That is a property
+neither prior method has, and it is what makes the online setting ours.
 
 ### 6.2 Contribution stack
 
-- **C1 — A backbone-agnostic differentiable visibility layer for real cameras.** The
+*Presentation order is now **C4 → C2 → C1 → C3 → C5** (§6.1). C1 and C3 are supporting
+infrastructure, not headline claims — §5.2 shows both are substantially anticipated. They
+are numbered as before to keep cross-references stable.*
+
+- **C1 — A backbone-agnostic differentiable visibility layer for real cameras.**
+  *(Infrastructure, not a novelty claim — NeOF has a normal gate and FOV model; Moraza et
+  al. have an incidence-angle term. Present as engineering that enables C4, and compete on
+  the fitting-free property and on accuracy, not on the ingredient list.)* The
   frustum-gated 6-DoF operator (done) with two interchangeable occlusion backbones —
   analytic HPRO and neural NVPS — behind one interface, plus a differentiable back-face
-  gate σ(−s·⟨n, dir⟩) from the target normals (inspection targets come with normals; the
-  HPR family never uses them *because it assumes none exist*) and a measurement-quality
-  weight (incidence angle × 1/distance² — the photogrammetric terms none of the visibility
-  papers model; also restores distance sensitivity that NVPS lacks). Theory:
+  gate σ(−s·⟨n, dir⟩) from the target normals (the HPR family itself never uses them
+  *because it assumes none exist* — though NeOF, built on HPR, does) and a
+  measurement-quality weight (incidence angle × 1/distance²; the 1/distance² term and the
+  restoration of the distance sensitivity NVPS structurally lacks are the parts Moraza et
+  al. do not have). Theory:
   limit-correctness of the gated operator (follows from HPRO's Lemmas 4.1–4.2 as
   sharpness→∞, γ→Γ); the NVPS distance-invariance proposition with its shield/blindness
   consequences.
 
-- **C2 — Characterization and control of surrogate exploitation.** The §3 phenomenon —
-  pose optimization adversarially exploits miscalibrated visibility — presented with the
+- **C2 — Characterization and control of surrogate exploitation.** *(Now the paper's
+  second pillar and its main analytical contribution.)* The §3 phenomenon — pose
+  optimization adversarially exploits miscalibrated visibility — presented with the
   HPRO/NVPS contrast as evidence it is a property of the surrogate, not the planner.
   Controls, in escalating novelty: score sharpening with annealed temperature;
   **target-specific self-calibration** — model-based inspection *knows the mesh*, so
   ray-cast a few dozen calibration poses and fit a cheap correction (Platt scaling, or
   fine-tune the 3-layer VisNet head in minutes) before optimizing; periodic ray-cast
   audits during optimization whose disagreement re-anchors the objective.
-  Self-calibration is cheap, principled, and nobody does it.
+  **Honesty check:** NeOF's per-iteration `ShapeAnalyze` + field refit is already an
+  implicit audit/re-anchor loop, so "nobody does audits" is false. The defensible claim is
+  narrower and still strong: *nobody names, isolates, or measures the exploitation
+  phenomenon that makes such loops necessary*, and nobody shows it is backbone-dependent
+  (HPRO collapses, NVPS does not, and §4 explains structurally why). Pitch C2 as
+  diagnosis + a cheaper fitting-free control, not as inventing calibration.
 
-- **C3 — Hybrid discrete–continuous coverage planning.** Greedy on candidates (keeps the
-  (1−1/e) anchor) → joint 6-DoF gradient refinement of all poses (escapes candidate
-  discretization; already +0.3 pts un-tuned on the wreck). Optional backbone ensemble
-  max(w_HPRO-gated, w_NVPS) to cover both failure classes — the lamp-vs-wreck table is
-  the built-in ablation motivating it. Headline metric: viewpoints needed for target
-  coverage, then path length after routing.
+- **C3 — Hybrid discrete–continuous coverage planning.** *(Anticipated by NeOF's
+  gradient + elite-resampling hybrid — supporting contribution only.)* Greedy on
+  candidates (keeps the (1−1/e) anchor) → joint 6-DoF gradient refinement of all poses
+  (escapes candidate discretization; already +0.3 pts un-tuned on the wreck). Our
+  distinction from NeOF: the discrete anchor is a *submodular greedy with an approximation
+  guarantee*, not heuristic resampling, and it reappears at the trajectory level as the
+  two-timescale hierarchy in §6.4/4 — that reuse is the interesting part. Optional
+  backbone ensemble max(w_HPRO-gated, w_NVPS) to cover both failure classes — the
+  lamp-vs-wreck table is the built-in ablation motivating it. Headline metric: viewpoints
+  needed for target coverage, then path length after routing.
 
 - **C4 — Differentiable inspection trajectories.** The "gradient step, harvest seen
   points, repeat" idea formalized two ways:
@@ -261,12 +357,27 @@ Key references: [HPRO](https://www.ee.technion.ac.il/~ayellet/Ps/25-KT.pdf) ·
   TOSCA (mean±std, ≥5 seeds) for breadth; the wreck with realistic camera parameters for
   depth; baselines: random, Fibonacci, oracle-greedy, greedy-with-500-candidates (kills
   the "just add candidates" objection), operator-greedy (non-oracle), CMA-ES-on-raycast,
-  and the full thesis pipeline (coverage, path length, wall time). End with an Isaac Sim
-  rollout of the optimized trajectories — few papers in this space close that loop.
+  **NeOF** (public code at <https://github.com/yhanCao/NeOF-HybridCamOpt> — mandatory now
+  that §5.2 puts it in the same space; compare coverage, observation-angle quality, and
+  wall-clock, and report their COG/OAQ metrics so numbers are commensurable), and the full
+  thesis pipeline (coverage, path length, wall time). End with an Isaac Sim rollout of the
+  optimized trajectories — few papers in this space close that loop.
 
-### 6.3 The honest positioning question (design the evaluation around it)
+### 6.3 The honest positioning questions (design the evaluation around them)
 
-The strongest reviewer attack: **"the mesh is known — why not optimize true ray-cast
+**Attack 0 (new, and now the most dangerous): "This is NeOF (RA-L 2024) with a different
+visibility backbone."** §5.2 shows the overlap is extensive and in the same venue. There
+is no evaluation trick that answers this — only positioning. The three defensible replies,
+in order of strength: (i) *trajectories and online replanning*, which NeOF does not do at
+all (§6.4 — hence the §7 re-ordering); (ii) *no per-scene fitting* — NeOF must fit and
+repeatedly refit a neural observation field, so its "gradient" is through a learned proxy
+of visibility, whereas HPRO/NVPS differentiate visibility directly, which is what makes
+warm-started online replanning cheap; (iii) *the exploitation analysis* (C2) explaining
+why NeOF's refit loop is load-bearing rather than incidental. Reply (ii) must be *measured*
+— field-refit wall-clock vs our per-step cost as V and N grow — or it is just words. Run
+NeOF's public code early (§7 step 6) so these numbers exist before the draft is written.
+
+**Attack 1: "the mesh is known — why not optimize true ray-cast
 coverage with a gradient-free method (CMA-ES, Bayesian optimization)?"** At V=5 (30 dims)
 with 20 ms Embree evaluations, CMA-ES is genuinely competitive. The answer, and the
 experimental design that follows: **put the evaluation in the regime where gradients are
@@ -287,7 +398,7 @@ must re-solve from scratch when the world changes, a gradient optimizer keeps st
 CMA-ES-on-raycast objection evaporates because there is nothing to ray-cast; the
 point-cloud surrogate is the *only* available evaluator, not merely the fastest).
 
-### 6.4 Extension: online trajectory construction
+### 6.4 The headline: online trajectory construction
 
 The differentiable trajectory optimizer (C4) adapts naturally from offline planning to
 **building the trajectory during the mission** — an MPC-style loop that discrete
@@ -363,26 +474,41 @@ baselines: coverage vs mission time / path length. (iii) *Re-planning cost* vs a
 pipeline re-run per cycle, showing the discrete per-cycle cost blowing the real-time
 budget as N grows.
 
-**Scoping:** this is either C4's most compelling instantiation (present the
-receding-horizon variant in its online form inside the RA-L paper, with the outdated-mesh
-demo) or, if the offline paper is already full, a **standalone follow-up paper** —
-"online differentiable coverage exploration on point clouds" is a complete story by
-itself. Decide after the §7 step-2 pivotal experiment.
+**Scoping (revised 2026-07-16):** no longer optional. §5.2 makes this the paper's
+headline — the receding-horizon variant in its online form, with the outdated-mesh demo,
+goes *in* the RA-L paper. The re-planning-cost experiment (iii) is promoted from a nice
+figure to a core result, because "warm-starting beats re-solving" is the claim that
+distinguishes this work from both NeOF (refits its field) and the discrete pipeline
+(re-solves from scratch). Add NeOF's refit cost as a third curve there.
 
 ### 6.5 Venue and scoping
 
 **RA-L** (with ICRA/IROS presentation option) is the right target: the contribution mix
 (operator + planning + system) fits, review is fast, and the thesis pipeline supplies the
-system section. One paper, not two — C1–C3 alone would be a thin graphics paper on NVPS's
-home turf; the trajectory + system layer is where the position is unassailable. If
-time-boxed, the receding-horizon variant of C4 suffices for the trajectory claim —
-ideally presented in its online form (§6.4) with the outdated-mesh demo; the spline
-version can be future work only if receding-horizon results are strong. An
-operator-centric cut (C1+C2, heavier theory, ModelNet evaluation) would alternatively fit
-CGF/SGP/3DV.
+system section. One paper, not two — and after §5.2, the trajectory + system layer is no
+longer the *strongest* part of the paper but the **load-bearing** one: C1–C3 alone would
+now be an incremental re-run of NeOF on NVPS's home turf, and would likely be rejected in
+the venue where NeOF already sits. The receding-horizon variant of C4 is therefore
+**mandatory, not optional**, ideally in its online form (§6.4) with the outdated-mesh
+demo; the spline version stays future work unless receding-horizon results are strong.
+Note the RA-L risk of drawing a NeOF author as reviewer is real — cite them generously
+and compare head-to-head rather than working around them. The former fallback of an
+operator-centric cut (C1+C2, heavier theory, ModelNet evaluation) for CGF/SGP/3DV is now
+weaker but not dead: it would have to lead with C2's exploitation analysis and the
+distance-invariance theory, which remain unclaimed.
 
 ### 6.6 Risks, stated plainly
 
+- *Novelty risk is now the top risk, not an afterthought.* §5.2 removed the plan's
+  original headline. If the trajectory/online results (§7 Stage B) do not materialize,
+  there is **no paper** at RA-L — the offline half alone is too close to NeOF. Treat
+  Stage B as go/no-go: if receding-horizon + warm-start cannot beat a discrete re-solve on
+  wall-clock *and* match it on coverage, stop and reconsider the venue rather than padding
+  the offline section.
+- *The literature must be re-swept before drafting.* This plan asserted a false gap for
+  months because nobody searched for "camera placement" (the term the graphics/vision side
+  uses) as opposed to "inspection planning" (the robotics term). Sweep both vocabularies —
+  and check RA-L/ICRA/IROS/VISAPP 2025–2026 — before the draft is frozen.
 - *The +0.003 wreck win is one seed at a saturated V.* A green light, not a result. The
   paper's claim must be built at tight standoffs, high V, multi-seed.
 - *NVPS generalization:* trained on ShapeNet at one radius; happens to transfer well to
@@ -397,23 +523,39 @@ CGF/SGP/3DV.
 
 ## 7 · Order of work
 
+*Re-ordered 2026-07-16: **trajectories/online first** (§5.3's open ground, and the
+headline), offline placement second (still a real contribution, but now a comparison
+against NeOF and against this thesis's own combinatorial pipeline rather than a novelty
+claim). Steps 1–3 are shared infrastructure needed under either framing, so they stay in
+front.*
+
+**Stage A — operator infrastructure (prerequisite for everything).**
+
 1. Port `diagnostics/diag_nvps_stage2.py` into a proper `VisibilityBackbone` interface in
    `hpro/` (HPRO | NVPS | ensemble); fix `HPRO.py:110`; wire δ/α through `HPRO_limited`
    and ablate on the Stage-1 harness.
 2. Add the normal gate + quality weighting; switch the eval camera to realistic tight
-   standoffs; re-establish greedy vs refine at V ∈ {10, 20, 40} on the wreck, 5 seeds.
-   **This is the pivotal experiment for the paper.**
+   standoffs. Re-establish greedy vs refine at V ∈ {10, 20, 40} on the wreck, 5 seeds —
+   this validates the operator layer the trajectory work stands on.
 3. Implement self-calibration (Platt on ~50 audit poses; optionally VisNet-head
    fine-tune); make the soft-vs-GT calibration gap a logged metric in `eval_multi.py`.
-4. Hybrid + restarts + annealing; ModelNet/TOSCA sweep; add CMA-ES and
-   500-candidate-greedy baselines.
-5. Receding-horizon trajectory variant; route with the existing VRP; compare
+   This is C2's control and is needed before trusting any trajectory objective.
+
+**Stage B — trajectories and online (the headline, §6.4).**
+
+4. Receding-horizon trajectory variant; route with the existing VRP; compare
    coverage-per-path-meter against the thesis pipeline; Isaac Sim rollout figure.
-6. Online construction (§6.4): implement demand-weighted warm-started re-optimization on
-   top of step 5's receding-horizon code (the delta is small: demand updates from
-   executed poses + shifted warm start + budgeted steps per cycle); run the
-   outdated-mesh experiment in Isaac Sim. Promote to the paper or split into the
-   follow-up depending on how full the RA-L draft is.
+5. Online construction (§6.4): demand-weighted warm-started re-optimization on top of
+   step 4's receding-horizon code (demand updates from executed poses + shifted warm
+   start + budgeted steps per cycle); run the **outdated-mesh experiment** in Isaac Sim.
+   The re-planning-cost figure (warm-start vs discrete re-solve vs NeOF field refit, as a
+   function of V/N) is the quantitative core of the headline claim.
+
+**Stage C — offline placement, positioned as comparison.**
+
+6. Hybrid + restarts + annealing; ModelNet/TOSCA sweep; baselines: CMA-ES,
+   500-candidate-greedy, **NeOF** (public code), and the thesis's set-cover + VRP
+   pipeline end-to-end (coverage, path length, wall time).
 7. Optional Phase 2: distance-aware NVPS retraining (shell-sampled viewpoints,
    log-distance input) if close-range interior views prove important on the wreck.
 
