@@ -289,17 +289,30 @@ is small (~4 points) but it is a gap, in the baseline's favour.
    matched coverage**. Report that; treat cov/m as diagnostic only.
 
    ⚠️ **A retracted number, and the lesson behind it.** An earlier draft of this section
-   reported a "tuned" 0.933 @ 13.57 m and called the race a tie. **That number does not
-   reproduce** (the same config and seed now yields 0.563 @ 7.15 m) and was a lone outlier
-   in an otherwise ~0.6 band — the λ_length=0.01 column of the sweep read 0.658, 0.608,
-   0.607, **0.933**, 0.643. The rollout *is* bit-deterministic within a process (verified:
-   σ=0.000 over 4 repeats), so the outlier came from chaotic sensitivity to float-level
-   differences in process state, amplified over 40 cycles × 30 Adam steps. **Never tune
-   this planner on a single seed, and never promote a single cell of a sweep**: the
-   objective is chaotic in its weights, so one cell carries no signal. λ_length=0.01 is
-   genuinely supported (it beats 0.05 in all five sweep rows); λ_terminal is **not**
-   discriminative (0.658/0.608/0.607/0.643 across two orders of magnitude), so the shipped
-   λ_terminal=5.0 is essentially arbitrary and should be re-derived over seeds.
+   reported a "tuned" 0.933 @ 13.57 m and called the race a tie. **That number is
+   withdrawn**, and the reason is worse than "it was an outlier".
+
+   *Measured, 2026-07-16:* the identical config and seed, run in **8 separate processes**,
+   gives **0.563 seven times and 0.933 once** — coverage mean 0.609, **std 0.123**, exactly
+   **two distinct outcomes**. So the rollout is **bimodal**, not noisy-around-a-mean: it
+   either escapes its first basin or stalls in it, and the 0.933 was a **1-in-8 draw**
+   promoted to a headline. Within a single process it is bit-deterministic (σ=0.000 over 5
+   repeats), which is precisely why the bug hid — every re-check inside one process
+   confirmed it.
+
+   *Mechanism (real, not a defect to patch away):* per-process GPU kernel/TF32 selection
+   perturbs a pose by ~10⁻⁷; that flips points across the **hard ray-cast audit threshold**;
+   the harvested demand changes; every later cycle diverges. The closed loop *is* the
+   amplifier, so any planner harvesting through a hard threshold will inherit this.
+
+   *Consequences.* The λ sweep was **fitting per-process noise** — its neighbours
+   (0.658, 0.608, 0.607, **0.933**, 0.643) were each single draws from this bimodal
+   distribution, so the column carries no signal and λ_terminal=5.0 is arbitrary.
+   λ_length=0.01 beating 0.05 in all five rows is *weak* evidence at best and must be
+   re-derived. Seed-to-seed spread is separately large (0.330 / 0.522 / 0.746).
+   **Rule: no Stage B number from fewer than ~5 runs, always with mean ± std and n.**
+   `eval_trajectory.py` now prints the per-seed spread and the cross-process warning so a
+   mean cannot be quoted alone.
 2. **The stall was a real bug, mitigated but not cured.** With the original weights the
    robot crawled at ~0.05 m/cycle: once local demand is exhausted the coverage gradient is
    ~0, and `λ_length·length` (0.18) outvoted `λ_terminal·terminal` (0.08) — the only term

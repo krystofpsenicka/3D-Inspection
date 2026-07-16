@@ -127,20 +127,25 @@ def plot_rollout(ax, pts_np, result, cam, covered=None, upto=None,
     if covered:
         mask[np.fromiter(covered, dtype=int, count=len(covered))] = True
 
-    ax.scatter(*pts_np[~mask].T, s=1.5, c=C_UNCOVERED, alpha=0.35, linewidths=0)
+    # Uncovered points are the result being judged, so they must read at a
+    # glance -- at low alpha a 56 %-covered object looks finished.
+    ax.scatter(*pts_np[~mask].T, s=2.6, c=C_UNCOVERED, alpha=0.85, linewidths=0)
     if mask.any():
-        ax.scatter(*pts_np[mask].T, s=2.0, c=C_COVERED, alpha=0.9, linewidths=0)
+        ax.scatter(*pts_np[mask].T, s=2.6, c=C_COVERED, alpha=0.95, linewidths=0)
 
     if T > 0:
         p = result.positions[:T]
-        ax.plot(*p.T, color=C_PATH, lw=1.8, alpha=0.9, zorder=5)
-        ax.scatter(*p.T, s=14, c=C_PATH, depthshade=False, zorder=6)
+        ax.plot(*p.T, color=C_PATH, lw=1.8, alpha=0.95, zorder=5)
+        ax.scatter(*p.T, s=12, c=C_PATH, depthshade=False, zorder=6)
         # Start and current pose: the two the eye looks for.
         ax.scatter(*p[0], s=90, marker="^", c="black", depthshade=False, zorder=7)
         ax.scatter(*p[-1], s=90, marker="*", c=C_FRUSTUM, depthshade=False, zorder=7)
+        # Frustums are context, not the subject: a full-depth pyramid per pose is
+        # larger than the object and buries it. Draw a few, clipped short.
+        stub = dict(cam, far=cam["near"] + 0.35 * (cam["far"] - cam["near"]))
         for i in range(0, T, max(1, every_frustum)):
-            draw_frustum(ax, p[i], result.rot_6d[i], cam, alpha=0.35)
-        draw_frustum(ax, p[-1], result.rot_6d[-1], cam, alpha=0.95, lw=1.4)
+            draw_frustum(ax, p[i], result.rot_6d[i], stub, alpha=0.18, lw=0.6)
+        draw_frustum(ax, p[-1], result.rot_6d[-1], cam, alpha=0.9, lw=1.3)
 
     _equal_aspect(ax, np.vstack([pts_np, result.positions[:max(T, 1)]]))
     ax.set_axis_off()
