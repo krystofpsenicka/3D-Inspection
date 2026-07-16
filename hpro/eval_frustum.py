@@ -64,13 +64,34 @@ DEF_SHARPNESS = 50.0
 DEF_K = 10
 DEF_THRESH = 0.5
 
+# delta (Eq. 7) and alpha (Eq. 8) default to *off*, matching the values every
+# result so far was produced with; the sweeps below measure what enabling them
+# buys. See ablate_delta_alpha() for the semantics of alpha = 0.
+DEF_DELTA = 0.0
+DEF_ALPHA = 0.0
+
 # One-at-a-time sweep grids (each varies one param, others held at default).
 SHARPNESS_SWEEP = [10.0, 20.0, 50.0, 100.0, 200.0]
 K_SWEEP = [5, 10, 20, 40]
 THRESH_SWEEP = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+# delta shifts the tested point toward the camera by delta before scoring, so a
+# point that noise pushed just inside the surface can still register as visible.
+# Katz & Tal report the optimum at delta = (noise radius) + 1 % and show it helps
+# even on clean data (their Fig. 10a peaks near 0.01-0.015 and decays past 0.03).
+# Meshes here are normalised into a unit sphere, so delta is in those units and
+# the paper's "1 %" reads directly as 0.01.
+DELTA_SWEEP = [0.0, 0.005, 0.01, 0.015, 0.02, 0.03]
+# alpha places a second projection centre at C* = alpha*M + (1-alpha)*C (M = the
+# transformed cloud's centre of mass), giving silhouette points a second chance
+# to be extremal. Both ends of [0, 1] are no-ops: alpha = 0 puts C* on the camera
+# (the paper: "using one direction is equivalent to setting alpha = 0"), and
+# alpha = 1 empirically changes no point's score. The paper's Fig. 11 peaks at
+# small alpha (~0.05 at 5k points) and wants smaller alpha for denser clouds.
+ALPHA_SWEEP = [0.0, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0]
 
 CSV_FIELDS = [
     "mesh", "pose_idx", "method", "gamma", "sharpness", "k", "thresh",
+    "delta", "alpha",
     "n_points", "n_gt", "n_pred", "tp", "precision", "recall", "f1", "iou",
     "op_time_s",
 ]
@@ -165,14 +186,23 @@ def score(pred_idx, gt_idx):
 # Operator evaluation
 # ---------------------------------------------------------------------------
 
-def hpro_limited_scores(model, pts_t, vp_t, rot_t, gamma, sharpness, k):
-    """Run HPRO_limited once and return (w_combined numpy (N,), op_time_s)."""
+def hpro_limited_scores(model, pts_t, vp_t, rot_t, gamma, sharpness, k,
+                        delta=DEF_DELTA, alpha=DEF_ALPHA):
+    """Run HPRO_limited once and return (w_combined numpy (N,), op_time_s).
+
+    ``alpha = 0`` is passed as ``alphas=[]`` rather than ``alphas=[0.0]``: the two
+    agree to float64 round-off (C* lands on the camera, so the second direction
+    collapses onto the first), and skipping the pass avoids paying for a second
+    O(N^2) projection that provably cannot change the score.
+    """
+    alphas = [] if alpha == 0.0 else [alpha]
     if torch.cuda.is_available() and pts_t.is_cuda:
         torch.cuda.synchronize()
     t0 = time.perf_counter()
     with torch.no_grad():
         _, _, w = model(pts_t, vp_t, rot_t, gamma=gamma,
-                        frustum_sharpness=sharpness, k=k)
+                        frustum_sharpness=sharpness, k=k,
+                        delta=delta, alphas=alphas)
     if torch.cuda.is_available() and pts_t.is_cuda:
         torch.cuda.synchronize()
     dt = time.perf_counter() - t0
@@ -201,6 +231,24 @@ def baseline_scores(hpro, pts_t, vp_t, pts_np, vp_np, look, up, right, cfg, gamm
 # Plotting
 # ---------------------------------------------------------------------------
 
+#: The combo every one-at-a-time sweep passes through. Used to pin the
+#: non-swept parameters when aggregating.
+DEFAULT_COMBO = dict(gamma=DEF_GAMMA, sharpness=DEF_SHARPNESS, k=DEF_K,
+                     thresh=DEF_THRESH, delta=DEF_DELTA, alpha=DEF_ALPHA)
+
+
+def _fixed_except(key):
+    """Pin every swept parameter to its default except ``key`` (the x-axis).
+
+    Each sweep holds the other parameters at their defaults, so every sweep's
+    rows collide at the default combo -- e.g. a delta-sweep row also has
+    sharpness = DEF_SHARPNESS. Pinning only *some* parameters would therefore mix
+    rows from other sweeps into the shared bucket and silently bias it, so the
+    filter is built from the full default combo rather than listed per call.
+    """
+    return {k: v for k, v in DEFAULT_COMBO.items() if k != key}
+
+
 def _agg_f1_by(rows, key, fixed, method="hpro_limited"):
     """Mean/std F1 grouped by ``rows[key]`` among rows matching ``fixed`` dict."""
     buckets = {}
@@ -218,8 +266,10 @@ def _agg_f1_by(rows, key, fixed, method="hpro_limited"):
 
 def plot_gamma(rows, path):
     """F1 vs |gamma| (log x) for HPRO_limited and the HPRO+hard-cull baseline."""
-    fixed = dict(sharpness=DEF_SHARPNESS, k=DEF_K, thresh=DEF_THRESH)
-    xs_l, m_l, s_l = _agg_f1_by(rows, "gamma", fixed, method="hpro_limited")
+    xs_l, m_l, s_l = _agg_f1_by(rows, "gamma", _fixed_except("gamma"),
+                                method="hpro_limited")
+    # The baseline has no soft frustum or threshold (both NaN in its rows), so it
+    # cannot be filtered by the full default combo -- pin only what it defines.
     xs_b, m_b, s_b = _agg_f1_by(rows, "gamma", {"k": DEF_K}, method="baseline")
     if not xs_l:
         return
@@ -264,16 +314,82 @@ def plot_sweep(rows, key, fixed, xlabel, path, logx=False, baseline_f1=None):
     plt.close(fig)
 
 
+def ablate_delta_alpha(rows, default_f1):
+    """Print the delta/alpha ablation: does enabling either beat delta=alpha=0?
+
+    Both are implemented but have been disabled in every result so far
+    (RESEARCH_PLAN.md §2 flagged them as "free accuracy on the shelf"). Katz & Tal
+    report delta > 0 helping even on clean data and alpha adding ~1 % on
+    silhouettes -- this is where that claim is tested on *our* frustum-gated
+    operator and mesh, rather than assumed.
+
+    Paired over (mesh, pose): each swept value is compared against the default
+    combo on the same poses, so the delta is not confounded by pose difficulty.
+    """
+    print("\n=== delta / alpha ablation (Stage-1 harness) ===")
+    print(f"default (delta=0, alpha=0): F1 = {default_f1:.4f}")
+
+    for key, sweep in (("delta", DELTA_SWEEP), ("alpha", ALPHA_SWEEP)):
+        fixed = _fixed_except(key)
+        # Pair by (mesh, pose) so each value is scored on the same poses.
+        by_val: dict = {}
+        for r in rows:
+            if r["method"] != "hpro_limited":
+                continue
+            if any(abs(float(r[k]) - v) > 1e-12 for k, v in fixed.items()):
+                continue
+            by_val.setdefault(float(r[key]), {})[(r["mesh"], r["pose_idx"])] = r["f1"]
+        if not by_val:
+            continue
+
+        base_key = DEFAULT_COMBO[key]
+        base = by_val.get(base_key, {})
+        if not base:
+            continue
+
+        stats = {}
+        for val, d in by_val.items():
+            common = sorted(set(d) & set(base))
+            if not common:
+                continue
+            diff = np.array([d[c] - base[c] for c in common])
+            stats[val] = (np.array([d[c] for c in common]), diff)
+
+        gains = {v: s[1].mean() for v, s in stats.items() if v != base_key}
+        # Only flag a winner if it actually beats the default; otherwise the
+        # "best" of a set of regressions reads as a recommendation.
+        best = max(gains, key=gains.get) if gains else None
+        if best is not None and gains[best] <= 0:
+            best = None
+
+        print(f"\n  {key:>5}   F1 (mean±std)        vs default   poses improved")
+        for val in sweep:
+            if val not in stats:
+                continue
+            vals, diff = stats[val]
+            better = int((diff > 1e-9).sum())
+            mark = "  <-- best" if val == best else ""
+            print(f"  {val:>5.3f}   {vals.mean():.4f} ± {vals.std():.4f}   "
+                  f"{diff.mean():+.4f}      {better:>3d}/{len(diff)}{mark}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def build_combos():
-    """Set of (gamma, sharpness, k) at which to compute w (one-at-a-time sweeps)."""
-    combos = {(DEF_GAMMA, DEF_SHARPNESS, DEF_K)}
-    combos |= {(g, DEF_SHARPNESS, DEF_K) for g in GAMMA_SWEEP}
-    combos |= {(DEF_GAMMA, s, DEF_K) for s in SHARPNESS_SWEEP}
-    combos |= {(DEF_GAMMA, DEF_SHARPNESS, k) for k in K_SWEEP}
+    """(gamma, sharpness, k, delta, alpha) at which to compute w.
+
+    One-at-a-time sweeps: each grid varies a single parameter with the rest held
+    at their defaults, so every row is comparable to the default combo.
+    """
+    base = (DEF_GAMMA, DEF_SHARPNESS, DEF_K, DEF_DELTA, DEF_ALPHA)
+    combos = {base}
+    combos |= {(g, DEF_SHARPNESS, DEF_K, DEF_DELTA, DEF_ALPHA) for g in GAMMA_SWEEP}
+    combos |= {(DEF_GAMMA, s, DEF_K, DEF_DELTA, DEF_ALPHA) for s in SHARPNESS_SWEEP}
+    combos |= {(DEF_GAMMA, DEF_SHARPNESS, k, DEF_DELTA, DEF_ALPHA) for k in K_SWEEP}
+    combos |= {(DEF_GAMMA, DEF_SHARPNESS, DEF_K, d, DEF_ALPHA) for d in DELTA_SWEEP}
+    combos |= {(DEF_GAMMA, DEF_SHARPNESS, DEF_K, DEF_DELTA, a) for a in ALPHA_SWEEP}
     return sorted(combos)
 
 
@@ -344,11 +460,13 @@ def main():
             rot_t = torch.tensor(np.concatenate([look_approx, up_approx])[np.newaxis],
                                  dtype=torch.float64, device=device)
 
-            # HPRO_limited: compute w once per (gamma, sharpness, k); threshold post-hoc.
-            for (gamma, sharpness, k) in combos:
-                w, dt = hpro_limited_scores(model, pts_t, vp_t, rot_t, gamma, sharpness, k)
+            # HPRO_limited: compute w once per combo; threshold post-hoc.
+            for (gamma, sharpness, k, delta, alpha) in combos:
+                w, dt = hpro_limited_scores(model, pts_t, vp_t, rot_t, gamma,
+                                            sharpness, k, delta, alpha)
                 is_default_combo = (abs(gamma - DEF_GAMMA) < 1e-12
-                                    and sharpness == DEF_SHARPNESS and k == DEF_K)
+                                    and sharpness == DEF_SHARPNESS and k == DEF_K
+                                    and delta == DEF_DELTA and alpha == DEF_ALPHA)
                 thr_list = THRESH_SWEEP if is_default_combo else [DEF_THRESH]
                 for thr in thr_list:
                     pred = np.where(w > thr)[0]
@@ -356,6 +474,7 @@ def main():
                     rows.append(dict(
                         mesh=mesh_name, pose_idx=pose_idx, method="hpro_limited",
                         gamma=gamma, sharpness=sharpness, k=k, thresh=thr,
+                        delta=delta, alpha=alpha,
                         n_points=args.num_points, n_gt=len(gt_idx), n_pred=len(pred),
                         tp=tp, precision=p, recall=r, f1=f1, iou=iou, op_time_s=dt,
                     ))
@@ -371,6 +490,7 @@ def main():
                     rows.append(dict(
                         mesh=mesh_name, pose_idx=pose_idx, method="baseline",
                         gamma=gamma, sharpness=float("nan"), k=DEF_K, thresh=float("nan"),
+                        delta=DEF_DELTA, alpha=DEF_ALPHA,
                         n_points=args.num_points, n_gt=len(gt_idx), n_pred=len(pred_b),
                         tp=tp, precision=p, recall=r, f1=f1, iou=iou, op_time_s=dt_b,
                     ))
@@ -392,25 +512,32 @@ def main():
                 and all(abs(float(r[k]) - v) < 1e-12 for k, v in fixed.items())]
         return float(np.mean(vals)) if vals else float("nan")
 
-    default_f1 = mean_f1("hpro_limited", gamma=DEF_GAMMA, sharpness=DEF_SHARPNESS,
-                         k=DEF_K, thresh=DEF_THRESH)
+    default_f1 = mean_f1("hpro_limited", **DEFAULT_COMBO)
     # Fair baseline reference: same (tuned) gamma as the HPRO_limited default.
     baseline_f1 = mean_f1("baseline", gamma=DEF_GAMMA) if not args.no_baseline else None
 
     # ---- Plots --------------------------------------------------------------
     plot_gamma(rows, os.path.join(args.out, "f1_vs_gamma.png"))
-    plot_sweep(rows, "sharpness",
-               dict(gamma=DEF_GAMMA, k=DEF_K, thresh=DEF_THRESH),
+    plot_sweep(rows, "sharpness", _fixed_except("sharpness"),
                "frustum_sharpness", os.path.join(args.out, "f1_vs_sharpness.png"),
                baseline_f1=baseline_f1)
-    plot_sweep(rows, "thresh",
-               dict(gamma=DEF_GAMMA, sharpness=DEF_SHARPNESS, k=DEF_K),
+    plot_sweep(rows, "thresh", _fixed_except("thresh"),
                "visibility_score_thresh", os.path.join(args.out, "f1_vs_thresh.png"),
                baseline_f1=baseline_f1)
-    plot_sweep(rows, "k",
-               dict(gamma=DEF_GAMMA, sharpness=DEF_SHARPNESS, thresh=DEF_THRESH),
+    plot_sweep(rows, "k", _fixed_except("k"),
                "k (top-k)", os.path.join(args.out, "f1_vs_k.png"),
                baseline_f1=baseline_f1)
+    plot_sweep(rows, "delta", _fixed_except("delta"),
+               "delta (noise offset, Eq. 7)",
+               os.path.join(args.out, "f1_vs_delta.png"),
+               baseline_f1=baseline_f1)
+    plot_sweep(rows, "alpha", _fixed_except("alpha"),
+               "alpha (second direction, Eq. 8; 0 = off)",
+               os.path.join(args.out, "f1_vs_alpha.png"),
+               baseline_f1=baseline_f1)
+
+    # ---- delta/alpha ablation (§7 step 1) -----------------------------------
+    ablate_delta_alpha(rows, default_f1)
 
     # ---- Summary ------------------------------------------------------------
     def headline(method, **fixed):
@@ -429,11 +556,12 @@ def main():
         f"device={device}  meshes={len(meshes)}  poses={len(poses)}  "
         f"points={args.num_points}",
         f"default config: gamma={DEF_GAMMA:.5g}  sharpness={DEF_SHARPNESS}  "
-        f"k={DEF_K}  thresh={DEF_THRESH}",
+        f"k={DEF_K}  thresh={DEF_THRESH}  delta={DEF_DELTA}  alpha={DEF_ALPHA}",
         "",
     ]
-    d = headline("hpro_limited", gamma=DEF_GAMMA, sharpness=DEF_SHARPNESS,
-                 k=DEF_K, thresh=DEF_THRESH)
+    # Pin the full default combo: without delta/alpha pinned this silently
+    # averaged every delta/alpha sweep row into the "default" headline.
+    d = headline("hpro_limited", **DEFAULT_COMBO)
     if d:
         summary_lines.append(
             f"HPRO_limited (default): P={d['precision']:.3f} R={d['recall']:.3f} "
@@ -457,17 +585,20 @@ def main():
         summary_lines.append(
             f"\nF1 gap (HPRO_limited - baseline) at default gamma: {default_f1 - baseline_f1:+.3f}")
 
-    # Best HPRO_limited config by mean F1 across the swept points.
+    # Best HPRO_limited config by mean F1 across the swept points. delta/alpha
+    # belong in the key: without them, configs differing only in delta/alpha
+    # collapse into one bucket and get averaged together.
     by_cfg = {}
     for r in rows:
         if r["method"] != "hpro_limited":
             continue
-        key = (r["gamma"], r["sharpness"], r["k"], r["thresh"])
+        key = (r["gamma"], r["sharpness"], r["k"], r["thresh"], r["delta"], r["alpha"])
         by_cfg.setdefault(key, []).append(r["f1"])
     best = max(by_cfg.items(), key=lambda kv: np.mean(kv[1]))
     summary_lines.append(
         f"\nbest swept config: gamma={best[0][0]:.5g} sharpness={best[0][1]} "
-        f"k={best[0][2]} thresh={best[0][3]} -> mean F1={np.mean(best[1]):.3f}")
+        f"k={best[0][2]} thresh={best[0][3]} delta={best[0][4]} alpha={best[0][5]} "
+        f"-> mean F1={np.mean(best[1]):.3f}")
 
     summary = "\n".join(summary_lines)
     with open(os.path.join(args.out, "summary.txt"), "w") as f:

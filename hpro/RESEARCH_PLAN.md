@@ -89,7 +89,7 @@ Optimization*, CGF 44(2), 2025 ([PDF](https://www.ee.technion.ac.il/~ayellet/Ps/
 |---|---|
 | ✅ Correct | **Core operator (`HPRO.py`).** Exponential-inversion transform (Eq. 1–2), projection matrix R_ij = ⟨F(p_j)−C, d_i⟩ (Eq. 3; verified the `repeat`/`repeat_interleave` index order), top-k ELU score (Eq. 5, Alg. 1) all match. Batched and loop paths agree to 8×10⁻¹⁵ (smoke test). |
 | ✅ Correct | **Frustum extension (`HPRO_limited.py`).** Six-sigmoid gate product, behind-camera depth clamp, Zhou-et-al. 6D rotation with Gram–Schmidt, `relu(w)·f` combination. Stage-1 validation (F1 0.911 ≥ best-tuned hard cull 0.907) is a real result. GT harness (`frustum_gt.py`) mirrors the camera convention exactly. |
-| ⚠️ Unused | **δ noise offset (Eq. 7) and α second direction (Eq. 8)** are implemented but never enabled (`delta=0.0`, `alphas=[]`). The paper shows δ>0 helps *even on clean data* (optimal δ = noise + 1 %) and α adds ≈1 % accuracy precisely on silhouettes — HPRO's worst region and the wreck's dominant geometry. Free accuracy on the shelf. |
+| ✅ Ablated | **δ noise offset (Eq. 7) and α second direction (Eq. 8)** were implemented but never enabled (`delta=0.0`, `alphas=[]`). Wired through `eval_frustum.py` and ablated on the Stage-1 harness (2026-07-16): the "free accuracy on the shelf" hypothesis is **confirmed, and the gain is density-dependent** — see §3.3. Short version: α=0.02 wins at both densities (+0.006 at N=3k, **+0.024** at N=10k), δ pays only at high density; δ is free, α costs 2×. Defaults left at off pending the Stage-2 calibration check (§3.3). |
 | ✅ Fixed | **`HPRO.py` — α-pass inconsistency in the memory-efficient path** (fixed 2026-07-16). With `alphas≠[]` and `fits_in_memory=False` the loop path was wrong in *two* ways, not the one originally logged: it projected against the **unshifted** points (`⟨F(p_j), d2_i⟩` instead of `⟨F(p_j)−C*, d2_i⟩`) *and* scored with ‖F(p_i)‖ instead of ‖F(p_i)−C*‖ — score and top-k reference in different frames. Measured divergence vs the batched path: **1.5–4.3** in a score of order 1. Both paths now verified against an independent NumPy reference of Eq. 8 (agreement 3×10⁻¹⁴) and against each other (bit-exact). Guarded by `smoke_test.py` check 6. |
 | ✅ Fixed | **`HPRO.py` — float32 accumulator in the memory-efficient path** (found while fixing the above, 2026-07-16). `w`/`w_2` were allocated with `torch.zeros(...)` and no `dtype=`, so they were **always float32** and silently truncated float64 clouds. This is why the loop path disagreed with the batched path by ≈5×10⁻⁸ (= float32 eps) *even with `alphas=[]`* — a discrepancy that predates the α work and was never noticed because the batched path has no such accumulator. Now `dtype=centered_points.dtype`; the two paths agree bit-exactly. |
 | 🐞 Method | **Fixed γ under free-position optimization.** γ=−e⁻⁷ was tuned at a fixed pose distance; the paper's own viewpoint application *fixes the radius and optimizes angles only* because the γ optimum shifts with distance and angular density. Stage 2 lets positions roam a 0.1–6.0 standoff band with one global γ. Diagnostics confirm viewpoints creep inward (standoff 2.7→2.0) because closer inflates the score. |
@@ -153,6 +153,72 @@ Load-bearing observations:
    greedy 0.836) — local minima, not proxy error (calibration was fine there).
 6. **The lamp saturates at V=5** (~0.958 for everything) — benchmark meshes must be
    concave/complex, or nothing differentiates.
+
+---
+
+### 3.3 δ / α ablation on the Stage-1 harness (§7 step 1, 2026-07-16)
+
+`eval_frustum.py` now sweeps δ (Eq. 7) and α (Eq. 8) alongside γ/sharpness/k/thresh.
+Lamp, tuned default γ=−e⁻⁷, sharpness 50, k=10, thresh 0.5; paired per pose (each value
+scored on the same poses as the default, so pose difficulty cannot confound the delta).
+
+| | N=3000, 12 poses | | N=10000, 20 poses | |
+|---|---|---|---|---|
+| | **ΔF1 vs off** | **poses improved** | **ΔF1 vs off** | **poses improved** |
+| δ=0.005 | +0.0007 | 7/12 | +0.0058 | 19/20 |
+| δ=0.015 | −0.0001 | 7/12 | +0.0108 | 17/20 |
+| δ=0.020 | −0.0015 | 7/12 | **+0.0113** | 16/20 |
+| **α=0.02** | **+0.0055** | 9/12 | **+0.0243** | 19/20 |
+| α=0.05 | +0.0041 | 9/12 | +0.0134 | 18/20 |
+| α=0.25 | +0.0011 | 6/12 | +0.0010 | 12/20 |
+| α=1.00 | +0.0002 | 1/12 | +0.0001 | 4/20 |
+
+Findings:
+
+1. **α=0.02 is a genuine win at both densities** — +0.0243 F1 on 19/20 poses at N=10000,
+   more than double the ≈1 % the paper reports. The optimum sits at the *small* end and
+   decays to nothing by α=1, exactly the shape of the paper's Fig. 11, and the value
+   matches their density rule (they find ≈0.05 at 5k points and state denser clouds want
+   smaller α; we are at 10k and find 0.02). Independent confirmation that our α
+   implementation is faithful, on top of the §2 NumPy reference check.
+2. **α=0 and α=1 are both no-ops.** α=0 puts C\* on the camera, so the second direction
+   collapses onto the first (verified: identical to `alphas=[]` to 3×10⁻¹³, and identical
+   F1 to 4 decimals); α=1 empirically changes no point's score. The gain lives strictly
+   inside the interval. `alpha=0.0` is therefore used as the "off" sentinel and short-cut
+   to `alphas=[]`, which is both semantically exact and skips a wasted O(N²) pass.
+3. **δ is density-dependent and free.** At N=10000 it buys +0.0113 at **1.00× cost** (it
+   only reshapes an existing term); at N=3000 it is worth ≈nothing (+0.0007) and turns
+   negative past δ=0.01. The paper's "optimal δ = noise + 1 %" is a *clean-data* claim that
+   reproduces only once the cloud is dense enough for neighbours to occlude each other.
+   Do not adopt a single global δ — it is a function of sampling density, which is exactly
+   the γ-style density coupling §2 already flags.
+4. **α costs 2×** (7.0 vs 3.0 ms at N=3000; 58.0 vs 29.0 ms at N=10000) — a second O(N²)
+   projection. That matters for Stage 2/B, where the operator runs V×300 times per
+   optimization, so α is not obviously worth it there even though it is on accuracy.
+5. **Defaults deliberately unchanged (δ=0, α=0).** Every §3.2 number was produced at the
+   old defaults, and higher single-view F1 does not imply a better-*calibrated* score for
+   the optimizer to descend — which is the actual Stage-2 failure (C2). Flipping the
+   defaults is a change to make on Stage-2 evidence (does α reduce the soft-vs-GT gap?),
+   not on Stage-1 F1 alone.
+
+Reproduce (the recorded Stage-1 config reproduces `RESULTS.md` exactly — P=0.925,
+R=0.900, F1=0.911, IoU=0.838, best-tuned baseline 0.907 — confirming the δ/α wiring and
+the aggregation fix changed no existing result):
+
+```bash
+$ipy hpro/eval_frustum.py --mesh_dir hpro --num_poses 12 --num_points 3000 --no_show
+$ipy hpro/eval_frustum.py --num_points 10000 --num_poses 20 --no_show \
+    --out hpro/results/ablation_delta_alpha
+```
+
+⚠️ **Aggregation bug found and fixed while adding this.** The one-at-a-time sweeps all pass
+through the default combo, so a δ-sweep row also carries `sharpness=50, k=10, thresh=0.5`.
+The summary and plot filters pinned only *some* parameters, so once δ/α existed they
+silently averaged all 12 δ/α variants into the "default" headline (n=240 instead of n=20,
+F1 0.892 instead of 0.885) and collapsed configs differing only in δ/α into one bucket.
+Filters are now built from `DEFAULT_COMBO` via `_fixed_except()` rather than listed per
+call site, so the whole class of bug is gone. **Any pre-2026-07-16 sweep number that was
+read off a partially-pinned filter should be re-derived from the CSV.**
 
 ---
 
