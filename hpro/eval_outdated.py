@@ -125,7 +125,7 @@ class OutdatedWorld:
 
     def __init__(self, mesh_true, pts_prior, normals_prior, pts_true,
                  normals_true, changed_true_mask, cam,
-                 discover_radius=0.15, tol=0.02):
+                 discover_radius=0.15, tol=0.02, no_prior=False):
         self.mesh_true = mesh_true
         self.pts = np.vstack([pts_prior, pts_true])
         self.normals = np.vstack([normals_prior, normals_true])
@@ -143,8 +143,11 @@ class OutdatedWorld:
         self._intersector = mesh_true.ray
 
         # Belief state: the robot starts believing the survey, knowing nothing
-        # of the true sample.
-        self.believed = ~self.is_true
+        # of the true sample. In the no-prior setting (§6.4's exploration
+        # variant) there is no survey either — belief starts empty and is
+        # seeded by the first observation; pass pts_prior of length 0 there.
+        self.believed = ~self.is_true if not no_prior \
+            else np.zeros(len(self.pts), dtype=bool)
         self.demand = np.where(self.believed, 1.0, 0.0)
         self.covered_true: set = set()
         self.refuted_total = 0
@@ -206,6 +209,20 @@ class OutdatedWorld:
         self.contradictions_since_solve += len(refuted) + len(discovered)
         return dict(seen=seen, seen_true=seen_true, refuted=refuted,
                     discovered=discovered, n_new_covered=len(newly_covered))
+
+    def peek_true_seen(self, pos, r6):
+        """Oracle, side-effect-free: the TRUE points this pose would see.
+
+        For upper-reference baselines (e.g. oracle NBV) only — it consults the
+        hidden mesh and updates no belief. Returns union indices.
+        """
+        look, up, right = build_camera_frame(r6[:3], r6[3:])
+        idx, _ = compute_ground_truth_batched(
+            self.mesh_true, pos, self.pts[self.is_true], look, up, right,
+            self.cam["fov_h"], self.cam["fov_v"],
+            self.cam["near"], self.cam["far"],
+            intersector=self._intersector)
+        return set(int(i) + self.N_prior for i in idx)
 
     # -- scoring -----------------------------------------------------------
 
@@ -316,12 +333,27 @@ def run_rh_arm(world, backbone_name, cam, cfg, args, start, device):
     subset (and re-prepares the backbone) whenever the sensor changes the
     belief. Demand stays smooth in union indexing, so the warm start survives
     every world change — which is the property being measured.
+
+    ``backbone_name="auto"`` implements §6.4 item 7's scheduling policy for
+    the no-prior setting: HPRO while the accumulated cloud is small (a sparse
+    partial cloud is out-of-distribution for NVPS but natural for HPRO, whose
+    O(N²) is cheap at small N), NVPS once the cloud completes.
     """
-    b = make_backbone(backbone_name, device=device,
-                      gamma=-math.exp(-7.0), k=10)
+    AUTO_SWITCH_N = 1500
+    made = {}
+
+    def get_backbone(n_believed):
+        name = backbone_name
+        if backbone_name == "auto":
+            name = "hpro" if n_believed < AUTO_SWITCH_N else "nvps"
+        if name not in made:
+            made[name] = make_backbone(name, device=device,
+                                       gamma=-math.exp(-7.0), k=10)
+        return made[name]
 
     def prepare():
         bidx = np.where(world.believed)[0]
+        b = get_backbone(len(bidx))
         if b.requires_normals:
             b.prepare(world.pts[bidx], world.normals[bidx])
         else:

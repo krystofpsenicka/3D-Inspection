@@ -152,9 +152,11 @@ class HPROBackbone(VisibilityBackbone):
         centered = pts_b - viewpoints.unsqueeze(2)              # (V, 3, N)
         directions = torch.nn.functional.normalize(centered, dim=1)
 
+        # k must not exceed the cloud size — tiny clouds occur legitimately in
+        # the no-prior online setting, where the belief starts near-empty.
         w = self.hpro.detect_max_in_direction(
             V, centered, directions, self.gamma, N, self.use_linear_kernel,
-            alphas=self.alphas, k=self.k, delta=self.delta,
+            alphas=self.alphas, k=min(self.k, N), delta=self.delta,
         ).reshape(V, N)
 
         # ELU output is in (-1, +inf); occluded points score < 0 and must be
