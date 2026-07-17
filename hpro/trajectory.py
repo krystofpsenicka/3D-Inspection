@@ -97,6 +97,27 @@ class TrajectoryConfig:
         near_dist, far_dist: standoff band (m), matched to the camera clip planes.
         step_size: max distance the robot may move between consecutive poses.
         seed: RNG seed.
+        use_global_guide: enable the discrete global pass (§6.4 item 4). When
+            on, the terminal attractor is the current *target cluster* chosen by
+            :class:`GlobalGuide` (greedy NN + 2-opt over demand clusters) rather
+            than the nearest surviving demand — which is what un-sticks the
+            planner from a locally-exhausted region.
+        guide_pts_per_cluster: aim for roughly this many demand points per
+            cluster when choosing k.
+        guide_k_max: cap on the number of demand clusters.
+        guide_patience: consecutive low-harvest cycles before the current
+            target region is declared stalled and deferred.
+        guide_min_new: a cycle harvesting fewer new points than this counts as
+            "low-harvest" for the stall detector.
+        guide_defer_cycles: how long a stalled target's points are excluded
+            from re-targeting (they get another chance later, presumably from a
+            different approach direction).
+        guide_mass_min: a target is exhausted (and re-targeting triggered) when
+            its remaining demand mass drops below this many points.
+        retarget_steps: gradient steps on the cycle where the guide commits a
+            new target. The horizon is re-initialised toward the new target on
+            that cycle (see :func:`horizon_toward`), so it needs more than the
+            warm ``replan_steps`` budget but less than a cold start.
     """
     horizon: int = 6
     replan_steps: int = 30
@@ -120,6 +141,14 @@ class TrajectoryConfig:
     far_dist: float = 1.5
     step_size: float = 0.6
     seed: int = 0
+    use_global_guide: bool = True
+    guide_pts_per_cluster: int = 250
+    guide_k_max: int = 8
+    guide_patience: int = 3
+    guide_min_new: int = 5
+    guide_defer_cycles: int = 8
+    guide_mass_min: float = 5.0
+    retarget_steps: int = 90
 
 
 @dataclass
@@ -139,6 +168,8 @@ class TrajectoryResult:
     # inspected visually (viz_trajectory.py) rather than trusted from a scalar:
     seen_per_pose: list = field(default_factory=list)    # list[set[int]] actually seen
     pred_per_pose: list = field(default_factory=list)    # list[set[int]] surrogate w>0.5
+    guide_retargets: int = 0      # times the global guide committed a new target
+    guide_deferrals: int = 0      # times a stalled target region was deferred
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +243,12 @@ def terminal_cost(positions: torch.Tensor, pts_surface: torch.Tensor,
     """Pull the horizon's final pose to standoff range of the nearest *uncovered* point.
 
     Coverage inside a short horizon is myopic: it has no reason to leave a
-    locally-exhausted region. This is the cheap global signal of §6.4 item 4 -- a
-    single attractor rather than a full greedy/TSP pass over demand clusters,
-    which is the natural upgrade if myopia persists.
+    locally-exhausted region. This term is the continuous end of the fix; on its
+    own it is a single attractor and demonstrably not enough (the rollout
+    stalled at ~0.05 m/cycle, §3.4 item 2). :class:`GlobalGuide` supplies the
+    missing discrete half of §6.4 item 4 by masking ``demand`` to a committed
+    target region, so the same expression becomes "go *there* next" instead of
+    "hover near the closest leftover".
 
     Note the attractor is the nearest *surviving demand*, not the demand
     centroid: for a closed surface the centroid lies **inside the object**, so
@@ -243,6 +277,224 @@ def terminal_cost(positions: torch.Tensor, pts_surface: torch.Tensor,
 
 
 # ---------------------------------------------------------------------------
+# Two-timescale global guide (§6.4 item 4)
+# ---------------------------------------------------------------------------
+
+def _kmeans(pts: np.ndarray, k: int, rng: np.random.Generator,
+            n_iters: int = 20) -> np.ndarray:
+    """Deterministic Lloyd k-means with farthest-point init. Returns labels (n,).
+
+    Farthest-point init instead of k-means++ so the result depends only on the
+    rng state, not on sampling luck — the guide must not add a *new* source of
+    run-to-run variance to a rollout that is already chaotic (§3.4 item 1).
+    """
+    n = len(pts)
+    k = min(k, n)
+    centers = np.empty((k, 3))
+    centers[0] = pts[rng.integers(n)]
+    d2 = ((pts - centers[0]) ** 2).sum(axis=1)
+    for i in range(1, k):
+        centers[i] = pts[int(np.argmax(d2))]
+        d2 = np.minimum(d2, ((pts - centers[i]) ** 2).sum(axis=1))
+    labels = np.full(n, -1, dtype=np.int64)
+    for _it in range(n_iters):
+        d = ((pts[:, None] - centers[None]) ** 2).sum(axis=2)   # (n, k)
+        new_labels = d.argmin(axis=1)
+        if np.array_equal(new_labels, labels):
+            break
+        labels = new_labels
+        for i in range(k):
+            m = labels == i
+            if m.any():
+                centers[i] = pts[m].mean(axis=0)
+    return labels
+
+
+def _tour_nn_2opt(start: np.ndarray, centroids: np.ndarray) -> list:
+    """Greedy nearest-neighbour + 2-opt open tour over cluster centroids.
+
+    The same routing the discrete baseline gets (eval_trajectory.route_nn_2opt),
+    scaled down to a handful of centroids — this *is* the "cheap discrete global
+    pass" of §6.4 item 4, so it deliberately mirrors the C3 hybrid's anchor.
+    """
+    n = len(centroids)
+    if n == 0:
+        return []
+    pts = np.vstack([start[None], centroids])
+    D = np.linalg.norm(pts[:, None] - pts[None], axis=2)
+    unvisited = set(range(1, n + 1))
+    tour, cur = [], 0
+    while unvisited:
+        nxt = min(unvisited, key=lambda j: D[cur, j])
+        tour.append(nxt)
+        unvisited.remove(nxt)
+        cur = nxt
+
+    def tour_len(t):
+        seq = [0] + t
+        return float(D[seq[:-1], seq[1:]].sum())
+
+    best, improved = tour_len(tour), True
+    while improved:
+        improved = False
+        for i in range(len(tour) - 1):
+            for j in range(i + 1, len(tour)):
+                cand = tour[:i] + tour[i:j + 1][::-1] + tour[j + 1:]
+                L = tour_len(cand)
+                if L < best - 1e-9:
+                    tour, best, improved = cand, L, True
+    return [t - 1 for t in tour]
+
+
+class GlobalGuide:
+    """The discrete half of the two-timescale hierarchy (§6.4 item 4).
+
+    Clusters the remaining demand, orders the clusters by greedy NN + 2-opt
+    from the robot, and commits to the tour's first cluster as the **target
+    region**. The differentiable optimiser then refines the local horizon
+    against a terminal cost that pulls toward *that region only* — a real visit
+    order, not the single nearest-demand attractor that let the planner orbit a
+    locally-exhausted (or genuinely uncoverable) patch forever.
+
+    Two rules make it robust rather than merely global:
+
+    * **Hysteresis** — the target is kept until it is exhausted
+      (mass < ``guide_mass_min``) or stalled, so per-cycle re-clustering cannot
+      make the attractor ping-pong between two clusters.
+    * **Stall deferral** — a target that stops making progress is deferred for
+      ``guide_defer_cycles`` cycles and the tour moves on. This is the explicit
+      "leave the exhausted region" escape: some points (deep concavities,
+      interior surfaces) may be uncoverable from the standoff band, and without
+      deferral they are a tar pit. Crucially, "progress" is judged by *phase*:
+      while **engaged** (within ``far_dist`` of the target) the signal is new
+      points harvested; while **in transit** it is whether the robot is still
+      closing distance — low harvest during travel is normal and must not count
+      (the first implementation counted it, and churned through 8 deferrals in
+      40 cycles without ever arriving anywhere). Transit stalls accumulate at
+      half weight, since crossing the structure takes several cycles.
+    """
+
+    def __init__(self, pts_np: np.ndarray, cfg: TrajectoryConfig,
+                 rng: np.random.Generator):
+        self.pts = np.asarray(pts_np, dtype=np.float64)
+        self.cfg = cfg
+        self.rng = rng
+        self.N = len(pts_np)
+        self.deferred_until = np.zeros(self.N, dtype=np.int64)
+        self.target_idx: Optional[np.ndarray] = None
+        self.stall_score = 0.0
+        self.engage_dist = cfg.far_dist
+        self._last_new: Optional[int] = None
+        self._prev_dist: Optional[float] = None
+        self.retargets = 0          # diagnostics
+        self.deferrals = 0          # diagnostics
+
+    def _retarget(self, demand_np: np.ndarray, robot_pos: np.ndarray,
+                  cycle: int) -> None:
+        active = (demand_np > 0.5) & (self.deferred_until <= cycle)
+        if not active.any():
+            # Everything left is deferred: clear deferrals rather than idle.
+            self.deferred_until[:] = 0
+            active = demand_np > 0.5
+            if not active.any():
+                self.target_idx = None
+                return
+        idx = np.nonzero(active)[0]
+        k = int(np.clip(round(len(idx) / self.cfg.guide_pts_per_cluster),
+                        1, self.cfg.guide_k_max))
+        labels = _kmeans(self.pts[idx], k, self.rng)
+        uniq = np.unique(labels)          # Lloyd can leave clusters empty
+        centroids = np.stack([self.pts[idx[labels == u]].mean(axis=0)
+                              for u in uniq])
+        tour = _tour_nn_2opt(robot_pos, centroids)
+        self.target_idx = idx[labels == uniq[tour[0]]]
+        self.stall_score = 0.0
+        self._prev_dist = None
+        self.retargets += 1
+
+    def select(self, demand_np: np.ndarray, robot_pos: np.ndarray,
+               cycle: int) -> Optional[np.ndarray]:
+        """Return the indices of the current target region (None = no demand)."""
+        # Assess the last executed cycle (see class docstring): harvesting new
+        # points OR closing distance to the target is progress; anything else
+        # accumulates stall — at half weight beyond engage range, because a
+        # long transit leg legitimately alternates good and mediocre cycles.
+        if self.target_idx is not None and self._last_new is not None:
+            d = float(np.linalg.norm(self.pts[self.target_idx] - robot_pos,
+                                     axis=1).min())
+            closing = (self._prev_dist is not None
+                       and d < self._prev_dist - 0.25 * self.cfg.step_size)
+            if closing or self._last_new >= self.cfg.guide_min_new:
+                self.stall_score = 0.0
+            else:
+                self.stall_score += 1.0 if d <= self.engage_dist else 0.5
+            self._prev_dist = d
+            self._last_new = None
+
+        target_mass = (0.0 if self.target_idx is None
+                       else float(demand_np[self.target_idx].sum()))
+        if self.target_idx is not None and \
+                self.stall_score >= self.cfg.guide_patience:
+            # Stalled on this target: defer its surviving points and move on.
+            survivors = self.target_idx[demand_np[self.target_idx] > 0.5]
+            self.deferred_until[survivors] = cycle + self.cfg.guide_defer_cycles
+            self.deferrals += 1
+            self._retarget(demand_np, robot_pos, cycle)
+        elif target_mass < self.cfg.guide_mass_min:
+            self._retarget(demand_np, robot_pos, cycle)
+        return self.target_idx
+
+    def report_harvest(self, n_new: int) -> None:
+        """Feed back how many new points the executed pose actually covered."""
+        self._last_new = n_new
+
+
+def horizon_toward(start: torch.Tensor, target_pts: np.ndarray,
+                   cfg: TrajectoryConfig, device) -> tuple:
+    """Re-initialise the horizon as a straight polyline toward a target region.
+
+    Warm-starting is the right default *within* the pursuit of one target, but
+    across a retarget the inherited horizon is precisely the local minimum the
+    guide is trying to escape: a knot of poses in the exhausted region that
+    ``replan_steps`` Adam steps cannot unfold against the length/step penalties
+    (measured: the robot crawled at 0.02–0.1 m/cycle through nine retargets).
+    So on retarget the *plan* — never the robot — teleports: poses are laid out
+    from the current position toward a view point at standoff from the target
+    centroid, spaced at most ``step_size`` apart, each looking at the target.
+    The next optimisation bends this polyline around obstacles via the standoff
+    penalty and repairs its spacing.
+
+    Returns:
+        (init_pos (H, 3), init_rot (H, 6)) on ``device``.
+    """
+    H = cfg.horizon
+    standoff = 0.5 * (cfg.near_dist + cfg.far_dist)
+    c_t = torch.tensor(target_pts.mean(axis=0), dtype=torch.float32,
+                       device=device)
+    d = c_t - start
+    dist = float(d.norm())
+    if dist < 1e-9:
+        d = torch.tensor([1.0, 0.0, 0.0], device=device)
+        dist = 1.0
+    view = c_t - d / dist * standoff                     # approach-side view point
+    seg = view - start
+    L = float(seg.norm())
+    # March toward the view point without exceeding the per-step motion cap.
+    reach = min(L, H * cfg.step_size)
+    steps = torch.arange(1, H + 1, dtype=torch.float32,
+                         device=device).unsqueeze(1) / H
+    init_pos = start.unsqueeze(0) + seg / max(L, 1e-9) * reach * steps
+    look = c_t.unsqueeze(0) - init_pos
+    up = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32,
+                      device=device).expand(H, 3).clone()
+    # Fall back where gaze is nearly collinear with world up.
+    ln = F.normalize(look, dim=1)
+    bad = ln[:, 2].abs() > 0.95
+    up[bad] = torch.tensor([0.0, 1.0, 0.0], device=device)
+    return init_pos, torch.cat([look, up], dim=1)
+
+
+# ---------------------------------------------------------------------------
 # Horizon optimisation
 # ---------------------------------------------------------------------------
 
@@ -256,6 +508,7 @@ def optimize_horizon(
     init_rot: torch.Tensor,
     cfg: TrajectoryConfig,
     n_steps: int,
+    demand_terminal: Optional[torch.Tensor] = None,
 ) -> tuple:
     """Optimise one horizon of poses by gradient descent.
 
@@ -269,10 +522,16 @@ def optimize_horizon(
         init_rot: (H, 6) warm-started orientations.
         cfg: config.
         n_steps: gradient steps (the per-cycle budget).
+        demand_terminal: (N,) demand the *terminal* attractor sees. The global
+            guide passes demand masked to the current target region here, while
+            coverage still sees the full demand (opportunistic harvesting along
+            the way stays free). Defaults to ``demand``.
 
     Returns:
         (positions (H,3), rot_6d (H,6), soft_coverage float) — detached.
     """
+    if demand_terminal is None:
+        demand_terminal = demand
     pos = nn.Parameter(init_pos.clone())
     rot = nn.Parameter(init_rot.clone())
     opt = torch.optim.Adam([pos, rot], lr=cfg.lr)
@@ -290,7 +549,8 @@ def optimize_horizon(
                 pos, pts_surface, cfg.near_dist, cfg.far_dist)
             + cfg.lambda_standoff * step_penalty(pos, start, cfg.step_size)
             + cfg.lambda_terminal * terminal_cost(
-                pos, pts_surface, demand, 0.5 * (cfg.near_dist + cfg.far_dist))
+                pos, pts_surface, demand_terminal,
+                0.5 * (cfg.near_dist + cfg.far_dist))
         )
         loss.backward()
         opt.step()
@@ -364,13 +624,39 @@ def receding_horizon_plan(
     exec_pos, exec_rot = [], []
     total_len = 0.0
     t_start = time.perf_counter()
+    guide = GlobalGuide(pts_np, cfg, rng) if cfg.use_global_guide else None
+    prev_retargets = 0
 
     for cycle in range(cfg.max_cycles):
-        n_steps = cfg.init_steps if cycle == 0 else cfg.replan_steps
+        # ---- Slow timescale: discrete global pass over demand clusters ----
+        demand_terminal = None
+        retargeted = False
+        if guide is not None:
+            target = guide.select(demand.cpu().numpy(),
+                                  start.cpu().numpy(), cycle)
+            if target is not None:
+                mask = torch.zeros_like(demand)
+                mask[torch.as_tensor(target, dtype=torch.long,
+                                     device=device)] = 1.0
+                demand_terminal = demand * mask
+            retargeted = guide.retargets != prev_retargets
+            prev_retargets = guide.retargets
+            if retargeted and cycle > 0 and target is not None:
+                # The plan teleports, the robot does not: re-seed the horizon
+                # toward the new target instead of unfolding the old knot.
+                init_pos, init_rot = horizon_toward(
+                    start, pts_np[target], cfg, device)
+
+        if cycle == 0:
+            n_steps = cfg.init_steps
+        elif retargeted:
+            n_steps = cfg.retarget_steps
+        else:
+            n_steps = cfg.replan_steps
         t0 = time.perf_counter()
         pos, rot, soft_c = optimize_horizon(
             layer, pts_t, pts_surface, demand, start, init_pos, init_rot,
-            cfg, n_steps)
+            cfg, n_steps, demand_terminal=demand_terminal)
         result.replan_times.append(time.perf_counter() - t0)
 
         # ---- Commit and execute the first pose of the horizon -------------
@@ -397,6 +683,8 @@ def receding_horizon_plan(
         if new:
             idx = torch.tensor(sorted(new), dtype=torch.long, device=device)
             demand[idx] = 0.0
+        if guide is not None:
+            guide.report_harvest(len(new))
 
         result.coverage_curve.append(len(covered) / N)
         result.length_curve.append(total_len)
@@ -411,6 +699,9 @@ def receding_horizon_plan(
         if float(demand.sum()) <= 0.0:
             break
 
+    if guide is not None:
+        result.guide_retargets = guide.retargets
+        result.guide_deferrals = guide.deferrals
     result.positions = np.array(exec_pos)
     result.rot_6d = np.array(exec_rot)
     result.gt_coverage = len(covered) / N

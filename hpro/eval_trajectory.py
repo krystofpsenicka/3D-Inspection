@@ -226,6 +226,8 @@ def parse_args():
     p.add_argument("--far_dist", type=float, default=1.5)
     p.add_argument("--out", default=os.path.join(_DIR, "results", "trajectory"))
     p.add_argument("--device", default="auto")
+    p.add_argument("--no_guide", action="store_true",
+                   help="Disable the two-timescale global guide (ablation).")
     p.add_argument("--no_show", action="store_true")
     a = p.parse_args()
     a.budgets = [int(x) for x in a.budgets.split(",")]
@@ -261,7 +263,8 @@ def main():
             cfg = TrajectoryConfig(
                 horizon=args.horizon, replan_steps=args.replan_steps,
                 max_cycles=args.max_cycles, near_dist=args.near_dist,
-                far_dist=args.far_dist, seed=seed)
+                far_dist=args.far_dist, seed=seed,
+                use_global_guide=not args.no_guide)
 
             # Common start pose, so path lengths are comparable.
             rng = np.random.default_rng(seed)

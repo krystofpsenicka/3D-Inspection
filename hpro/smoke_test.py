@@ -230,6 +230,90 @@ def check_trajectory_losses():
           f"(centre {c_centre:.3f} > standoff {c_good:.3f})")
 
 
+def check_global_guide():
+    """Contract of the two-timescale global guide (trajectory.GlobalGuide).
+
+    Deterministic, CPU-only. Guards the stall fix of §3.4 item 2: the guide must
+    (1) target the nearest demand cluster, (2) hold that target under
+    re-selection (hysteresis — no ping-pong), (3) advance when the target is
+    exhausted, (4) defer and leave a target that stops yielding new points (the
+    escape from uncoverable regions), and (5) clear deferrals rather than idle
+    when everything left is deferred.
+    """
+    import numpy as np
+    import trajectory as tj
+
+    rng = np.random.default_rng(0)
+    # Two well-separated blobs of 30 points each; robot starts next to blob A.
+    blob_a = rng.normal(scale=0.1, size=(30, 3)) + np.array([0.0, 0.0, 0.0])
+    blob_b = rng.normal(scale=0.1, size=(30, 3)) + np.array([10.0, 0.0, 0.0])
+    pts = np.vstack([blob_a, blob_b])
+    idx_a, idx_b = np.arange(30), np.arange(30, 60)
+    robot = np.array([-1.0, 0.0, 0.0])
+
+    cfg = tj.TrajectoryConfig(guide_pts_per_cluster=30, guide_k_max=4,
+                              guide_patience=2, guide_min_new=5,
+                              guide_defer_cycles=6, guide_mass_min=3.0)
+    guide = tj.GlobalGuide(pts, cfg, np.random.default_rng(cfg.seed))
+    demand = np.ones(60)
+
+    # (1) nearest cluster first
+    t0 = guide.select(demand, robot, cycle=0)
+    assert set(t0) <= set(idx_a), "guide must target the nearest cluster first"
+
+    # (2) hysteresis: good harvests -> same target under re-selection
+    guide.report_harvest(20)
+    t1 = guide.select(demand, robot, cycle=1)
+    assert np.array_equal(t0, t1), "target must not change while it progresses"
+
+    # (3) exhaustion: demand of A satisfied -> guide advances to B
+    demand[idx_a] = 0.0
+    t2 = guide.select(demand, robot, cycle=2)
+    assert set(t2) <= set(idx_b), "exhausted target must advance to the next cluster"
+
+    # (4) engaged stall: robot is within engage range of A (d ~ 0.9 < far_dist)
+    # but harvests nothing for `patience` cycles -> A deferred, tour moves to B.
+    demand = np.ones(60)
+    guide2 = tj.GlobalGuide(pts, cfg, np.random.default_rng(cfg.seed))
+    t = guide2.select(demand, robot, cycle=0)
+    assert set(t) <= set(idx_a)
+    cyc = 0
+    for _ in range(cfg.guide_patience):
+        cyc += 1
+        guide2.report_harvest(0)                 # nothing new: A is a tar pit
+        t = guide2.select(demand, robot, cycle=cyc)
+    assert set(t) <= set(idx_b), "a stalled engaged target must be deferred and left"
+    assert guide2.deferrals == 1
+    assert (guide2.deferred_until[idx_a] > cyc).all(), \
+        "the stalled cluster's surviving points must be deferred"
+
+    # (4b) transit is NOT a stall while distance is closing: march toward B with
+    # good speed and no harvest — the target must survive the whole trip.
+    pos = robot.copy()
+    for _ in range(6):
+        cyc += 1
+        pos = pos + np.array([1.0, 0.0, 0.0])   # closing > 0.25*step_size
+        guide2.report_harvest(0)                 # transit harvests nothing
+        t = guide2.select(demand, pos, cycle=cyc)
+    assert set(t) <= set(idx_b), \
+        "low harvest while closing distance must not count as a stall"
+
+    # (5) all deferred -> deferrals cleared, not an idle planner. Stall out B
+    # (engaged now), with A still deferred.
+    for _ in range(20):
+        cyc += 1
+        guide2.report_harvest(0)
+        t = guide2.select(demand, pos, cycle=cyc)
+        if guide2.deferrals >= 2:
+            break
+    assert guide2.deferrals >= 2, "a parked, non-harvesting robot must defer"
+    assert t is not None and len(t) > 0, \
+        "with every cluster deferred the guide must reset, not go idle"
+
+    print("  [ok] global guide: nearest-first, hysteresis, exhaustion advance, "
+          "engaged-stall deferral, transit exemption, deferral reset")
+
+
 def check_backbone_layer_matches_hpro_limited(pts, cfg, gamma):
     """``HPROBackbone`` + ``GatedVisibilityLayer`` must equal ``HPRO_limited``.
 
@@ -380,6 +464,7 @@ def main():
         ("backbone-layer==HPRO_limited",
          lambda: check_backbone_layer_matches_hpro_limited(pts, cfg, gamma)),
         ("trajectory-losses", check_trajectory_losses),
+        ("global-guide", check_global_guide),
     ]
 
     print(f"Running HPRO_limited smoke test on {DEVICE} (dtype={DTYPE})...\n")
