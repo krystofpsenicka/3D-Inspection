@@ -20,11 +20,12 @@ miscalibrated visibility proxy. Swapping in the pretrained NVPS backbone flips t
 **Status 2026-07-17.** Stage A (operator infrastructure) is **done** — backbone interface,
 two real HPRO bugs fixed, δ/α ablated (§3.3). Stage B: the §3.4 stall is **fixed** by the
 two-timescale global guide (§3.5) — the offline race is now a **statistical tie with the
-oracle** (0.892 ± 0.066 vs interpolated ≈0.898 at matched length, n=5), and the observed
-cross-process bimodality vanished at the probe config (8/8 identical). Warm-starting is
-still only ~1.3× on a static mesh, so the outdated-mesh experiment (§7 step 5) remains
-the go/no-go. The `inspection` env is fully green (126/126) — OptiX 8.0.0 + triro
-installed. Nothing is merged; all work is on `research/stage-a-operator-infra` (§0.1).
+oracle** (0.942 ± 0.014 at re-derived defaults, n=5), and the observed cross-process
+bimodality vanished at the probe configs (8/8 identical). **The outdated-mesh go/no-go is
+CLEARED (§3.6)**: matched coverage at 0.55× path and 16× lower adaptation latency vs an
+adaptive oracle forced to re-ray-cast. Biggest open risk: the NeOF head-to-head is unrun.
+The `inspection` env is fully green (126/126) — OptiX 8.0.0 + triro installed. Nothing is
+merged; all work is on `research/stage-a-operator-infra` (§0.1).
 
 **⚠ Positioning corrected 2026-07-16 (see §5).** An earlier draft of this plan claimed that
 *"nobody offers gradient-based joint refinement of camera positions and orientations
@@ -108,10 +109,14 @@ the work later disproved.
 2. **The stall is fixed and the offline race is now a tie (§3.5, 2026-07-17).** The
    two-timescale global guide (demand clustering + NN/2-opt tour + phase-aware stall
    deferral + horizon restart on retarget) lifts receding-horizon NVPS from 0.768 ± 0.144
-   to **0.892 ± 0.066** (n=5), statistically level with oracle greedy at matched path
-   length. What Stage B has *not* cleared: the warm-start advantage is still only ~1.3×
-   on a static mesh, so the **outdated-mesh experiment (§7 step 5) is the whole
-   go/no-go** now.
+   to **0.942 ± 0.014** (n=5, re-derived defaults), statistically level with oracle
+   greedy at matched path length.
+   **The outdated-mesh go/no-go is CLEARED (§3.6, 2026-07-17):** when the world
+   contradicts the prior mid-mission, the gradient planner matches the adaptive oracle's
+   coverage (0.962 vs 0.964) at **0.55× the path** and **16× lower adaptation latency**
+   (200 vs 3227 ms) — the §6.1 headline's warm-start clause is now a measurement, not an
+   aspiration. Still open before drafting: run NeOF (§6.3 attack 0), no-prior
+   exploration, Isaac Sim closing figure.
 3. **The bimodality warning has softened but the ≥5-runs rule stands (§3.5 item 3).**
    With the guide, the §3.4 probe config reproduces **8/8 identically** across processes
    (was 0.563 ×7 / 0.933 ×1). One config, one seed — keep reporting mean ± std with n;
@@ -124,20 +129,23 @@ the work later disproved.
 
 1. ~~Fix the stall~~ **Done 2026-07-17 (§3.5):** the two-timescale `GlobalGuide` +
    horizon restart on retarget. Offline race now a statistical tie with the oracle.
-2. **The outdated-mesh experiment (§7 step 5) — now the critical path.** The one place
-   the headline can be won. What is missing is only *mutating the world mid-rollout*:
-   demand updates from executed poses and the shifted warm start already exist in
-   `trajectory.py`. The baseline must be **forced to re-raycast** its candidates, which
-   is exactly what a static mesh lets it avoid. Multi-run statistics are now in place
-   (≥5 seeds, spread printed), so the experiment can be trusted when it runs.
-3. **Finish the knob re-derivation over seeds** — a paired 5-seed sweep of
-   `guide_min_new` × `lambda_terminal` was launched 2026-07-17 (the seed-2 "trickle"
-   regression in §3.5 item 2 motivates `min_new`; λ_terminal=5.0 was never re-derived
-   after the retraction). Adopt whatever wins over seeds, not over a single trace.
-4. **Optionally harden reproducibility**: `torch.use_deterministic_algorithms(True)` +
+2. ~~The outdated-mesh experiment~~ **Done and CLEARED 2026-07-17 (§3.6):**
+   `eval_outdated.py` — matched coverage at 0.55× path, 16× adaptation latency, 5.6×
+   total planning wall-clock vs an adaptive oracle forced to re-ray-cast. n=5.
+3. ~~Knob re-derivation~~ **Done 2026-07-17 (§3.5):** `lambda_terminal=2.0` +
+   `guide_min_new=15` adopted from a paired 5-seed grid (they interact; the old strong-pull
+   default with a strict detector is the worst cell).
+4. **Run NeOF head-to-head (§6.3 attack 0)** — now the biggest open evaluation risk for
+   the paper. Public code: <https://github.com/yhanCao/NeOF-HybridCamOpt>. Measure their
+   field-refit wall-clock vs our per-step cost as V and N grow, plus COG/OAQ.
+5. **Strengthen the demo if needed**: the open-loop arm still reaches 0.913 of the
+   changed region by accident (§3.6 item 3) — a deeper dent or hole-into-interior
+   mutation would sharpen the story. Also: no-prior exploration variant, Isaac Sim
+   rollout figure, VRP routing integration.
+6. **Optionally harden reproducibility**: `torch.use_deterministic_algorithms(True)` +
    `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Less urgent now that the guided rollout reproduced
    8/8 across processes at the probe config, but still the honest default for tuning.
-5. Stage A steps 2–3 (normal gate, quality weighting, self-calibration) remain undone and
+7. Stage A steps 2–3 (normal gate, quality weighting, self-calibration) remain undone and
    are still prerequisites for trusting any trajectory objective.
 
 ### 0.4 Open decisions for Krystof
@@ -159,8 +167,9 @@ the work later disproved.
 | `backbones.py` | `VisibilityBackbone` ABC + `HPROBackbone`, `NVPSBackbone`, `EnsembleBackbone`, `make_backbone`. `prepare()` holds per-cloud cost; `forward()` returns (V,N) differentiable scores. ocnn imported lazily. |
 | `visibility_layer.py` | `GatedVisibilityLayer` = backbone × shared camera model. **Where the normal gate and quality weighting (Stage A step 2) should attach**, so every backbone inherits them at once. |
 | `ocnn_compat.py` | Mandatory `OCNN_DISABLE_TRITON=1` shim — **import before `ocnn`** (§1). |
-| `trajectory.py` | Receding-horizon planner (C4). Carries the bimodality warning at module level. |
-| `eval_trajectory.py` | Stage B harness vs oracle greedy+route. Prints per-seed spread. |
+| `trajectory.py` | Receding-horizon planner (C4) + `GlobalGuide` two-timescale pass (§3.5). Carries the bimodality warning at module level. |
+| `eval_trajectory.py` | Stage B harness vs oracle greedy+route. Prints per-seed spread. `--no_guide` = ablation arm. |
+| `eval_outdated.py` | **The go/no-go experiment (§3.6)**: outdated-mesh world, shared depth-sensor model, open-loop / adaptive-oracle / receding-horizon arms. |
 | `viz_trajectory.py` | **Look at this before trusting any number** — it is what caught both the stall and the retracted result. |
 | `smoke_test.py` | 8/8 CPU checks; guards every fix above (see §8.1). |
 
@@ -591,6 +600,64 @@ transit exemption, deferral reset).
 
 ---
 
+### 3.6 The outdated-mesh experiment — go/no-go CLEARED (2026-07-17)
+
+`eval_outdated.py`. The robot receives a **prior mesh** M0 but flies over the **true mesh**
+M1 = M0 with a region caved in (coherent dent along the region's mean normal — per-vertex
+normals on this scanned mesh are too noisy and shred triangles; radius 0.25 / depth 0.15,
+sized to the ~0.3 hull cross-section). A shared simulated depth sensor (hard ray-cast vs
+M1, tolerance 2 cm) classifies frustum points per executed pose: **seen** (surface
+confirmed → covered, and unknown true points within a 0.15 discovery halo become new
+demand), **refuted** (clear line of sight beyond a believed point → the ghost is deleted),
+or occluded (no information). Inward collapse is deliberate: ghosts float in *empty space*
+and a clear ray refutes them; an outward bulge hides ghosts inside the new surface and
+would need depth-image differencing.
+
+Arms (same sensor, same 40-pose cap, same 0.95 stop): **open-loop** = candidates + oracle
+greedy + 2-opt planned once on the prior belief, executed blind; **adaptive** = same, but
+re-solves (candidates regenerated from current demand, **re-ray-cast against M1** — an
+oracle-strength grant — greedy + re-route) whenever ≥15 contradictions accumulate;
+**rh-nvps** = the §3.5 planner with belief updates: demand shifts in fixed union indexing
+so every warm start survives the world changing, and the backbone re-prepares (~30 ms).
+
+5 seeds (seeded dent placement), one process:
+
+| Arm | True coverage | Changed-region | Path (m) | Total plan (s) | Adapt latency (ms) | n adapts |
+|---|---|---|---|---|---|---|
+| open-loop | 0.957 ± 0.005 | 0.913 ± 0.075 | 12.18 ± 0.93 | 3.3 | — | 0 |
+| adaptive | 0.964 ± 0.012 | 0.913 ± 0.076 | 13.11 ± 0.90 | 28.9 ± 9.9 | **3227** | 7.8 |
+| **rh-nvps** | 0.962 ± 0.006 | **0.949 ± 0.023** | **7.22 ± 0.70** | **5.2 ± 1.3** | **200** | 10.0 |
+
+**Reading, honestly:**
+
+1. **The warm-start claim is finally measured where it matters, and it is 16×.** One
+   adaptation costs the discrete pipeline 3227 ms (candidate re-ray-cast dominates); the
+   gradient planner pays 200 ms (backbone re-prepare + one warm replan, both included).
+   §3.4 item 3's fear — "only 1.3× on a static mesh" — was the static mesh's artifact, as
+   §6.4(iii) predicted: force the baseline to re-pay its ray-casts and the gap is an order
+   of magnitude. Total planning wall-clock: 5.6× (5.2 vs 28.9 s).
+2. **Coverage matched, at 0.55× the path.** 0.962 ± 0.006 vs the adaptive oracle's
+   0.964 ± 0.012, reached in 7.2 m vs 13.1 m. The coverage-vs-metres figure
+   (`outdated_coverage.png`) is the paper's headline figure: all five green curves above
+   both discrete arms at every length past ~2 m, separation ≫ seed spread. The planner
+   is *dominant* here where it only *tied* offline (§3.5) — continuous integration of
+   motion cost + per-cycle reaction beats re-solving set-cover/route from scratch when
+   the demand keeps shifting under discovery.
+3. **The open-loop "miss" is the weakest part of the story.** A 0.15-deep dent stays
+   mostly inside the [0.5, 1.5] standoff band, so open-loop still reaches 0.913 ± 0.075
+   changed-region coverage by accident; rh gives 0.949 ± 0.023 (better and 3× more
+   consistent, but not a disaster-vs-recovery contrast). If the demo needs more drama,
+   deepen the dent or use a hole-into-interior mutation — at the cost of mesh-artifact
+   risk. The quantitative latency/path story does not depend on it.
+4. **Go/no-go (§6.6): cleared.** "Beat a discrete re-solve on wall-clock AND match it on
+   coverage" — measured yes on both, n=5. Caveats that stay open: single-process numbers
+   (the §3.5 8/8 reproducibility check mitigates), NeOF is still unrun (§6.3 attack 0),
+   and the no-prior exploration setting remains future work.
+
+Reproduce: `$ipy hpro/eval_outdated.py --seeds 5 --no_show` (~13 min).
+
+---
+
 ## 4 · NVPS deep-dive: what we're plugging in
 
 *NVPS = Wang et al., "Neural Visibility of Point Sets", SIGGRAPH Asia 2025*
@@ -742,11 +809,14 @@ scratch when the world changes, and NeOF must refit its neural field; a gradient
 on a *fitting-free* surrogate keeps stepping from its current solution. That is a property
 neither prior method has, and it is what makes the online setting ours.
 
-> ⚠️ **This headline is an aspiration, not a finding (status 2026-07-16).** §3.4 currently
-> contradicts both halves of its second sentence: we do **not** beat the discrete pipeline
-> offline (oracle greedy wins), and NeOF has not been run at all. The warm-start clause
-> survives only in the *changing-world* setting, which is untested (§7 step 5). Do not
-> write this sentence into a draft until the outdated-mesh experiment supports it.
+> **Status 2026-07-17: the headline's core is now measured.** The warm-start clause is
+> supported by §3.6 (16× adaptation latency, matched coverage at 0.55× path against an
+> adaptive oracle in the changing-world setting), and the offline placement clause is a
+> statistical tie with oracle greedy (§3.5), no longer a loss. Still unsupported: the
+> NeOF comparison ("match/exceed NeOF" has not been run — §6.3 attack 0) and the
+> "beat the discrete set-cover + VRP pipeline" offline claim (tie ≠ beat; the win is in
+> path length under change, so phrase it that way). Do not draft the NeOF words until
+> those numbers exist.
 
 ### 6.2 Contribution stack
 
@@ -965,11 +1035,10 @@ distance-invariance theory, which remain unclaimed.
   there is **no paper** at RA-L — the offline half alone is too close to NeOF. Treat
   Stage B as go/no-go: if receding-horizon + warm-start cannot beat a discrete re-solve on
   wall-clock *and* match it on coverage, stop and reconsider the venue rather than padding
-  the offline section. **Status 2026-07-17: not cleared, but no longer failing** — the
-  stall is fixed and the offline race is a statistical tie with the oracle (§3.5); what
-  remains unproven is the warm-start advantage (still ~1.3× on a static mesh). The
-  discriminating experiment (outdated-mesh, where the baseline must re-raycast) is unrun
-  and is now the single critical-path item (§0.3 action 2).
+  the offline section. **Status 2026-07-17 (evening): CLEARED** — §3.6 measures the
+  receding-horizon planner matching an adaptive-oracle re-solve on coverage while beating
+  it 16× on adaptation latency and 1.8× on path length in the outdated-mesh setting, n=5.
+  The remaining novelty risk is the NeOF head-to-head (§6.3 attack 0), which is unrun.
 - *🚨 Measurement risk: the planner is chaotic, and it has already fooled us once.* A
   rollout is bit-deterministic within a process but **bimodal across processes** (0.563 ×7,
   0.933 ×1 at identical config+seed — §3.4 item 1). A "tuned" 0.933 was reported as a
@@ -1028,16 +1097,13 @@ front.*
    two-timescale guide lifts NVPS to 0.892 ± 0.066 (n=5), a statistical tie with the
    oracle at matched length, and the probe config now reproduces 8/8 across processes.
    Remaining: route with the existing VRP; Isaac Sim rollout figure.
-5. **Online construction (§6.4) — now the critical path, not a follow-on.** §3.4 shows the
-   static setting cannot demonstrate the headline: the discrete baseline only pays its
-   ~1.5 s of candidate ray-casting when the world *changes*. So the **outdated-mesh
-   experiment** and the no-prior setting are the only places warm-starting can win.
-   Implement demand-weighted warm-started re-optimization on top of step 4 (the delta is
-   small — demand updates from executed poses + shifted warm start are already in
-   `trajectory.py`; what is missing is mutating the world mid-rollout), then measure
-   re-planning cost vs a discrete re-solve **that is forced to re-raycast**, and vs NeOF's
-   field refit, as a function of V/N. If this does not produce a clear win, §6.6's
-   go/no-go says stop and reconsider the venue rather than pad Stage C.
+5. ~~Online construction / outdated-mesh~~ — **built and CLEARED 2026-07-17**
+   (`eval_outdated.py`, §3.6): belief-aware receding horizon over a fixed union indexing
+   (warm starts survive world changes), shared depth-sensor model with refutation +
+   discovery halo, open-loop and adaptive-oracle discrete arms. Result: matched coverage,
+   0.55× path, 16× adaptation latency, 5.6× planning wall-clock, n=5. Remaining from this
+   step: the **NeOF field-refit cost curve** as a function of V/N (§6.3 attack 0), the
+   no-prior exploration variant, and the Isaac Sim rollout figure.
 
 **Stage C — offline placement, positioned as comparison.**
 
