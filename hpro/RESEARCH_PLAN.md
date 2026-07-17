@@ -552,9 +552,24 @@ Load-bearing observations:
 2. **Paired per-seed: 4/5 improve, mean +0.124** (0.563→0.943, 0.722→0.909, 0.692→0.885,
    0.921→0.954, and one regression 0.943→0.771). The regression trace shows the remaining
    failure mode: targets that yield a **trickle** (5–13 points/cycle ≥ `guide_min_new=5`)
-   keep resetting the stall detector without real progress. Whether `guide_min_new`
-   should scale with expected per-view harvest (~135 points here) is being swept over
-   seeds — not tuned on that one trace (§3.4's retraction is exactly that mistake).
+   keep resetting the stall detector without real progress.
+
+   **Knobs re-derived over seeds, not that trace** (§3.4's retraction was exactly that
+   mistake). Paired 5-seed grid of `guide_min_new` × `lambda_terminal`, NVPS, one process:
+
+   | | λ_t=2.0 | λ_t=5.0 |
+   |---|---|---|
+   | min_new=5 | 0.918 ± 0.040 @ 12.4 m | 0.892 ± 0.066 @ 11.1 m |
+   | **min_new=15** | **0.942 ± 0.014 @ 13.0 m** | 0.800 ± 0.128 @ 10.0 m |
+
+   `(min_new=15, λ_terminal=2.0)` is **adopted as default**: best mean, tightest spread
+   (every seed ≥ 0.914 — the trickle regression disappears), and against the oracle curve
+   interpolated at its 12.99 m (≈0.929) it sits **slightly above**. The knobs *interact*:
+   a strict stall detector under the old strong pull is the worst cell (0.800 ± 0.128,
+   8–9 retargets of churn — deferrals fire while the strong terminal term still pins the
+   robot to the old target's neighbourhood). Do not retune one without the other. The
+   8-process reproducibility check was repeated at the adopted defaults: **8/8 identical
+   0.949 @ 14.31 m.**
 3. **The observed cross-process bimodality vanished at the §3.4 probe config.** Guided
    seed 0 across 8 separate processes: **8/8 identical 0.943 @ 12.00 m** — against the
    unguided 0.563 ×7 / 0.933 ×1 on the same machine. Plausible mechanism: the horizon

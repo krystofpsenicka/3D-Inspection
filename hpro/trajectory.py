@@ -125,18 +125,19 @@ class TrajectoryConfig:
     lr: float = 3e-2
     max_cycles: int = 40
     target_coverage: float = 0.95
-    # Tuned on the wreck, seed 0, NVPS backbone (see RESEARCH_PLAN.md §3.4).
-    # The original lambda_length=0.05 / lambda_terminal=0.02 made the robot
-    # stall: once local demand is exhausted the coverage gradient vanishes, and
-    # the length penalty (0.05 x ~3.6 m = 0.18) outvoted the terminal pull
-    # (0.02 x ~4 = 0.08) -- the only term that can steer toward fresh geometry.
-    # The rollout then crawled at ~0.05 m/cycle and finished at 0.53 coverage.
-    # These weights are sensitive and non-monotone; treat them as a starting
-    # point, not a converged choice.
+    # lambda_terminal=2.0 and guide_min_new=15 were re-derived TOGETHER over a
+    # paired 5-seed sweep (RESEARCH_PLAN.md §3.5): 0.942 ± 0.014 vs 0.892 ±
+    # 0.066 at the old (5.0, 5) pair, best mean and tightest spread of the
+    # grid. They interact: a strong terminal pull with a strict stall detector
+    # is the WORST cell (0.800 ± 0.128, 8-9 retargets of churn), so do not
+    # retune one without the other. The older history: lambda_length=0.05 /
+    # lambda_terminal=0.02 stalled outright (length outvoted the only term
+    # steering toward fresh geometry), and the interim lambda_terminal=5.0 was
+    # tuned on a single bimodal draw and never survived multi-seed evidence.
     lambda_length: float = 0.01
     lambda_smooth: float = 0.01
     lambda_standoff: float = 1.0
-    lambda_terminal: float = 5.0
+    lambda_terminal: float = 2.0
     near_dist: float = 0.5
     far_dist: float = 1.5
     step_size: float = 0.6
@@ -145,7 +146,7 @@ class TrajectoryConfig:
     guide_pts_per_cluster: int = 250
     guide_k_max: int = 8
     guide_patience: int = 3
-    guide_min_new: int = 5
+    guide_min_new: int = 15
     guide_defer_cycles: int = 8
     guide_mass_min: float = 5.0
     retarget_steps: int = 90
