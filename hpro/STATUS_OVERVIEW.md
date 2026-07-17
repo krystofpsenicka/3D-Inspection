@@ -173,15 +173,38 @@ it by accident (0.913 vs our 0.949 in the changed region). The latency/path numb
 depend on that; a deeper or topological change (a hole into the interior) would sharpen
 the demo.
 
+## 4b · Update (written while you read): the NeOF head-to-head is done, and we win
+
+This happened after the overview above was first written. NeOF is the 2024 prior-art
+paper whose existence forced the repositioning; a reviewer's first question will be "how
+is this not NeOF with a different visibility model?" We ran their released code on our
+wreck benchmark (their full method at their published defaults, camera adapted to our
+tight optics, everyone scored by the same exact ray-cast oracle):
+
+| method (static placement) | 10 cameras | 20 cameras | compute |
+|---|---|---|---|
+| NeOF (their released hybrid) | 0.623 ± 0.085 | 0.809 ± 0.027 | 41–64 s |
+| classical greedy (cheating oracle) | 0.886 ± 0.019 | 0.966 ± 0.006 | ~1 s |
+| **greedy + our gradient refinement** | **0.938 ± 0.006** | **0.972 ± 0.002** | ~2 s |
+
+Giving NeOF a 4.6× denser working set does not rescue it (0.779, at 165 s). The
+mechanistic reason is satisfying: NeOF's own training labels come from *classical
+hidden-point removal* — a proxy for visibility that is badly wrong on a concave scanned
+wreck — so its neural field faithfully learns wrong answers. That is precisely the
+"surrogate exploitation" phenomenon our paper diagnoses, showing up in the published
+state of the art. We also measured the cost structure: NeOF must re-fit its neural field
+every epoch, and that refit grows **superlinearly** with scene resolution (1.7 s → 191 s
+per epoch as the working set grows 18×), while our fitting-free pipeline stays flat
+(~30 ms to prepare a cloud, ~5–15 ms per optimization step). Fairness caveats are
+recorded in RESEARCH_PLAN.md §3.7 (their demos target wide-lens tabletop scenes; this
+regime is ours; their released code needed two crash fixes). With this, all three
+planned defenses against the "it's just NeOF" attack are measurements, not arguments.
+
 ## 5 · Next steps, broadly, in priority order
 
-1. **Head-to-head against NeOF (the 2024 prior-art paper) — the biggest open risk.**
-   A reviewer's first question will be "how is this not NeOF with a different visibility
-   model?" Our answers (trajectories/online, no per-scene field fitting, the
-   exploitation analysis) must be backed by running their public code on our scenes:
-   compare coverage, their own quality metrics, and — most importantly — their
-   field-refitting cost vs our per-step cost as the number of cameras and points grows.
-   **This is what I am starting on now.**
+1. ~~Head-to-head against NeOF~~ — **done, see §4b above.** What remains from it:
+   report NeOF's own quality metrics (observation-angle etc.) alongside ours in the
+   final paper evaluation, so numbers are commensurable in both directions.
 2. **Sharpen the outdated-mesh demo** (optional but cheap): deeper collapse or a breach
    into the interior, so the open-loop arm visibly fails rather than just being slower.
 3. **No-prior exploration variant**: start with *no* mesh at all and build the plan from

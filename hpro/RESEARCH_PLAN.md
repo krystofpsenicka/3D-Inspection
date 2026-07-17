@@ -23,9 +23,12 @@ two-timescale global guide (§3.5) — the offline race is now a **statistical t
 oracle** (0.942 ± 0.014 at re-derived defaults, n=5), and the observed cross-process
 bimodality vanished at the probe configs (8/8 identical). **The outdated-mesh go/no-go is
 CLEARED (§3.6)**: matched coverage at 0.55× path and 16× lower adaptation latency vs an
-adaptive oracle forced to re-ray-cast. Biggest open risk: the NeOF head-to-head is unrun.
-The `inspection` env is fully green (126/126) — OptiX 8.0.0 + triro installed. Nothing is
-merged; all work is on `research/stage-a-operator-infra` (§0.1).
+adaptive oracle forced to re-ray-cast. **The NeOF head-to-head is run (§3.7)**: their
+released hybrid loses the placement race on our benchmark (0.809 vs 0.972 at V=20) and
+its field refit scales superlinearly (191 s/epoch at 12k voxels vs our 34 ms prepare) —
+attack 0 is answered with numbers. The `inspection` env is fully green (126/126) — OptiX
+8.0.0 + triro installed. Nothing is merged; all work is on
+`research/stage-a-operator-infra` (§0.1).
 
 **⚠ Positioning corrected 2026-07-16 (see §5).** An earlier draft of this plan claimed that
 *"nobody offers gradient-based joint refinement of camera positions and orientations
@@ -138,9 +141,11 @@ the work later disproved.
 3. ~~Knob re-derivation~~ **Done 2026-07-17 (§3.5):** `lambda_terminal=2.0` +
    `guide_min_new=15` adopted from a paired 5-seed grid (they interact; the old strong-pull
    default with a strict detector is the worst cell).
-4. **Run NeOF head-to-head (§6.3 attack 0)** — now the biggest open evaluation risk for
-   the paper. Public code: <https://github.com/yhanCao/NeOF-HybridCamOpt>. Measure their
-   field-refit wall-clock vs our per-step cost as V and N grow, plus COG/OAQ.
+4. ~~Run NeOF head-to-head~~ **Done 2026-07-17 (§3.7):** their released hybrid, patched
+   to our tight camera, loses the placement race badly (0.809 vs our 0.972 at V=20, our
+   audit) and its field refit scales superlinearly (191 s/epoch at 12k voxels vs our
+   34 ms prepare). Attack 0's replies (i)–(iii) all have numbers now. Remaining from
+   this item: report their COG/OAQ metrics alongside ours in the final C5 evaluation.
 5. **Strengthen the demo if needed**: the open-loop arm still reaches 0.913 of the
    changed region by accident (§3.6 item 3) — a deeper dent or hole-into-interior
    mutation would sharpen the story. Also: no-prior exploration variant, Isaac Sim
@@ -661,6 +666,75 @@ Reproduce: `$ipy hpro/eval_outdated.py --seeds 5 --no_show` (~13 min).
 
 ---
 
+### 3.7 NeOF head-to-head — attack 0 answered with numbers (2026-07-17)
+
+`eval_neof.py` runs [NeOF's released code](https://github.com/yhanCao/NeOF-HybridCamOpt)
+(RA-L 2024) on the wreck benchmark: their full hybrid (per-epoch neural-field refit,
+gradient stage, elite resampling) at their README defaults (20 epochs × 20 iterations),
+with two adaptations for commensurability — their pinhole intrinsics patched from ~90°×74°
+to our 30°×35° tight camera with `height=1.0` (their depth band [0.5h, 1.5h] then
+coincides with our standoff band), and k-coverage=1 (set-cover, our objective). Every
+arm's final poses are scored by the **same oracle** (frustum ∩ Embree ray-cast). Their
+released code required two repairs to run at all (`main.py` crashes on its own
+`args.scene`, `optimization.py` uses `copy` without importing it) — both patched
+non-invasively in our harness.
+
+**Static placement, 3 seeds, our audit:**
+
+| Method | V=10 | V=20 | Wall-clock |
+|---|---|---|---|
+| NeOF (released hybrid) | 0.623 ± 0.085 | 0.809 ± 0.027 | 41–64 s |
+| greedy (oracle) | 0.886 ± 0.019 | 0.966 ± 0.006 | ~1.2 s |
+| **greedy + refine (NVPS, ours)** | **0.938 ± 0.006** | **0.972 ± 0.002** | ~2 s |
+
+Robustness check against the "you starved their working set" objection: at 4.6× voxel
+density NeOF gives 0.779 ± 0.043 (n=2, statistically unchanged) while its wall-clock
+grows to 165 s. The gap is structural, not a resolution artifact.
+
+**Cost scaling (V=10, warm-ups excluded; NeOF's working set is voxel-bounded, so
+resolution is the honest x-axis):**
+
+| N points | M voxels | NeOF field refit / epoch | NeOF visibility pass | Ours: prepare (once) | Ours: per step |
+|---|---|---|---|---|---|
+| 3 000 | 666 | 1.7 s | 15 ms | 24 ms | 4 ms |
+| 12 000 | 2 812 | 6.4 s | 51 ms | 28 ms | 5 ms |
+| 48 000 | 12 211 | **190.9 s** | 213 ms | **34 ms** | **15 ms** |
+
+The refit is superlinear in M (×4.3 voxels → ×30 time; their field attention builds
+O(M²) tensors), while the fitting-free operator is flat: at inspection-grade resolution
+one NeOF re-anchoring epoch costs ~5 600× our per-cloud prepare. **This is §6.3 reply
+(ii) — "no per-scene fitting" — measured rather than asserted**, and it is also why the
+online setting (§3.6) is structurally ours: NeOF's equivalent of a belief update is a
+field refit.
+
+**Read fairly, in both directions:**
+
+1. **Why NeOF loses here, mechanistically:** its ground-truth labels are *classical HPR*
+   (`open3d.hidden_point_removal`) on the point cloud — a proxy, not a ray-cast. On a
+   concave scanned wreck under a tight camera, HPR mislabels heavily (the §3.1 story:
+   HPRO F1 ≈ 0.65–0.72 on the wreck), the neural field is fit to those wrong labels, and
+   the optimizer inherits the miscalibration. **This is the C2 surrogate-exploitation
+   phenomenon appearing in prior art**, which strengthens C2's framing from "our
+   diagnosis" to "a live failure in the published state of the art".
+2. **The honest caveats:** NeOF was designed and demonstrated for wide-FOV, k=3 coverage
+   of tabletop objects and rooms; the tight-optics concave-structure regime is *our*
+   benchmark, not theirs, and the correct claim is "NeOF's released method does not
+   transfer to inspection-grade coverage of complex structures", not "NeOF is broken".
+   We ran their code at their defaults without per-scene tuning (and equally, none of
+   our arms were tuned per scene). Their released code is buggy enough (two crash-level
+   defects) that the paper's numbers may not be fully reproducible by it — say so in a
+   footnote, cite generously, and report their COG/OAQ metrics alongside ours in the
+   final evaluation (§6.2/C5).
+3. **The gradient stage earns its keep against the oracle too:** +0.052 GT coverage over
+   oracle greedy at V=10 (0.886 → 0.938, every seed, ±0.006) for ~1 s of refinement —
+   the C3 hybrid's value at tight optics, bigger than the +0.003 that §3.2 measured in
+   the old toy far=6.0 regime.
+
+Reproduce: `$ipy_inspection hpro/eval_neof.py --seeds 3 --cameras 10,20 --no_show` and
+`--scaling` (needs the `inspection` env: open3d for NeOF + ocnn installed 2026-07-17).
+
+---
+
 ## 4 · NVPS deep-dive: what we're plugging in
 
 *NVPS = Wang et al., "Neural Visibility of Point Sets", SIGGRAPH Asia 2025*
@@ -818,8 +892,10 @@ neither prior method has, and it is what makes the online setting ours.
 > statistical tie with oracle greedy (§3.5), no longer a loss. Still unsupported: the
 > NeOF comparison ("match/exceed NeOF" has not been run — §6.3 attack 0) and the
 > "beat the discrete set-cover + VRP pipeline" offline claim (tie ≠ beat; the win is in
-> path length under change, so phrase it that way). Do not draft the NeOF words until
-> those numbers exist.
+> path length under change, so phrase it that way). *(Update, same day: §3.7 supplies
+> the NeOF numbers — on this benchmark "match/exceed NeOF" is an understatement; write
+> "outperforms NeOF's released method under inspection-grade optics", with §3.7's
+> fairness caveats attached.)*
 
 ### 6.2 Contribution stack
 
@@ -905,9 +981,14 @@ all (§6.4 — hence the §7 re-ordering); (ii) *no per-scene fitting* — NeOF 
 repeatedly refit a neural observation field, so its "gradient" is through a learned proxy
 of visibility, whereas HPRO/NVPS differentiate visibility directly, which is what makes
 warm-started online replanning cheap; (iii) *the exploitation analysis* (C2) explaining
-why NeOF's refit loop is load-bearing rather than incidental. Reply (ii) must be *measured*
-— field-refit wall-clock vs our per-step cost as V and N grow — or it is just words. Run
-NeOF's public code early (§7 step 6) so these numbers exist before the draft is written.
+why NeOF's refit loop is load-bearing rather than incidental.
+**Status 2026-07-17: all three replies now have measurements (§3.7).** (i) is §3.6's
+16×-latency online result, which NeOF cannot enter; (ii) is the scaling table — their
+refit is superlinear in working-set size (191 s/epoch at 12k voxels) vs our flat 34 ms
+prepare; (iii) gained its sharpest evidence: NeOF's own labels are classical HPR, and on
+the wreck its optimizer inherits HPR's miscalibration — the C2 phenomenon live in the
+published state of the art. Their released hybrid also loses the placement race outright
+on our benchmark (0.623/0.809 at V=10/20 vs our 0.938/0.972, same oracle audit).
 
 **Attack 1: "the mesh is known — why not optimize true ray-cast
 coverage with a gradient-free method (CMA-ES, Bayesian optimization)?"** At V=5 (30 dims)

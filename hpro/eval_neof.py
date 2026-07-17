@@ -86,7 +86,7 @@ def patch_neof_intrinsics(fov_h, fov_v):
 
 
 def run_neof(pts_np, normals_np, audit, V, seed, epochs, iterations,
-             scratch_dir):
+             scratch_dir, voxel_size=0.05):
     """Run NeOF's full hybrid optimization; score final poses with OUR audit."""
     from dataset.init_camera import initRandomCameras, getCameraPose
     from dataset.utils import npToTensor
@@ -104,9 +104,11 @@ def run_neof(pts_np, normals_np, audit, V, seed, epochs, iterations,
     pc = o3d.geometry.PointCloud()
     pc.points = o3d.utility.Vector3dVector(pts_np)
     pc.normals = o3d.utility.Vector3dVector(normals_np)
-    down = pc.voxel_down_sample(voxel_size=0.05)
+    down = pc.voxel_down_sample(voxel_size=voxel_size)
     voxelnormals = np.concatenate([np.asarray(down.points),
                                    np.asarray(down.normals)], axis=1)
+    print(f"neof working set: {len(voxelnormals)} voxels "
+          f"(voxel_size={voxel_size})", flush=True)
 
     args = types.SimpleNamespace(
         cameranum=V, height=1.0, kcoverage=1, epoches=epochs,
@@ -204,6 +206,114 @@ def run_refine(pts_np, normals_np, audit, init_pos, init_r6, V, seed,
 
 
 # ---------------------------------------------------------------------------
+# Cost scaling: field refit + per-iteration cost vs cloud size
+# ---------------------------------------------------------------------------
+
+def run_scaling(args, mesh, device):
+    """Reply (ii) to attack 0, measured: what each method pays per unit of
+    optimization as the cloud grows.
+
+    NeOF's recurring costs: (a) a neural-field refit every epoch (1000 Adam
+    iterations on the voxel set — their re-anchoring), and (b) per gradient
+    iteration, one HPR (CPU convex hull, O(M log M)) *per camera* inside the
+    model forward plus another full visibility pass for their metric. Ours:
+    (a) one backbone ``prepare`` per cloud/belief change (~tens of ms), and
+    (b) one fused forward+backward over all V poses per step. No per-scene
+    fitting anywhere — that is the structural claim, and this table is it.
+    """
+    import open3d as o3d
+    from field.field_attribute import voxel_model
+    from field.visibility_field import AddAttention
+    from dataset.init_camera import initRandomCameras
+    V = 10
+    print(f"\n=== cost scaling (V={V}; NeOF's working set is voxel-bounded, so "
+          "resolution — not raw point count — is the honest x-axis; all "
+          "first-call warm-ups are excluded) ===")
+    print(f"{'N':>7} {'M(voxel)':>8} | {'neof refit/epoch':>16} "
+          f"{'neof vis-pass':>13} | {'ours prepare':>12} {'ours step':>10}")
+
+    for N, vox in [(3000, 0.05), (12000, 0.025), (48000, 0.0125)]:
+        np.random.seed(0)
+        pts, fidx = trimesh.sample.sample_surface(mesh, count=N)
+        pts = np.asarray(pts, dtype=np.float64)
+        nrm = np.asarray(mesh.face_normals[fidx], dtype=np.float64)
+        pointnormals = np.concatenate([pts, nrm], axis=1)
+
+        pc = o3d.geometry.PointCloud()
+        pc.points = o3d.utility.Vector3dVector(pts)
+        pc.normals = o3d.utility.Vector3dVector(nrm)
+        down = pc.voxel_down_sample(voxel_size=vox)
+        voxelnormals = np.concatenate([np.asarray(down.points),
+                                       np.asarray(down.normals)], axis=1)
+        M = len(voxelnormals)
+
+        na = types.SimpleNamespace(kcoverage=1, height=1.0)
+        Rs, Cs = initRandomCameras(V, pointnormals, na.height)
+        Rmat = np.stack([Rs[i] for i in range(V)])
+        pos = np.stack([Cs[i] for i in range(V)])
+
+        # NeOF visibility pass (V HPR calls — paid at least twice per
+        # gradient iteration in their loop). Warm-run once, time the second.
+        voxel_model(na, voxelnormals, Rmat, pos, min_h=0.5, max_h=1.5)
+        t0 = time.perf_counter()
+        voxelmodel, _ = voxel_model(na, voxelnormals, Rmat, pos,
+                                    min_h=0.5, max_h=1.5)
+        t_vis = time.perf_counter() - t0
+
+        # NeOF field refit (their per-epoch 1000-iteration fit).
+        fieldmodel = AddAttention(6, 16, 1).to(device)
+        fopt = torch.optim.Adam(fieldmodel.parameters(), lr=1e-3)
+        t0 = time.perf_counter()
+        for _ in range(1000):
+            out = fieldmodel(voxelmodel[:, :3].unsqueeze(1), voxelmodel[:, :3],
+                             voxelmodel[:, 3:6], voxelmodel[:, 6:]).squeeze(-1)
+            loss = torch.sum(torch.abs(voxelmodel[:, -3] - out[:, 0])) / len(out)
+            fopt.zero_grad(); loss.backward(); fopt.step()
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t_refit = time.perf_counter() - t0
+
+        # Ours: prepare once + one optimisation step over V poses. Prepare
+        # twice and time the second — CUDA warm-up must not be charged.
+        b = make_backbone("nvps", device=device, gamma=-math.exp(-7.0), k=10)
+        b.prepare(pts, nrm)
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        b.prepare(pts, nrm)
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t_prep = time.perf_counter() - t0
+        layer = GatedVisibilityLayer(
+            b, fov_h=math.radians(args.fov_h), fov_v=math.radians(args.fov_v),
+            near=0.1, far=1.5, frustum_sharpness=50.0, device=device)
+        pts_t = torch.tensor(pts.T, dtype=torch.float32, device=device)
+        p_t = torch.nn.Parameter(torch.tensor(pos, dtype=torch.float32,
+                                              device=device))
+        look = -torch.tensor(nrm[:V], dtype=torch.float32, device=device)
+        up = torch.tensor([0.0, 0.0, 1.0], device=device).expand(V, 3)
+        r_t = torch.nn.Parameter(torch.cat([look, up], dim=1))
+        opt = torch.optim.Adam([p_t, r_t], lr=3e-2)
+        # Warm up once (JIT/cudnn autotune must not be charged to the step).
+        w = layer(pts_t, p_t, r_t); (-w.mean()).backward(); opt.zero_grad()
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        for _ in range(10):
+            opt.zero_grad()
+            w = layer(pts_t, p_t, r_t).clamp(0.0, 1.0 - 1e-7)
+            C = (1.0 - torch.prod(1.0 - w, dim=0)).mean()
+            (-C).backward()
+            opt.step()
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t_step = (time.perf_counter() - t0) / 10.0
+
+        print(f"{N:>7} {M:>8} | {t_refit:>14.1f} s {t_vis*1e3:>10.0f} ms | "
+              f"{t_prep*1e3:>9.0f} ms {t_step*1e3:>7.0f} ms")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -221,6 +331,10 @@ def parse_args():
     p.add_argument("--fov_v", type=float, default=35.0)
     p.add_argument("--out", default=os.path.join(_DIR, "results", "neof"))
     p.add_argument("--device", default="auto")
+    p.add_argument("--scaling", action="store_true",
+                   help="Run the cost-scaling table instead of the comparison.")
+    p.add_argument("--neof_voxel_size", type=float, default=0.05,
+                   help="NeOF working-set density (smaller = more voxels).")
     p.add_argument("--no_show", action="store_true")
     a = p.parse_args()
     a.cameras = [int(x) for x in a.cameras.split(",")]
@@ -238,6 +352,10 @@ def main():
                near=0.1, far=1.5)
     mesh = load_mesh(args.mesh)
     mesh_name = os.path.basename(args.mesh)
+
+    if args.scaling:
+        run_scaling(args, mesh, device)
+        return
 
     rows = []
     csv_path = os.path.join(args.out, "eval_neof.csv")
@@ -261,7 +379,8 @@ def main():
                 res["greedy+refine(nvps)"] = run_refine(
                     pts_np, normals_np, audit, g_pos, g_r6, V, seed, device)
                 res["neof"] = run_neof(pts_np, normals_np, audit, V, seed,
-                                       args.epochs, args.iterations, args.out)
+                                       args.epochs, args.iterations, args.out,
+                                       voxel_size=args.neof_voxel_size)
 
                 for method, r in res.items():
                     row = dict(
