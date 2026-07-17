@@ -17,12 +17,14 @@ miscalibrated visibility proxy. Swapping in the pretrained NVPS backbone flips t
 **refinement beats oracle greedy on the wreck (0.941 vs 0.938 at V=5)** where HPRO lost
 (0.915). The two operators fail in exactly complementary ways.
 
-**Status 2026-07-16.** Stage A (operator infrastructure) is **done** — backbone interface,
-two real HPRO bugs fixed, δ/α ablated (§3.3). Stage B (trajectories, the headline) is
-**built but not passing**: oracle greedy still wins the offline race, warm-starting is only
-1.3× on a static mesh, the planner stalls, and the rollout is **bimodal**, which already
-cost one retracted result (§3.4). Nothing is merged — 7 commits on
-`research/stage-a-operator-infra` (§0.1).
+**Status 2026-07-17.** Stage A (operator infrastructure) is **done** — backbone interface,
+two real HPRO bugs fixed, δ/α ablated (§3.3). Stage B: the §3.4 stall is **fixed** by the
+two-timescale global guide (§3.5) — the offline race is now a **statistical tie with the
+oracle** (0.892 ± 0.066 vs interpolated ≈0.898 at matched length, n=5), and the observed
+cross-process bimodality vanished at the probe config (8/8 identical). Warm-starting is
+still only ~1.3× on a static mesh, so the outdated-mesh experiment (§7 step 5) remains
+the go/no-go. The `inspection` env is fully green (126/126) — OptiX 8.0.0 + triro
+installed. Nothing is merged; all work is on `research/stage-a-operator-infra` (§0.1).
 
 **⚠ Positioning corrected 2026-07-16 (see §5).** An earlier draft of this plan claimed that
 *"nobody offers gradient-based joint refinement of camera positions and orientations
@@ -59,10 +61,10 @@ tells you where the work actually stands.*
 
 ### 0.1 Repo state — nothing is merged
 
-All of the below lives on branch **`research/stage-a-operator-infra`**, **10 commits, not
-pushed, no merge request opened**. `main` is untouched and still contains the pre-NeOF
-world-view. Listed oldest-first (`git log --oneline main..HEAD`; no SHAs here — the branch
-has been rewritten once already and hashes go stale):
+All of the below lives on branch **`research/stage-a-operator-infra`**, **not pushed, no
+merge request opened**. `main` is untouched and still contains the pre-NeOF world-view.
+Listed oldest-first (`git log --oneline main..HEAD`; no SHAs here — the branch has been
+rewritten once already and hashes go stale):
 
 ```
 Reposition the research plan after finding that NeOF (RA-L 2024) already does …
@@ -76,6 +78,9 @@ Add visual rollout inspection and retract an unreproducible Stage B number.
 Measure the Stage B rollout's cross-process bimodality and make the rollout figure legible.
 Document the state of play in RESEARCH_PLAN.md section 0 for returning to this work.
 Correct the commit inventory in the resume section.
+────────── session of 2026-07-17 ──────────
+Add the two-timescale global guide (demand clustering, NN+2-opt tour, stall deferral, …
+Document the OptiX/triro resolution and the Stage B guide results (§3.5).
 ```
 
 **Stage A could be merged on its own** — the operator work is finished and its claims hold.
@@ -100,36 +105,38 @@ the work later disproved.
    venue. Static differentiable *placement* is occupied. **Decision taken (Krystof):
    trajectories/online lead; offline placement follows as a comparison against NeOF *and*
    the thesis's own set-cover+VRP pipeline.**
-2. **Stage B does not clear its own go/no-go bar (§3.4, §6.6).** Oracle greedy+route still
-   wins the offline race (≈0.78 vs 0.742 coverage at 8.77 m), and the warm-start advantage
-   is only **~1.3×** on a static mesh, not the order of magnitude §6.4(iii) assumed.
-3. **The rollout is bimodal — single Stage B numbers are coin flips (§3.4 item 1).**
-   Identical config+seed across 8 processes: 0.563 ×7, 0.933 ×1. This already produced one
-   retracted result. **Rule: ≥5 runs, mean ± std, n — always.**
-4. **The planner is mobility-limited, not coverage-limited (§3.4 item 2).** Motion decays
-   0.7 → 0.05 m/cycle by cycle 25; the last ~15 of 40 cycles buy nothing. This is the
-   biggest lever left.
+2. **The stall is fixed and the offline race is now a tie (§3.5, 2026-07-17).** The
+   two-timescale global guide (demand clustering + NN/2-opt tour + phase-aware stall
+   deferral + horizon restart on retarget) lifts receding-horizon NVPS from 0.768 ± 0.144
+   to **0.892 ± 0.066** (n=5), statistically level with oracle greedy at matched path
+   length. What Stage B has *not* cleared: the warm-start advantage is still only ~1.3×
+   on a static mesh, so the **outdated-mesh experiment (§7 step 5) is the whole
+   go/no-go** now.
+3. **The bimodality warning has softened but the ≥5-runs rule stands (§3.5 item 3).**
+   With the guide, the §3.4 probe config reproduces **8/8 identically** across processes
+   (was 0.563 ×7 / 0.933 ×1). One config, one seed — keep reporting mean ± std with n;
+   seed-to-seed spread is still 0.066.
+4. **HPRO remains unusable as a trajectory backbone** (0.514 ± 0.093 even with the guide,
+   audit gap +482…+553/cycle) — the C2 exploitation story, now with the control: fixing
+   the *planner* only pays off under the calibrated backbone.
 
 ### 0.3 Next actions, in the order they should be done
 
-1. **Fix the stall** (§3.4 item 2) — the real blocker, and worth more than any further
-   weight tuning (the weights are chaotic anyway, see §3.4 item 1). Implement §6.4 item 4
-   *as designed*: a real two-timescale global pass (greedy/TSP over demand-cluster
-   centroids supplying visit order + terminal cost). Only a single soft-min attractor
-   exists today. Alternatives if that is not enough: restarts/annealing, or an explicit
-   "leave the exhausted region" term.
-2. **Make Stage B statistically honest** — aggregate ≥5 runs everywhere.
-   `eval_trajectory.py` already prints per-seed spread + the cross-process warning; the
-   λ weights must then be **re-derived over seeds** (λ_terminal=5.0 is currently arbitrary).
-3. **Optionally harden reproducibility**: `torch.use_deterministic_algorithms(True)` +
-   `CUBLAS_WORKSPACE_CONFIG=:4096:8`. This does **not** remove the chaos (different seeds
-   still diverge), but it makes tuning and debugging honest instead of a lottery.
-4. **Then, and only then, the outdated-mesh experiment** (§7 step 5) — the one place the
-   headline can still be won. Built on single rollouts today it would measure noise, which
-   is why this session stopped short of it. What is missing is only *mutating the world
-   mid-rollout*: demand updates from executed poses and the shifted warm start already
-   exist in `trajectory.py`. The baseline must be **forced to re-raycast** its candidates,
-   which is exactly what a static mesh lets it avoid.
+1. ~~Fix the stall~~ **Done 2026-07-17 (§3.5):** the two-timescale `GlobalGuide` +
+   horizon restart on retarget. Offline race now a statistical tie with the oracle.
+2. **The outdated-mesh experiment (§7 step 5) — now the critical path.** The one place
+   the headline can be won. What is missing is only *mutating the world mid-rollout*:
+   demand updates from executed poses and the shifted warm start already exist in
+   `trajectory.py`. The baseline must be **forced to re-raycast** its candidates, which
+   is exactly what a static mesh lets it avoid. Multi-run statistics are now in place
+   (≥5 seeds, spread printed), so the experiment can be trusted when it runs.
+3. **Finish the knob re-derivation over seeds** — a paired 5-seed sweep of
+   `guide_min_new` × `lambda_terminal` was launched 2026-07-17 (the seed-2 "trickle"
+   regression in §3.5 item 2 motivates `min_new`; λ_terminal=5.0 was never re-derived
+   after the retraction). Adopt whatever wins over seeds, not over a single trace.
+4. **Optionally harden reproducibility**: `torch.use_deterministic_algorithms(True)` +
+   `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Less urgent now that the guided rollout reproduced
+   8/8 across processes at the probe config, but still the honest default for tuning.
 5. Stage A steps 2–3 (normal gate, quality weighting, self-calibration) remain undone and
    are still prerequisites for trusting any trajectory objective.
 
@@ -140,9 +147,9 @@ the work later disproved.
   not been made.
 - **δ/α defaults stay off** (§3.3) pending Stage-2 *calibration* evidence — the ablation
   proves they raise single-view F1, which is not the same as helping the optimizer.
-- **OptiX 8.0.0 needs a (free, gated) NVIDIA developer login** to finish `triro` and the
-  last failing test (§1). Everything else in the `inspection` env is built and green
-  (125/126).
+- ~~OptiX 8.0.0 needs a (free, gated) NVIDIA developer login~~ **Resolved 2026-07-17:**
+  OptiX 8.0.0 installed, `triro` rebuilt against it, `inspection` env fully green
+  (**126/126**). See §1 for the recipe (the `--force-reinstall` flag was load-bearing).
 
 ### 0.5 File map (what this session added to `hpro/`)
 
@@ -193,9 +200,16 @@ cudf/cugraph/cuopt-cu12 26.2, open3d, ompl 2.0.1, and the repo installed via
 `pip install -e . --no-deps` (`--no-deps` is required because `pyproject.toml` lists `triro`,
 which is not on PyPI).
 
-- `pytest tests/` → **125 passed, 1 failed**. The one failure is `TestRaycastCpuVsCuda`,
-  which needs `triro` → the **NVIDIA OptiX SDK**.
-- **triro / OptiX status (2026-07-16): builds, but needs OptiX 8.x — 9.1 does not work.**
+- `pytest tests/` → **126 passed, 0 failed (2026-07-17)**. `triro` is installed and
+  working against OptiX 8.0.0; `TestRaycastCpuVsCuda` passes in 2.4 s.
+- **triro / OptiX resolved (2026-07-17).** OptiX SDK 8.0.0 unpacked to
+  `~/NVIDIA-OptiX-SDK-8.0.0/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64` (note the nested
+  subdir — that inner path is what `OptiX_INSTALL_DIR` must point at). triro rebuilt with
+  the recipe below; **`--force-reinstall --no-cache-dir --no-deps` was required** — a plain
+  `pip install git+…` said "requirement already satisfied" and kept the segfaulting
+  9.1-built install. Import, GPU ray-cast and the full suite verified. One API note:
+  `RayMeshIntersector(**kwargs)` takes `mesh=` as a keyword, not positionally.
+  History of the diagnosis (2026-07-16): **9.1 builds but segfaults on import.**
   Three separate obstacles, in order:
   1. `pip install git+…` fails with `ModuleNotFoundError: No module named 'torch'` —
      PEP 517 build isolation hides the env's torch from `setup.py`. Use
@@ -212,15 +226,18 @@ which is not on PyPI).
      accept OptiX 9.1's `OPTIX_ABI_VERSION 118` — and triro does not check the return
      code, so it dereferences a null function table. triro's backend header is literally
      `optix8.h`. **Fix: install OptiX SDK 8.0.0** (the version README.md specifies), which
-     is an older ABI the driver accepts. Working recipe once 8.0.0 is unpacked:
+     is an older ABI the driver accepts. Recipe that worked (2026-07-17):
 
      ```bash
-     export OptiX_INSTALL_DIR=$HOME/NVIDIA-OptiX-SDK-8.0.0
+     sh ~/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64.sh --skip-license \
+        --prefix=$HOME/NVIDIA-OptiX-SDK-8.0.0 --include-subdir
+     export OptiX_INSTALL_DIR=$HOME/NVIDIA-OptiX-SDK-8.0.0/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64
      export CUDA_HOME=/home/troja-lab-02/miniconda3/envs/inspection
      export PATH=$CUDA_HOME/bin:$PATH
      export CPATH=$CUDA_HOME/targets/x86_64-linux/include:$CPATH
      export TORCH_CUDA_ARCH_LIST="8.6"
-     pip install --no-build-isolation "git+https://github.com/lcp29/trimesh-ray-optix.git"
+     pip install --no-build-isolation --no-cache-dir --force-reinstall --no-deps \
+         "git+https://github.com/lcp29/trimesh-ray-optix.git"
      ```
 - Importing `isaacsim` prompts for the Omniverse EULA and dies with `EOFError` in a
   non-tty — set `OMNI_KIT_ACCEPT_EULA=YES`.
@@ -480,6 +497,82 @@ rendered), and `diagnostics.png` (coverage-vs-metres, motion-per-cycle, audit ga
 findings above — that greedy's curve lies above ours, and that motion decays to a stall —
 are *visible* there and were not obvious from the summary table. Look at the pictures before
 trusting a number.
+
+---
+
+### 3.5 Stage B second pass — the two-timescale global guide (2026-07-17)
+
+The §3.4 stall is **fixed**, by implementing §6.4 item 4 as designed plus one addition the
+data forced. `GlobalGuide` in `trajectory.py`: k-means over remaining-demand points
+(farthest-point init, deterministic), greedy-NN + 2-opt tour over cluster centroids from
+the robot — deliberately the same routing the discrete baseline gets — and the tour's
+first cluster becomes the **committed target region**; the terminal cost now pulls toward
+*that region only* (demand masked), while coverage still sees full demand so opportunistic
+harvesting stays free. Hysteresis keeps the target until exhausted or stalled.
+
+Two intermediate failures, recorded because each is a design lesson:
+
+1. **A harvest-only stall detector churns.** Counting "few new points this cycle" as a
+   stall fires constantly *during transit* — the first version deferred 8 targets in 40
+   cycles without arriving anywhere. And on the unit-normalized wreck, `far_dist=1.5`
+   makes "engaged" nearly always true, so a transit exemption keyed on engagement alone
+   does not fire. The detector is now phase-aware: **harvesting new points OR closing
+   distance to the target counts as progress**; stall accrues at half weight beyond
+   engage range. A target that stops progressing is deferred for `guide_defer_cycles`
+   (uncoverable pockets are a tar pit otherwise) and the tour moves on.
+2. **Warm-starting across a retarget is the local minimum.** With retargeting alone the
+   robot still crawled (0.02–0.1 m/cycle through nine retargets): `replan_steps` Adam
+   steps cannot unfold a horizon knotted in the exhausted region against the length/step
+   penalties. On retarget the **plan teleports, the robot does not**: `horizon_toward()`
+   re-seeds the horizon as a straight polyline toward a view point at standoff from the
+   target centroid (≤ `step_size` spacing, gazes on the target), and that cycle gets
+   `retarget_steps=90` instead of 30. This is §7 step 6's "restarts" folded into the
+   two-timescale design where it belongs. Warm-starting *within* a pursuit is untouched —
+   the warm/cold replan numbers survive (1037→193 ms NVPS).
+
+Results, 5 seeds, one process each arm, same harness/config as §3.4 otherwise:
+
+| Arm | Coverage | Path (m) |
+|---|---|---|
+| receding-horizon NVPS, **guide on** | **0.892 ± 0.066** | 11.06 ± 1.46 |
+| receding-horizon NVPS, guide off | 0.768 ± 0.144 | 9.45 ± 3.18 |
+| oracle greedy+route V=10 | 0.889 ± 0.015 | 10.46 ± 0.92 |
+| oracle greedy+route V=20 | 0.968 ± 0.005 | 15.47 ± 0.91 |
+
+Load-bearing observations:
+
+1. **The offline race is now a statistical tie with the oracle.** Interpolating greedy
+   between V=10 and V=20 gives ≈0.898 at the planner's 11.06 m, vs the planner's
+   0.892 ± 0.066. In §3.4 the greedy curve was above ours at *every* length; in
+   `viz_trajectory.py` (seed 0) the planner's curve now rides **on or above** the oracle's
+   up to ~12 m (0.943 @ 12.0 m, between greedy's 0.870 @ 10.5 m and 0.963 @ 17.0 m).
+   A tie against an *oracle* upper reference, from a planner that pays for its knowledge,
+   is a positive result — but the offline setting remains the baseline's home turf (§6.3);
+   the discriminating experiment is still the outdated-mesh one.
+2. **Paired per-seed: 4/5 improve, mean +0.124** (0.563→0.943, 0.722→0.909, 0.692→0.885,
+   0.921→0.954, and one regression 0.943→0.771). The regression trace shows the remaining
+   failure mode: targets that yield a **trickle** (5–13 points/cycle ≥ `guide_min_new=5`)
+   keep resetting the stall detector without real progress. Whether `guide_min_new`
+   should scale with expected per-view harvest (~135 points here) is being swept over
+   seeds — not tuned on that one trace (§3.4's retraction is exactly that mistake).
+3. **The observed cross-process bimodality vanished at the §3.4 probe config.** Guided
+   seed 0 across 8 separate processes: **8/8 identical 0.943 @ 12.00 m** — against the
+   unguided 0.563 ×7 / 0.933 ×1 on the same machine. Plausible mechanism: the horizon
+   re-init on retarget discards the accumulated float drift that the closed loop was
+   amplifying, and target commitment quantizes small perturbations away. This is one
+   config and one seed, **not** a determinism guarantee; the ≥5-runs rule stands
+   (seed-to-seed std is still 0.066).
+4. **Motion no longer decays to a stall.** The motion-per-cycle panel shows dips at
+   locally-exhausted moments followed by 0.3–0.6 m travel bursts (the retargets) through
+   cycle 40, instead of the old monotone decay to ~0.05 m by cycle 25.
+5. **HPRO as a trajectory backbone stays broken** (0.514 ± 0.093, audit gap +482…+553) —
+   the guide does not rescue a miscalibrated surrogate, which is more C2 evidence: the
+   fix was in the planning layer, and only the well-calibrated backbone could cash it in.
+
+Reproduce: `$ipy hpro/eval_trajectory.py --seeds 5 --backbones nvps,hpro --no_show`
+(guide on by default; `--no_guide` is the ablation arm). Smoke test check 9 pins the
+guide's contract (nearest-first, hysteresis, exhaustion advance, engaged-stall deferral,
+transit exemption, deferral reset).
 
 ---
 
@@ -857,10 +950,11 @@ distance-invariance theory, which remain unclaimed.
   there is **no paper** at RA-L — the offline half alone is too close to NeOF. Treat
   Stage B as go/no-go: if receding-horizon + warm-start cannot beat a discrete re-solve on
   wall-clock *and* match it on coverage, stop and reconsider the venue rather than padding
-  the offline section. **Status 2026-07-16: not cleared** — greedy still wins the offline
-  race and warm-start is only 1.3× on a static mesh (§3.4). The bar is not yet failed
-  either: the discriminating experiment (outdated-mesh, where the baseline must re-raycast)
-  is unrun, and the planner stalls for a reason that looks fixable (§0.3).
+  the offline section. **Status 2026-07-17: not cleared, but no longer failing** — the
+  stall is fixed and the offline race is a statistical tie with the oracle (§3.5); what
+  remains unproven is the warm-start advantage (still ~1.3× on a static mesh). The
+  discriminating experiment (outdated-mesh, where the baseline must re-raycast) is unrun
+  and is now the single critical-path item (§0.3 action 2).
 - *🚨 Measurement risk: the planner is chaotic, and it has already fooled us once.* A
   rollout is bit-deterministic within a process but **bimodal across processes** (0.563 ×7,
   0.933 ×1 at identical config+seed — §3.4 item 1). A "tuned" 0.933 was reported as a
@@ -915,9 +1009,10 @@ front.*
    8.77 m; its curve lies above ours at every path length), the warm-start advantage is only
    **~1.3×** over a discrete re-solve because a static mesh lets the baseline cache its
    ray-casts, and **the rollout is bimodal so single numbers are coin flips** (§3.4 item 1).
-   **Blocking issue: the planner stalls** — motion decays to ~0.05 m/cycle and the last ~15
-   of 40 cycles buy nothing. Fix that (§0.3 action 1) before anything else.
-   Remaining after that: route with the existing VRP; Isaac Sim rollout figure.
+   ~~Blocking issue: the planner stalls~~ **Stall fixed 2026-07-17 (§3.5)** — the
+   two-timescale guide lifts NVPS to 0.892 ± 0.066 (n=5), a statistical tie with the
+   oracle at matched length, and the probe config now reproduces 8/8 across processes.
+   Remaining: route with the existing VRP; Isaac Sim rollout figure.
 5. **Online construction (§6.4) — now the critical path, not a follow-on.** §3.4 shows the
    static setting cannot demonstrate the headline: the discrete baseline only pays its
    ~1.5 s of candidate ray-casting when the world *changes*. So the **outdated-mesh
