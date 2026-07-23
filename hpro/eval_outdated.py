@@ -326,7 +326,8 @@ def run_discrete_arm(world, mesh_prior, cam, cfg, args, seed, start,
 # Continuous arm: receding horizon over the shifting belief
 # ---------------------------------------------------------------------------
 
-def run_rh_arm(world, backbone_name, cam, cfg, args, start, device):
+def run_rh_arm(world, backbone_name, cam, cfg, args, start, device,
+               record=None):
     """Receding-horizon planner over the believed cloud, belief-aware.
 
     Mirrors ``trajectory.receding_horizon_plan`` but re-slices the believed
@@ -437,6 +438,11 @@ def run_rh_arm(world, backbone_name, cam, cfg, args, start, device):
         obs = world.observe(p0.astype(np.float64), r0.astype(np.float64))
         curve.append((total_len, world.true_coverage()))
         guide.report_harvest(obs["n_new_covered"])
+        if record is not None:
+            record.append(dict(pos=p0.copy(), r6=r0.copy(),
+                               believed=world.believed.copy(),
+                               covered=set(world.covered_true),
+                               coverage=world.true_coverage()))
 
         # Belief changed -> re-prepare the backbone and re-slice, in-place of
         # the union indexing so demand and the warm start survive untouched.

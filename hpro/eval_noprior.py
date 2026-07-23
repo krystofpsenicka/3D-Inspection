@@ -78,9 +78,18 @@ def run_nbv_arm(world, args, start, seed, mode):
     total_len = 0.0
     curve = []
     t_plan = 0.0
+    tried = set()   # demand points already flown to that stayed uncovered —
+    # without this the frontier arm re-picks the same unseeable point forever
+    # (flipped normal or occlusion) and spins in place for the whole budget.
 
     for _ in range(args.max_poses):
         demand_idx = np.where(world.demand > 0.5)[0]
+        if mode == "frontier":
+            fresh = demand_idx[~np.isin(demand_idx, list(tried))]
+            if len(fresh):
+                demand_idx = fresh
+            else:
+                tried.clear()
         if len(demand_idx) == 0:
             break
         t0 = time.perf_counter()
@@ -95,6 +104,7 @@ def run_nbv_arm(world, args, start, seed, mode):
 
         if mode == "frontier":
             j = int(np.argmin(np.linalg.norm(cand_pos - cur[None], axis=1)))
+            tried.add(int(demand_idx[j]))
         else:                                     # oracle
             pick = rng.choice(len(cand_pos),
                               size=min(args.nbv_candidates, len(cand_pos)),
@@ -152,6 +162,11 @@ def parse_args():
     p.add_argument("--num_points", type=int, default=3000)
     p.add_argument("--backbone", default="auto",
                    help="auto = HPRO below 1500 believed points, NVPS above.")
+    p.add_argument("--viz_seed", type=int, default=0,
+                   help="Seed replayed by viz_noprior.py (unused here).")
+    p.add_argument("--arms", default="frontier,oracle,rh",
+                   help="Comma subset of frontier,oracle,rh (ablations skip "
+                        "the deterministic NBV baselines).")
     p.add_argument("--seeds", type=int, default=3)
     p.add_argument("--max_poses", type=int, default=40)
     p.add_argument("--nbv_candidates", type=int, default=30)
@@ -190,15 +205,20 @@ def main():
                 far_dist=args.far_dist, seed=seed,
                 target_coverage=args.target_coverage)
 
-            arms = [
-                ("nbv-frontier",
-                 lambda w, s: run_nbv_arm(w, args, s, seed, "frontier")),
-                ("nbv-oracle",
-                 lambda w, s: run_nbv_arm(w, args, s, seed, "oracle")),
-                (f"rh-{args.backbone}",
-                 lambda w, s: run_rh_arm(w, args.backbone, w.cam, cfg, args,
-                                         s, device)),
-            ]
+            wanted = {a.strip() for a in args.arms.split(",")}
+            arms = []
+            if "frontier" in wanted:
+                arms.append(("nbv-frontier",
+                             lambda w, s: run_nbv_arm(w, args, s, seed,
+                                                      "frontier")))
+            if "oracle" in wanted:
+                arms.append(("nbv-oracle",
+                             lambda w, s: run_nbv_arm(w, args, s, seed,
+                                                      "oracle")))
+            if "rh" in wanted:
+                arms.append((f"rh-{args.backbone}",
+                             lambda w, s: run_rh_arm(w, args.backbone, w.cam,
+                                                     cfg, args, s, device)))
             for method, fn in arms:
                 world, start = build_world(mesh, args, seed)
                 r = fn(world, start)

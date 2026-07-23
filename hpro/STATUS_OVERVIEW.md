@@ -1,5 +1,12 @@
 # Where the project stands — plain-language overview (2026-07-17)
 
+> **⚠ 2026-07-23 evening: direction pivot — read §4d below and RESEARCH_PLAN.md §9.**
+> The paper is now *joint differentiable multi-robot trajectory optimization as
+> optimal control*, measured against (and optionally warm-started by) the thesis
+> pipeline. The online belief-update experiments described below (§4.3–§4c) are
+> parked, not retracted. §4d also records what the first pilot built and the one
+> open problem it left.
+
 *Written for reading alongside the work. The formal evidence document is
 [`RESEARCH_PLAN.md`](RESEARCH_PLAN.md); this file explains the same state in prose,
 spelling out what the methods actually are. Nothing here is new — every number is
@@ -200,26 +207,108 @@ recorded in RESEARCH_PLAN.md §3.7 (their demos target wide-lens tabletop scenes
 regime is ours; their released code needed two crash fixes). With this, all three
 planned defenses against the "it's just NeOF" attack are measurements, not arguments.
 
-## 5 · Next steps, broadly, in priority order
+## 4c · Update 2026-07-23: two more items closed
 
-1. ~~Head-to-head against NeOF~~ — **done, see §4b above.** What remains from it:
-   report NeOF's own quality metrics (observation-angle etc.) alongside ours in the
-   final paper evaluation, so numbers are commensurable in both directions.
-2. **Sharpen the outdated-mesh demo** (optional but cheap): deeper collapse or a breach
-   into the interior, so the open-loop arm visibly fails rather than just being slower.
-3. **No-prior exploration variant**: start with *no* mesh at all and build the plan from
-   the accumulating sensor cloud. This is where a point-cloud visibility model is the
-   *only* possible evaluator (nothing to ray-cast), i.e. the strongest motivation, and
-   most of the machinery (discovery halo, belief updates) now exists.
-4. **Operator-layer upgrades that the trajectory objective still lacks** (Stage A steps
-   2–3): a back-face/normal gate (don't count surface seen edge-on or from behind),
-   measurement-quality weighting (incidence angle, distance), and cheap per-scene
-   self-calibration of the visibility model against a few ray-cast audit poses.
-5. **System/paper work**: multi-mesh statistics (ModelNet/TOSCA), CMA-ES and
-   more-candidates baselines, VRP routing integration, an Isaac Sim rollout of an
-   optimized trajectory as the closing figure, then the draft. Venue: RA-L.
+**No-prior exploration works (plan §3.8).** The robot starts with *nothing* — no mesh,
+no prior cloud — and builds its belief purely from the depth sensor (first observation
+seeds it; the discovery halo grows it). This is the setting where a point-cloud
+visibility model is the *only possible* evaluator: there is no mesh to ray-cast, so the
+"why not just optimize true ray-cast coverage" objection structurally disappears.
+Results (wreck, tight camera, 5 seeds):
 
-**Overall state in one sentence:** the environment is fully reproducible (126/126 tests),
-the operator layer (Stage A) is done, the trajectory planner (Stage B) now ties the
-oracle offline and decisively beats the classical pipeline when the world changes — the
-paper's headline is measured, and the remaining risk is the direct comparison with NeOF.
+| method | coverage | path |
+|---|---|---|
+| frontier NBV (cheap heuristic) | 0.630 ± 0.139 | 5.5 m |
+| oracle NBV (peeks at the hidden mesh) | 0.954 ± 0.004 | 17.9 m |
+| **ours (receding horizon on the sensor cloud)** | 0.894 ± 0.091 | **6.2 m** |
+
+At any matched path length ours dominates both. The honest tail: one seed in five
+stalls at 0.715 — and the belief-growth pictures show why: it had *discovered the
+entire surface* but the leftover uncovered points are scattered speckle that yields a
+trickle per view, and the global guide keeps shelving those targets (the same trickle
+phenomenon §3.5 tuned away offline). It is a cleanup problem, not an exploration
+problem — the natural fix is the measurement-quality demand weighting that is already
+next on the operator-layer list. Also measured: the planned "HPRO early, NVPS later"
+backbone switch changes nothing (0.896 vs 0.894) because discovery crosses the switch
+threshold within two poses — one less mechanism to defend in the paper.
+
+**The "make the open-loop arm visibly fail" idea is dead on this mesh, and that is an
+answer (plan §3.6 addendum).** The wreck is a thin shell ~0.3 thick; any collapse
+deeper than that punches *through* the hull and sticks out the far side as a fin —
+which quietly breaks the sensor model's assumption that refuted ghost points float in
+empty space. The summary tables looked fine; only rendering the mutation showed the
+fin. At the deepest *clean* dent (0.25), the blind open-loop plan still covers 0.905
+of the changed region by accident. Silver lining: across all four dent configs the
+headline result is stable — matched coverage at roughly half the path and ~16× faster
+reaction — so the online claim is robust to how badly outdated the survey is.
+
+## 4d · The pivot, in plain language (2026-07-23 evening) — READ THIS FIRST
+
+After reviewing everything above, Krystof re-set the direction. The reasoning: the
+online experiments (§4.3, §4c) rest on a synthetic belief-sensor model (the discovery
+halo, point-level refutation) that he doesn't find convincing as a mission story — and
+the original goal was always to make the *thesis pipeline itself* better with
+differentiable methods. So the paper is now:
+
+> **Multi-robot inspection planning as one optimal control problem.** Robot
+> trajectories under a simple velocity-bounded motion model, optimized jointly by
+> gradients through a differentiable visibility model, with collision and inter-robot
+> separation as constraints *inside the objective* (no post-hoc repair — explicitly
+> rejected). The thesis pipeline (sample → set cover → VRP → ST-A*) is the
+> combinatorial state of the art it must beat on its own metrics — coverage, makespan,
+> planning time — and also serves as an optional warm start. The same problem solved
+> receding-horizon is the online/anytime mode, which is where the §4.2 machinery gets
+> reused, framed as MPC (an interest of Krystof's — Zeilinger-style learning-based
+> MPC supplies the vocabulary: terminal costs, real-time iterations, safety layers).
+
+The killer argument for this framing: the pipeline's staged decomposition is exactly
+what differentiability removes — set cover can't slide a viewpoint to save a detour,
+VRP can't trade coverage against makespan. Everything already measured stays relevant
+(NeOF loss + scaling table = why fitted fields can't enter at this scale; surrogate
+exploitation = the analysis; guide/warm-start = the MPC mode's internals).
+
+**What the same-evening pilot established (plan §9.5, all single-seed diagnostics):**
+
+- The whole stack works end-to-end against the real pipeline: baseline at pilot scale
+  (25 m wreck, 20k points, 2 AUVs → 49 viewpoints, 95.1 % coverage, 113 m makespan),
+  conventions verified exactly, differentiable signed-distance collision field built
+  from the pipeline's own occupancy grid.
+- **A negative finding that matters for the paper:** the pretrained NVPS network is
+  *uninformative* at real inspection scale (F1 ≈ 0.2 — it cannot tell visible from
+  occluded when the camera is 3 m from a 25 m structure; its training saw objects
+  from 1–4 object-radii away). The unit-sphere successes above do not transfer.
+- **A new third backbone that does work there:** a splatted spherical z-buffer —
+  geometric, training-free, scale-free, O(N) — validated at F1 0.76 against the
+  pipeline's ray-caster, with its own "come closer to cheat" exploit found and
+  structurally eliminated (points occlude an angular footprint that grows on
+  approach, like real surface).
+- **The open problem is the inner solver.** Five optimizer formulations were tried
+  and each failure is understood and written down (plan §9.5 has the table — the
+  short version: Adam erases force hierarchies; sigmoid-based constraints lose their
+  restoring gradient once violated; per-pose anchors deadlock; per-point max-margin
+  chatters). Shortening a 49-pose two-robot tour around a concave hull needs
+  *coordinated* moves that naive simultaneous gradient descent cannot find. The
+  designed fix (next session, plan §9.6): elastic-band-style coordinate descent over
+  poses, or TrajOpt-style sequential convexification — the constraints are already
+  in metric form, which is what both need.
+
+**The headroom question — can joint optimization actually beat the decomposition — is
+therefore still open**, and it is the go/no-go for this whole direction.
+
+## 5 · Next steps (rewritten for the pivot, priority order)
+
+1. **Inner solver for the warm arm** (plan §9.6): coordinate descent / SCP; success =
+   ≥10 % makespan reduction at ≥ baseline coverage, collision-free by construction.
+   If no formulation can move the pipeline's numbers, stop and rethink the direction.
+2. Cold start with the same solver (+ adaptive term weighting), then R > 2.
+3. Only after the headroom verdict: MPC/receding-horizon mode, theory framing, and
+   the paper skeleton. The parked online results (§4.3/§4c) stay citable as history.
+
+**Overall state in one sentence (2026-07-23, end of day):** the online-planning story
+is parked by decision; the new headline — joint multi-robot trajectory optimization
+as optimal control, judged against the thesis pipeline on its own metrics — has its
+full experimental scaffolding built and verified (baseline, conventions, collision
+field, a validated scale-free visibility backbone, plus a measured negative result
+for the pretrained neural one), and hangs on one open technical problem: a
+constrained inner solver that can actually shorten a feasible multi-robot tour, with
+two concrete candidate designs queued for the next session.

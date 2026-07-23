@@ -1,0 +1,60 @@
+{
+  "args": {
+    "pipeline_dir": "/home/troja-lab-02/Desktop/Krystof/3D-Inspection/outputs/pilot_baseline",
+    "out": "/home/troja-lab-02/Desktop/Krystof/3D-Inspection/hpro/results/joint_pilot",
+    "steps": 600,
+    "cold_steps": 1200,
+    "lambda_route": 0.02,
+    "alpha": 0.5,
+    "lr_pos": 0.05,
+    "lr_rot": 0.02,
+    "beta": 1.0,
+    "backbone": "zbuf",
+    "keep_target": 0.55,
+    "keep_margin": 0.05,
+    "lambda_route_cold": 0.002,
+    "w_cover": 20.0,
+    "cap_pos": 0.04,
+    "cap_rot": 0.02,
+    "objective": "constrained",
+    "al_every": 30,
+    "col_samples": 10,
+    "sep_samples": 48,
+    "d_separation": 0.8,
+    "robot_radius": 0.35,
+    "clearance_margin": 0.15,
+    "speed": 2.0,
+    "frustum_sharpness": 12.0,
+    "seed": 0,
+    "modes": "warm",
+    "no_show": true
+  },
+  "results": [
+    {
+      "tag": "pipeline",
+      "coverage": 0.95075,
+      "makespan": 113.00415802001953,
+      "total_length": 217.34403228759766,
+      "per_robot": [
+        104.33987426757812,
+        113.00415802001953
+      ],
+      "min_clearance": NaN,
+      "n_poses": 49,
+      "wall_s": NaN
+    },
+    {
+      "tag": "joint-warm",
+      "coverage": 0.4394,
+      "makespan": 201.12387084960938,
+      "total_length": 400.4953308105469,
+      "per_robot": [
+        201.12387084960938,
+        199.3714599609375
+      ],
+      "min_clearance": -0.8739409446716309,
+      "n_poses": 49,
+      "wall_s": 16.07639461599865
+    }
+  ]
+}

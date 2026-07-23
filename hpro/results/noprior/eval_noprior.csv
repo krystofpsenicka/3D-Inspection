@@ -1,0 +1,16 @@
+mesh,seed,method,true_coverage,path_length,n_poses,plan_time_s
+duke_of_lancaster_uk_clipped.glb,0,nbv-frontier,0.4230,5.548,40,0.01
+duke_of_lancaster_uk_clipped.glb,0,nbv-oracle,0.9563,21.417,11,1.61
+duke_of_lancaster_uk_clipped.glb,0,rh-auto,0.9570,5.554,12,5.67
+duke_of_lancaster_uk_clipped.glb,1,nbv-frontier,0.6273,4.900,40,0.01
+duke_of_lancaster_uk_clipped.glb,1,nbv-oracle,0.9600,18.650,11,1.95
+duke_of_lancaster_uk_clipped.glb,1,rh-auto,0.9103,7.093,40,14.64
+duke_of_lancaster_uk_clipped.glb,2,nbv-frontier,0.8547,5.116,40,0.01
+duke_of_lancaster_uk_clipped.glb,2,nbv-oracle,0.9540,16.473,10,1.86
+duke_of_lancaster_uk_clipped.glb,2,rh-auto,0.9333,7.227,40,15.05
+duke_of_lancaster_uk_clipped.glb,3,nbv-frontier,0.6593,6.462,40,0.01
+duke_of_lancaster_uk_clipped.glb,3,nbv-oracle,0.9513,14.064,9,1.43
+duke_of_lancaster_uk_clipped.glb,3,rh-auto,0.9563,6.387,12,4.94
+duke_of_lancaster_uk_clipped.glb,4,nbv-frontier,0.5867,5.240,40,0.01
+duke_of_lancaster_uk_clipped.glb,4,nbv-oracle,0.9500,18.689,10,1.77
+duke_of_lancaster_uk_clipped.glb,4,rh-auto,0.7147,4.760,40,15.27

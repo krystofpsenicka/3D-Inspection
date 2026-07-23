@@ -1,0 +1,6 @@
+mesh,seed,method,true_coverage,path_length,n_poses,plan_time_s
+duke_of_lancaster_uk_clipped.glb,0,rh-nvps,0.9427,9.602,40,14.92
+duke_of_lancaster_uk_clipped.glb,1,rh-nvps,0.9347,6.704,40,14.90
+duke_of_lancaster_uk_clipped.glb,2,rh-nvps,0.9333,7.227,40,13.54
+duke_of_lancaster_uk_clipped.glb,3,rh-nvps,0.9553,5.853,11,3.92
+duke_of_lancaster_uk_clipped.glb,4,rh-nvps,0.7147,4.760,40,13.72

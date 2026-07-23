@@ -30,6 +30,28 @@ attack 0 is answered with numbers. The `inspection` env is fully green (126/126)
 8.0.0 + triro installed. Nothing is merged; all work is on
 `research/stage-a-operator-infra` (§0.1).
 
+**🔄 PIVOT 2026-07-23 (evening) — read §9 before §6/§7.** After reviewing the results,
+Krystof re-set the direction: the paper's contribution is now **joint differentiable
+multi-robot trajectory optimization formulated as an optimal control problem** — with
+the thesis's own set-cover+VRP pipeline (`scripts/run_full_pipeline.py`) as both the
+combinatorial state-of-the-art baseline and an optional warm start. The online
+belief-update experiments (§3.6 halo sensor, §3.8) are **parked**: Krystof judged the
+outdated-mesh/no-prior mission model unconvincing as motivation (the measurements
+stand as branch history; the warm-start/demand/guide machinery is reused inside the
+new optimizer). §6's headline and §7's order of work are superseded by §9. The §6.3
+attack analysis, C2, and the NeOF/scaling measurements (§3.7) remain load-bearing.
+
+**Status 2026-07-23 (afternoon, pre-pivot).** Two more §0.3 items closed. **No-prior exploration is run (§3.8)**:
+planning on nothing but the accumulating sensor cloud, the receding-horizon planner
+reaches 0.894 ± 0.091 at 6.2 m where a mesh-peeking oracle NBV needs 17.9 m for 0.954
+(n=5); the one failing seed stalls in *cleanup* (100 % discovered, diffuse leftover
+demand), not discovery, and the §6.4-item-7 backbone schedule is a measured no-op.
+**The "sharpen the dent" question is answered negatively (§3.6 addendum)**: collapse
+depth is bounded by the ~0.3 shell thickness (deeper punches through — caught visually,
+not in any table), and at the deepest clean dent the open-loop arm still only mildly
+misses; the sweep instead shows the online headline is robust across mutation severity
+(0.53–0.66× path, 15–16× latency, all four configs).
+
 **⚠ Positioning corrected 2026-07-16 (see §5).** An earlier draft of this plan claimed that
 *"nobody offers gradient-based joint refinement of camera positions and orientations
 against a differentiable occlusion-aware visibility model on point clouds."* **That claim
@@ -62,6 +84,13 @@ thesis's own combinatorial (set-cover + VRP) pipeline.
 *Written 2026-07-16 at the end of the session that did the NeOF re-positioning, the Stage-A
 operator work, and Stage B's first results. Read this first; it is the only section that
 tells you where the work actually stands.*
+
+> **⚠ 2026-07-23: the plan below is superseded by the §9 pivot.** The headline is now
+> the joint OCP formulation vs the thesis pipeline (§9.2); the next action is the
+> headroom pilot (§9.3). The online-belief experiments (§3.6/§3.8) are parked by
+> Krystof's decision — do not resume them, and do not resume the "frozen regime /
+> quality gate" idea, without re-discussing with him. §0.1–§0.5 below remain accurate
+> as history and for the Stage-A/operator layer, which §9 still builds on.
 
 ### 0.1 Repo state — nothing is merged
 
@@ -146,10 +175,16 @@ the work later disproved.
    audit) and its field refit scales superlinearly (191 s/epoch at 12k voxels vs our
    34 ms prepare). Attack 0's replies (i)–(iii) all have numbers now. Remaining from
    this item: report their COG/OAQ metrics alongside ours in the final C5 evaluation.
-5. **Strengthen the demo if needed**: the open-loop arm still reaches 0.913 of the
-   changed region by accident (§3.6 item 3) — a deeper dent or hole-into-interior
-   mutation would sharpen the story. Also: no-prior exploration variant, Isaac Sim
-   rollout figure, VRP routing integration.
+5. ~~Strengthen the demo if needed~~ **Answered 2026-07-23 (§3.6 addendum): not
+   possible on this mesh** — dent depth is bounded by the ~0.3 shell thickness
+   (deeper punches through and breaks the refutability assumption), and the deepest
+   clean dent still only mildly blinds the open-loop arm. Keep the original config as
+   primary and cite the sweep as robustness. A dramatic breach needs a mesh with an
+   interior — fold into the C5 multi-mesh work.
+   ~~No-prior exploration variant~~ **Done 2026-07-23 (§3.8)** — planner dominates at
+   matched path (0.894 @ 6.2 m vs oracle NBV 0.954 @ 17.9 m, n=5); open tail: the
+   cleanup-phase stall (1/5 seeds), next lever = quality-aware demand (Stage A step 2).
+   Still open here: Isaac Sim rollout figure, VRP routing integration.
 6. **Optionally harden reproducibility**: `torch.use_deterministic_algorithms(True)` +
    `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Less urgent now that the guided rollout reproduced
    8/8 across processes at the probe config, but still the honest default for tuning.
@@ -177,7 +212,9 @@ the work later disproved.
 | `ocnn_compat.py` | Mandatory `OCNN_DISABLE_TRITON=1` shim — **import before `ocnn`** (§1). |
 | `trajectory.py` | Receding-horizon planner (C4) + `GlobalGuide` two-timescale pass (§3.5). Carries the bimodality warning at module level. |
 | `eval_trajectory.py` | Stage B harness vs oracle greedy+route. Prints per-seed spread. `--no_guide` = ablation arm. |
-| `eval_outdated.py` | **The go/no-go experiment (§3.6)**: outdated-mesh world, shared depth-sensor model, open-loop / adaptive-oracle / receding-horizon arms. |
+| `eval_outdated.py` | **The go/no-go experiment (§3.6)**: outdated-mesh world, shared depth-sensor model, open-loop / adaptive-oracle / receding-horizon arms. `run_rh_arm` has an optional `record` hook for replay visualisation. |
+| `eval_noprior.py` | **No-prior exploration (§3.8, 2026-07-23)**: belief seeded by the first observation only; frontier-NBV and oracle-NBV baselines; `--arms`/`--backbone` for ablations. |
+| `viz_noprior.py` | Belief-growth snapshots of a no-prior rollout (grey unknown → orange discovered → green covered). `--viz_seed 4` renders the cleanup-stall failure mode. |
 | `viz_trajectory.py` | **Look at this before trusting any number** — it is what caught both the stall and the retracted result. |
 | `smoke_test.py` | 8/8 CPU checks; guards every fix above (see §8.1). |
 
@@ -664,6 +701,37 @@ so every warm start survives the world changing, and the backbone re-prepares (~
 
 Reproduce: `$ipy hpro/eval_outdated.py --seeds 5 --no_show` (~13 min).
 
+**Addendum 2026-07-23 — item 3's "deepen the dent" is measured, and the answer is a
+robustness sweep, not a sharper demo.** Three further configs, 5 seeds each:
+
+| config | open-loop changed | adaptive changed | rh changed | rh path vs adaptive | rh latency vs adaptive |
+|---|---|---|---|---|---|
+| §3.6 original (r 0.25, d 0.15) | 0.913 ± 0.075 | 0.913 ± 0.076 | 0.949 ± 0.023 | 0.55× | 16× |
+| **sharp (r 0.30, d 0.25) — deepest clean** | 0.905 ± 0.055 | 0.949 ± 0.021 | 0.932 ± 0.019 | **0.56× (7.97 vs 14.25 m)** | **16× (204 vs 3293 ms)** |
+| deep (r 0.30, d 0.35) ⚠ | 0.871 ± 0.057 | 0.941 ± 0.038 | 0.913 ± 0.066 | 0.53× | 15× |
+| pocket (r 0.20, d 0.45) ⚠ | 0.840 ± 0.108 | 0.928 ± 0.056 | 0.896 ± 0.026 | 0.66× | 15× |
+
+1. **Depth is bounded by the shell.** The wreck is a thin clipped shell (~0.3 cross
+   section). A collapse deeper than that punches *through* and re-emerges on the far
+   side as new outward surface (`mutation_zoom.png` — the ⚠ configs grow a visible fin;
+   triangle quality stays fine, 0.1–0.4 % flipped normals, so summary tables alone would
+   never have caught it). Prior ghost points inside the extrusion violate the
+   ghosts-float-in-empty-space refutability assumption, so the ⚠ rows carry a design
+   caveat and are reported only as robustness arms.
+2. **Even at the deepest clean depth the open-loop arm misses only mildly** (0.905 vs
+   our 0.932 and adaptive's 0.949): a dent bounded by shell thickness stays largely
+   inside the [0.5, 1.5] standoff band. The disaster-vs-recovery contrast **cannot be
+   manufactured on this mesh by dent geometry** — a breach into a real interior needs a
+   benchmark mesh with volume (candidate for the C5 multi-mesh work). Close item 3 as
+   answered; stop spending on it.
+3. **What the sweep buys instead:** the §3.6 headline is robust across mutation
+   severity — matched coverage at 0.53–0.66× path and 15–16× adaptation latency in all
+   four configs (latency 196–260 ms per world change vs 2 905–3 871 ms). The paper can
+   state the online result as insensitive to how badly the survey is outdated.
+
+Reproduce: `--collapse_radius 0.3 --collapse_depth 0.25 --out …` etc.;
+`results/outdated_pocket/mutation_zoom.png` renders the three mutations side by side.
+
 ---
 
 ### 3.7 NeOF head-to-head — attack 0 answered with numbers (2026-07-17)
@@ -732,6 +800,64 @@ field refit.
 
 Reproduce: `$ipy_inspection hpro/eval_neof.py --seeds 3 --cameras 10,20 --no_show` and
 `--scaling` (needs the `inspection` env: open3d for NeOF + ocnn installed 2026-07-17).
+
+---
+
+### 3.8 No-prior exploration — the surrogate as the *only* evaluator (2026-07-23)
+
+`eval_noprior.py` + `viz_noprior.py`. The §6.4 second setting: the robot starts with
+**nothing** — no mesh, no prior cloud. The §3.6 sensor (same depth model, refutation,
+0.15 discovery halo) seeds and grows the belief; planning happens on the accumulated
+cloud only. This is §6.3 pillar 3: there is no mesh to ray-cast, so a point-cloud
+visibility surrogate is not merely faster — it is the only evaluator that exists, and
+the CMA-ES/greedy-on-raycast objection evaporates structurally. Deployment start: at
+standoff from a random surface point, looking at it (a far-sphere start seeds an empty
+belief — the whole structure is outside the 1.5 sensor range).
+
+Arms (same sensor, same 40-pose cap, same 0.95 stop): **nbv-frontier** — fly to a view
+of the nearest unattempted demand point (the cheap heuristic anchor); **nbv-oracle** —
+greedy next-best-view scoring 30 candidates per step by *true* new coverage against the
+hidden mesh (upper reference no real system has); **rh** — the §3.5 planner, belief-aware
+as in §3.6.
+
+**5 seeds, wreck, tight camera:**
+
+| arm | coverage | path (m) | plan (s) |
+|---|---|---|---|
+| nbv-frontier | 0.630 ± 0.139 | 5.45 ± 0.55 | 0.0 |
+| nbv-oracle | 0.954 ± 0.004 | 17.86 ± 2.46 | 1.7 |
+| **rh (auto schedule)** | 0.894 ± 0.091 | **6.20 ± 0.94** | 11.1 |
+| rh (pure NVPS, ablation) | 0.896 ± 0.091 | 6.83 ± 1.62 | 12.2 |
+
+Reading, honestly:
+
+1. **At matched path length the planner dominates both baselines.** In
+   `noprior_coverage.png` every green curve lies above frontier everywhere and above
+   the oracle's up to ~7 m; the oracle needs 14–21 m (big greedy relocation hops, no
+   motion cost) to reach the coverage the planner gets in ~6 m. Three of five seeds
+   reach ≥0.93 in ≤7.2 m; two of those stop at the 0.95 target in just 11–12 poses.
+2. **The failure mode is cleanup, not discovery.** Seed 4 ends at 0.715 having
+   *discovered 100 %* of the surface (`viz_noprior.py --viz_seed 4`: believed = 1.000,
+   covered-of-discovered = 0.715) — the residual demand is diffuse speckle across the
+   already-visited hull, each target yielding a sub-`guide_min_new` trickle, and the
+   robot parks (§3.5 item 2's trickle regression, resurfacing in the exploration
+   setting). The missing §6.4-item-5 frontier term is *not* the culprit — discovery
+   completes on every seed. Next lever: quality-aware demand / a cleanup phase policy,
+   re-derived over ≥5 seeds, not knob-poking on seed 4.
+3. **The §6.4 item 7 backbone schedule is a measured no-op here** (0.896 vs 0.894,
+   same seeds, same stall): the first observation plus halo already seeds ~1 000+
+   believed points and discovery crosses the 1 500-point HPRO→NVPS switch within ~2
+   poses, so the "HPRO early" phase barely exists on a structure this size. Simplify
+   the paper: one backbone in this experiment, keep the schedule as an appendix note
+   for genuinely incremental starts.
+4. **Cross-process caveat transfers:** replaying seed 4 in a fresh process gave 0.710
+   vs the eval's 0.715 — the no-prior rollout is *not* bit-reproducible across
+   processes (unlike the §3.5 guided probe config). The ≥5-runs rule stands.
+
+Reproduce: `$ipy hpro/eval_noprior.py --seeds 5 --no_show` (~15 min);
+`--arms rh --backbone nvps` for the ablation; `$ipy hpro/viz_noprior.py --viz_seed 4
+--no_show` renders the belief-growth snapshots (grey unknown → orange discovered →
+green covered) that make the stall legible.
 
 ---
 
@@ -1288,3 +1414,200 @@ for i in $(seq 1 8); do $ipy - <<'PY'
 PY
 done   # expect ~7x 0.563 and ~1x 0.933
 ```
+
+---
+
+## 9 · Pivot 2026-07-23: inspection planning as optimal control (the current plan)
+
+*Decided with Krystof 2026-07-23, superseding §6.1's headline and §7's order of work.
+Everything above stays as evidence and history; this section is what we are building.*
+
+### 9.1 Why the direction changed
+
+1. **The online mission model did not survive its author's scrutiny.** The §3.6/§3.8
+   experiments rest on a synthetic belief sensor (point-level refutation, a discovery
+   halo, later a proposed detection-vs-inspection quality gate). Krystof judged the
+   model unconvincing as motivation — "if the depth sensor saw it, we inspected it" —
+   and a paper whose first author does not believe its premise is the wrong paper.
+   (For the record, the setting *is* defensible — BIM-deviation checking, post-disaster
+   assessment, outdated hull surveys, wide sonar + narrow camera suites — but
+   defensible ≠ chosen.) Those results are parked, not retracted: n=5, honest, and the
+   machinery (warm starts, demand weighting, two-timescale guide) carries forward.
+2. **The original goal returns as the headline.** The thesis pipeline
+   (`scripts/run_full_pipeline.py`: 200k points, 1500 candidates, lazy-greedy set
+   cover, cuOpt VRP, ST-A*, 5 AUVs, Isaac Sim replay) is a **staged decomposition**:
+   selection knows nothing of routing cost, routing cannot move a viewpoint, nobody
+   can trade coverage in one robot's region against makespan. That decomposition
+   exists only because visibility was never differentiable. Killing it *is* the
+   contribution-sized claim.
+
+### 9.2 The claim
+
+> **Multi-robot inspection planning as one optimal control problem**: robot
+> trajectories under a velocity-bounded kinematic model, optimized jointly by
+> first-order methods through a fitting-free differentiable visibility surrogate,
+> with collision and inter-robot separation as in-objective constraints
+> (augmented Lagrangian — soft penalties are explicitly not enough, and post-hoc
+> repair is explicitly rejected). The set-cover+VRP pipeline is the combinatorial
+> state of the art it is measured against — on the pipeline's own metrics
+> (coverage, makespan/mission time, planning wall-clock) — and doubles as an
+> optional warm start. The same OCP run receding-horizon is the online/anytime
+> mode (warm starts = real-time iterations, an MPC framing in the
+> Zeilinger/learning-based-MPC tradition), which is where §3.5's guide and
+> §3.6's warm-start latency machinery are reused.
+
+Hard requirements from Krystof:
+
+- **Cold start must work.** The joint optimizer is a planner, not a post-processor:
+  it must reach competitive quality standalone, and computation time is compared in
+  both modes (cold vs warm vs pipeline).
+- **Collision lives inside the differentiable objective.** ESDF from the pipeline's
+  own occupancy grid (`distance_transform_edt`, trilinearly interpolated), penalising
+  clearance below `ROBOT_RADIUS` at samples *along path segments* (CHOMP-style), with
+  augmented-Lagrangian multipliers so violations are driven to zero rather than
+  traded against coverage. The OG/ST-A* machinery may *verify and report*
+  collision-freeness of results; it must never repair them.
+
+What each prior result becomes: §3.7 (NeOF loses + refit scales superlinearly) → why
+no fitted-field method can even enter at pipeline scale; C2/§3.2 (surrogate
+exploitation, HPRO collapse vs NVPS shield) → why the surrogate must be chosen and
+audited, i.e. the analysis section; §3.5 (two-timescale guide, warm starts) → the
+receding-horizon mode's internals; §3.1/§3.3 (backbone accuracy, δ/α) → operator
+groundwork. MPC theory connections to develop honestly: terminal-ingredient design
+(the guide *is* a terminal cost — the §3.4 stall is textbook missing-terminal
+myopia), anytime/suboptimal real-time iterations, and constraints/safety where
+guarantees actually hold (constraint side only; no convergence claims over a neural
+stage cost). A predictive-safety-filter layer (Wabersich & Zeilinger) is the
+principled certification architecture — cite it, instantiate a light version only if
+the core lands early.
+
+### 9.3 The headroom pilot (the go/no-go for this direction)
+
+Before committing months: measure whether joint optimization can actually move the
+pipeline's numbers. Design (`hpro/joint_pilot.py`, runs in the `inspection` env):
+
+1. **Baseline**: `run_full_pipeline` at moderate scale (~20k surface points, ~500
+   candidates, 2 robots, their frustum: fov 40°, near 0.1, far 6.0, 50 m mesh) →
+   coverage, per-robot path lengths, makespan, planning wall-clock, saved via
+   `save_pipeline`.
+2. **Warm-started joint solve**: load the pipeline solution; variables = per-robot
+   waypoint chains (resampled to fixed T, T×R ≈ baseline's viewpoint count, so pose
+   budgets match) + 6D orientations; loss = −demand-weighted soft coverage (NVPS
+   through the frustum layer, scale-adapted) + α·soft-makespan + (1−α)·total length
+   + AL collision (ESDF along segments) + AL pairwise separation (waypoint-index
+   time alignment — pilot simplification, note it) + velocity-bound step penalty.
+3. **Cold-started joint solve**: same objective from a geometric init (normal-offset
+   shell poses, NN-ordered, no ray-casts, no set cover), more iterations.
+4. **Scoring — by their machinery, not ours**: final poses → their rotmat convention
+   → `RaycastingVisibilityQueryCuda.compute_visibility_batch` (the pipeline's own GT)
+   for coverage; min ESDF clearance along paths for collision (report, don't fix);
+   wall-clock for all three arms.
+5. **NVPS scale adapter**: the backbone sees the cloud normalised to its unit box;
+   uniform scale + translation preserves view directions, so scores transfer; the
+   frustum gate runs in metric coordinates. (HPRO is O(N²) — out at this scale.)
+
+**Success bar**: warm joint solve improves makespan ≥10 % at ≥ baseline coverage (or
+coverage at matched makespan), collision-free by its own constraints; cold start
+reaches within a few points of baseline coverage in comparable wall-clock. **If the
+headroom is small, stop and rethink before building the paper** — that outcome would
+say the decomposition is near-tight on this problem, and the honest next move would
+be re-examining the online/MPC story (on a credible Isaac Sim depth camera), not
+torturing the offline claim.
+
+### 9.4 Risks, stated plainly
+
+- *Headroom risk (the big one):* set-cover+VRP may be near-optimal here; the pilot
+  exists to measure this before commitment.
+- *Local minima at trajectory scale:* mitigated by warm start (can only improve on
+  the baseline or tie) and the guide machinery for cold start; report both.
+- *Fairness:* matched pose budgets, their GT scorer, their metrics; wall-clock
+  comparisons must include our backbone prepare and all AL iterations.
+- *Convention bugs* (their rotmats vs our 6D frame, mesh pose/scale): validate by
+  reproducing their reported per-pose visibility on the warm-start poses *before*
+  optimizing — if we can't reproduce their coverage number for their own poses
+  through our layer path, stop and fix conventions first.
+- *Guarantee-washing:* constraints/safety claims only where they hold; performance
+  claims empirical, ≥5 seeds where stochastic (the §3.4 lesson does not expire).
+
+### 9.5 Pilot log, 2026-07-23 evening — infrastructure stands, inner solver open
+
+*The §9.3 pilot was built and run the same evening. Everything up to the joint
+optimizer works and is validated; the joint optimizer itself went through five
+formulations, each failing in an instructive, now-documented way. The headroom
+question is therefore **inconclusive, not answered** — do not cite this section
+as evidence for or against the §9.2 claim. Resume from §9.6.*
+
+**What stands (validated, reusable):**
+
+1. **Baseline + interop** (`hpro/joint_pilot.py`, `outputs/pilot_baseline/`):
+   `run_full_pipeline` at pilot scale — 25 m mesh, 20k points, 600 candidates,
+   2 AUVs, their default optics (fov 40°, near 0.1, far 6.0) → 49 viewpoints,
+   95.07 % coverage, VRP makespan 120.3 m (grid), executed-trajectory makespan
+   113.0 m, 173.6 s total. (At 50 m mesh the same settings select 304
+   viewpoints and the 185k-constraint cuOpt MIP dies in CUDSS — pilot scale is
+   halved on purpose.) The §9.4 **sanity gate passes exactly**: our re-score
+   of their poses through their `RaycastingVisibilityQueryCuda` reproduces
+   0.9507; conventions (rotmat columns = forward/right/up; fov_y + aspect;
+   6D ↔ rotmat round-trip) are verified.
+2. **Signed ESDF + projection**: `distance_transform_edt(free) − edt(occupied)`
+   from their occupancy grid (uninflated, interior-filled), trilinear and
+   differentiable; unsigned fields have zero gradient inside obstacles
+   (measured: a chain segment sat 0.5 m inside the hull for 2 000 steps).
+   Waypoint feasibility is enforced by projected gradient (`project_clear`),
+   segments by AL samples.
+3. **A third backbone: the splatted spherical z-buffer** (`ZBufferBackbone`,
+   registered as `"zbuf"`). Two findings that matter for the paper:
+   - **NVPS is uninformative at metric inspection scale** — P(visible | GT
+     visible) = 0.185 vs P(visible | GT occluded) = 0.195, F1 ≈ 0.2, on the
+     pilot's 49 poses (camera at ~0.12 object radii; training distribution is
+     1–4 radii). The §3.1 unit-sphere success does **not** transfer. This is
+     a measured C2-class negative result for pretrained neural visibility.
+   - The naive z-buffer has its own **approach exploit** (come closer →
+     points spread over bins → nothing occludes; measured soft 0.90 vs hard
+     0.60 on optimized poses). **Footprint splatting kills it structurally**
+     (each point occludes atan(r_pt/r) — the footprint grows on approach like
+     real surface): accuracy becomes bin-resolution-independent (F1 0.76 at
+     grid 72–192), union 0.920 vs 0.951 hard, and on optimized poses soft
+     0.75 tracked hard 0.72. `raw_margin()` exposes the pre-sigmoid metric
+     margin for constraint formulations.
+
+**The five inner-solver formulations and why each failed (all measured):**
+
+| # | formulation | failure |
+|---|---|---|
+| 1 | Adam, scalarized −C + λ·route + AL penalties | traded 3.6 pts coverage for path (λ picks the exchange rate — wrong question) |
+| 2 | Adam, mean-coverage AL floor | surrogate miscalibration → optimizer chased phantom demand, hard coverage 0.951→0.756 while the mean "held"; separately NVPS floor useless (see above) |
+| 3 | Adam, per-point sigmoid keep + zbuf | **Adam normalizes per-parameter gradients → force hierarchies do not exist**; keep-pressure pushed poses 1.4 m *into* the hull against a 100×-grown collision μ |
+| 4 | SGD+caps, per-pose sigmoid→metric anchors | sigmoid constraints **ratchet** (restoring gradient saturates away once violated); metric margins fixed that, but per-pose anchors cancel each other and forbid the handoffs shortening needs |
+| 5 | SGD+caps, per-point max-over-poses metric margin | argmax chattering + coherent route pull vs incoherent constraint pulls; colViol equilibrium ~1 m, coverage 0.44 |
+
+The stable diagnosis: **first-order simultaneous descent over ~50 coupled
+poses with hard coupling constraints thrashes** — route shrinkage of a chain
+threading a concave structure needs *coordinated* multi-pose moves, and every
+per-step force balance we tried either explodes or equilibrates violated. This
+is precisely why the trajectory-optimization literature uses trust-region /
+sequential-convexification (TrajOpt-style SQP: the five metric margins are
+near-linear in pose — linearize around the current config, solve a small QP
+per iteration) or elastic-band coordinate descent (optimize one pose at a
+time along the chain, neighbours fixed: kills both the gradient cancellation
+and the chatter, parallelizes over non-adjacent poses).
+
+**Cold start** (geometric init, no ray-casts): reaches 0.72 hard coverage
+collision-free (clearance +0.41 m) but at 269 m makespan (formulation 1's
+best); the term-balancing between coverage-seeking and route economy under
+SGD is unresolved (fixed weights are scale-fragile; gradient-norm-adaptive
+weighting is the designed fix).
+
+### 9.6 Resume point for the next session
+
+1. **Inner solver, warm arm first**: implement elastic-band coordinate descent
+   over poses (cheapest correct option; margins already metric) — or SCP if
+   that stalls. Success bar unchanged (§9.3): ≥10 % makespan reduction at
+   ≥ baseline coverage, collision-free by its own constraints.
+2. Then cold arm (same solver + adaptive term weights), then the R>2 sweep.
+3. Everything runs via
+   `ipy_inspection hpro/joint_pilot.py --pipeline_dir outputs/pilot_baseline`
+   (baseline is committed; regenerate with the §9.5 item-1 settings if not).
+4. Keep the §9.4 rules: sanity gate before optimizing, hard re-score by their
+   ray-cast, report wall-clock including backbone prepare, ≥5 seeds for any
+   claimed number (the pilot's single-seed runs are diagnostics, not results).

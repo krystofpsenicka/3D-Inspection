@@ -287,6 +287,130 @@ class NVPSBackbone(VisibilityBackbone):
 
 
 # ---------------------------------------------------------------------------
+# Spherical z-buffer (geometric, scale-free — added for the §9 OCP work)
+# ---------------------------------------------------------------------------
+
+class ZBufferBackbone(VisibilityBackbone):
+    """Differentiable spherical z-buffer occlusion.
+
+    Motivation (measured 2026-07-23, §9.3 pilot): at metric inspection scale —
+    a camera 3 m from a 25 m structure, i.e. ~0.12 object radii — pretrained
+    NVPS is uninformative (P(visible | GT visible) = 0.185 vs P(visible | GT
+    occluded) = 0.195; F1 ≈ 0.2), because its training distribution is
+    exterior viewpoints at ~1–4 radii. HPRO is O(N²) and infeasible at N=20k.
+    This backbone is the geometric answer: bin all points by *direction* from
+    the viewpoint into an equirectangular (azimuth × elevation) grid, take the
+    minimum range per bin (the local occluder), and score each point by a
+    sigmoid of how close its range is to its bin's minimum::
+
+        w_j = sigma( sharp * (r_min(bin_j) * (1 + tol_rel) + tol_abs - r_j) )
+
+    Properties: scale-free (tolerances are relative + absolute), O(N) per
+    view, no training, no mesh, orientation-free (full sphere — the frustum
+    gate composes on top, like every backbone). Gradients flow through r_j;
+    the per-bin minimum is detached (occluders treated as static within a
+    gradient step — the same anchoring trick as the audit loop). Known
+    limitations: equirect bins shrink near the poles (harmless: a smaller bin
+    means *less* occlusion aggregation, not wrong geometry) and a bin is a
+    fat-pixel occluder, so tolerance/grid trade leakage on thin structures —
+    tune ``grid``/``tol`` against a ray-cast audit, which the §9 pilot does.
+    """
+
+    name = "zbuf"
+    requires_normals = False
+
+    def __init__(self, device: Optional[str] = None, grid_el: int = 96,
+                 tol_rel: float = 0.05, tol_abs: float = 0.10,
+                 zbuf_sharp: float = 12.0, splat_radius: Optional[float] = None,
+                 splat_window: int = 2):
+        super().__init__()
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.grid_el = int(grid_el)
+        self.grid_az = 2 * int(grid_el)
+        self.tol_rel = float(tol_rel)
+        self.tol_abs = float(tol_abs)
+        self.sharp = float(zbuf_sharp)
+        self.splat_radius = splat_radius       # None = auto from nn spacing
+        self.splat_window = int(splat_window)  # offsets in [-w, w]^2 per point
+        self.pts: Optional[torch.Tensor] = None
+        self._bin_dirs: Optional[torch.Tensor] = None
+
+    def prepare(self, pts_np: np.ndarray, normals_np: Optional[np.ndarray] = None) -> None:
+        pts_np = np.asarray(pts_np)
+        self.pts = torch.tensor(pts_np, dtype=torch.float32,
+                                device=self.device)          # (N, 3)
+        if self.splat_radius is None and len(pts_np) > 1:
+            # Auto splat radius ~ the cloud's own sampling density: median
+            # nearest-neighbour distance. Splats then tile the surface with
+            # little overlap and no gaps, at any viewing distance.
+            from scipy.spatial import cKDTree
+            sub = pts_np[np.random.default_rng(0).choice(
+                len(pts_np), size=min(4000, len(pts_np)), replace=False)]
+            d, _ = cKDTree(pts_np).query(sub, k=2)
+            self.splat_radius = float(np.median(d[:, 1]))
+        if self._bin_dirs is None:
+            ia = torch.arange(self.grid_az, device=self.device)
+            ie = torch.arange(self.grid_el, device=self.device)
+            az = (ia + 0.5) / self.grid_az * 2 * math.pi - math.pi
+            el = (ie + 0.5) / self.grid_el * math.pi - math.pi / 2
+            az, el = torch.meshgrid(az, el, indexing="ij")       # (Az, El)
+            dirs = torch.stack([el.cos() * az.cos(), el.cos() * az.sin(),
+                                el.sin()], dim=-1)               # (Az, El, 3)
+            self._bin_dirs = dirs.permute(1, 0, 2).reshape(-1, 3)  # (El*Az, 3)
+
+    def raw_margin(self, pts_t: torch.Tensor, viewpoints: torch.Tensor) -> torch.Tensor:
+        """Pre-sigmoid occlusion margin in METRES (positive = visible).
+
+        Exposed for constraint formulations: a constraint through the sigmoid
+        saturates — once violated by much, its gradient dies and the anchor is
+        lost forever (the §9.5 ratchet). The metric margin has unit gradient
+        everywhere.
+        """
+        if self.pts is None:
+            raise RuntimeError("ZBufferBackbone.prepare(pts_np) must be called first")
+        V = viewpoints.shape[0]
+        d = pts_t.T.unsqueeze(0) - viewpoints.unsqueeze(1)        # (V, N, 3)
+        r = d.norm(dim=2)                                         # (V, N)
+        u = d / r.clamp_min(1e-9).unsqueeze(-1)                   # unit dirs
+        az = torch.atan2(d[..., 1], d[..., 0])                    # [-pi, pi]
+        el = torch.asin((d[..., 2] / r.clamp_min(1e-9)).clamp(-1.0, 1.0))
+        ia = ((az + math.pi) / (2 * math.pi) * self.grid_az).long().clamp(
+            0, self.grid_az - 1)
+        ie = ((el + math.pi / 2) / math.pi * self.grid_el).long().clamp(
+            0, self.grid_el - 1)
+        B = self.grid_az * self.grid_el
+        r_det = r.detach()
+
+        # Splatting: each point occludes every bin whose centre direction lies
+        # inside its angular footprint atan(splat_radius / r). The footprint
+        # GROWS as the camera approaches — the property that kills the
+        # "spread points across bins by coming closer" score inflation
+        # (measured: soft union 0.90 vs ray-cast 0.60 on optimized poses
+        # without splatting). Implemented as a loop over a (2w+1)^2 window of
+        # bin offsets: memory stays O(V*N) per offset.
+        cos_fp = (r_det / torch.sqrt(r_det ** 2 + self.splat_radius ** 2))
+        buf = torch.full((V, B), torch.inf, device=r.device)
+        w = self.splat_window
+        for da in range(-w, w + 1):
+            for de in range(-w, w + 1):
+                ia_o = (ia + da) % self.grid_az
+                ie_o = (ie + de).clamp(0, self.grid_el - 1)
+                bins_o = ia_o + ie_o * self.grid_az               # (V, N)
+                bd = self._bin_dirs[bins_o]                       # (V, N, 3)
+                covered = (u.detach() * bd).sum(-1) >= cos_fp
+                contrib = torch.where(covered, r_det,
+                                      torch.full_like(r_det, torch.inf))
+                buf.scatter_reduce_(1, bins_o, contrib, reduce="amin")
+
+        r_min = buf.gather(1, ia + ie * self.grid_az)             # (V, N)
+        r_min = torch.where(torch.isinf(r_min), r_det, r_min)
+        return r_min * (1.0 + self.tol_rel) + self.tol_abs - r
+
+    def forward(self, pts_t: torch.Tensor, viewpoints: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(self.sharp * self.raw_margin(pts_t, viewpoints))
+
+
+# ---------------------------------------------------------------------------
 # Ensemble
 # ---------------------------------------------------------------------------
 
@@ -333,6 +457,7 @@ class EnsembleBackbone(VisibilityBackbone):
 #: ``make_backbone(name, **cfg)`` for every name with one unchanged ``cfg``.
 HPRO_KEYS = ("gamma", "k", "alphas", "delta", "fits_in_memory", "use_linear_kernel")
 NVPS_KEYS = ("nv_dir", "ckpt")
+ZBUF_KEYS = ("grid_el", "tol_rel", "tol_abs", "zbuf_sharp", "splat_radius", "splat_window")
 
 
 def make_backbone(name: str, device: Optional[str] = None, **kwargs) -> VisibilityBackbone:
@@ -356,7 +481,7 @@ def make_backbone(name: str, device: Optional[str] = None, **kwargs) -> Visibili
         ValueError: if ``name`` is not a known backbone.
     """
     name = name.lower()
-    unknown = set(kwargs) - set(HPRO_KEYS) - set(NVPS_KEYS)
+    unknown = set(kwargs) - set(HPRO_KEYS) - set(NVPS_KEYS) - set(ZBUF_KEYS)
     if unknown:
         raise TypeError(
             f"make_backbone({name!r}) got kwargs no backbone understands: "
@@ -364,14 +489,17 @@ def make_backbone(name: str, device: Optional[str] = None, **kwargs) -> Visibili
         )
     hpro_kw = {k: v for k, v in kwargs.items() if k in HPRO_KEYS}
     nvps_kw = {k: v for k, v in kwargs.items() if k in NVPS_KEYS}
+    zbuf_kw = {k: v for k, v in kwargs.items() if k in ZBUF_KEYS}
 
     if name == "hpro":
         return HPROBackbone(device=device, **hpro_kw)
     if name == "nvps":
         return NVPSBackbone(device=device, **nvps_kw)
+    if name == "zbuf":
+        return ZBufferBackbone(device=device, **zbuf_kw)
     if name == "ensemble":
         return EnsembleBackbone([
             HPROBackbone(device=device, **hpro_kw),
             NVPSBackbone(device=device, **nvps_kw),
         ])
-    raise ValueError(f"unknown backbone {name!r}; expected 'hpro', 'nvps' or 'ensemble'")
+    raise ValueError(f"unknown backbone {name!r}; expected 'hpro', 'nvps', 'zbuf' or 'ensemble'")

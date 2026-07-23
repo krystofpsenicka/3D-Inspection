@@ -1,0 +1,16 @@
+mesh,seed,method,backbone,true_coverage,changed_coverage,path_length,n_poses,plan_time_s,n_resolves,adapt_latency_ms
+duke_of_lancaster_uk_clipped.glb,0,open-loop,oracle,0.9460,0.9028,15.613,20,3.61,0,nan
+duke_of_lancaster_uk_clipped.glb,0,adaptive,oracle,0.9517,0.9330,15.376,22,37.22,10,3400
+duke_of_lancaster_uk_clipped.glb,0,rh,nvps,0.9500,0.9012,8.532,15,6.43,12,223
+duke_of_lancaster_uk_clipped.glb,1,open-loop,oracle,0.9530,0.8174,13.876,20,3.16,0,nan
+duke_of_lancaster_uk_clipped.glb,1,adaptive,oracle,0.9503,0.9711,11.152,14,25.64,6,3761
+duke_of_lancaster_uk_clipped.glb,1,rh,nvps,0.9570,0.9331,7.623,13,4.26,10,198
+duke_of_lancaster_uk_clipped.glb,2,open-loop,oracle,0.9713,0.9682,14.054,19,3.26,0,nan
+duke_of_lancaster_uk_clipped.glb,2,adaptive,oracle,0.9587,0.9766,14.210,22,29.83,8,3332
+duke_of_lancaster_uk_clipped.glb,2,rh,nvps,0.9517,0.9264,8.275,14,4.70,11,196
+duke_of_lancaster_uk_clipped.glb,3,open-loop,oracle,0.9397,0.8802,14.029,20,3.16,0,nan
+duke_of_lancaster_uk_clipped.glb,3,adaptive,oracle,0.9587,0.9246,15.726,23,30.37,9,3022
+duke_of_lancaster_uk_clipped.glb,3,rh,nvps,0.9510,0.9364,7.370,14,4.46,8,189
+duke_of_lancaster_uk_clipped.glb,4,open-loop,oracle,0.9663,0.9572,12.689,18,3.02,0,nan
+duke_of_lancaster_uk_clipped.glb,4,adaptive,oracle,0.9593,0.9409,14.784,20,26.62,8,2950
+duke_of_lancaster_uk_clipped.glb,4,rh,nvps,0.9703,0.9616,8.058,16,5.36,12,214
