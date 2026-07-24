@@ -355,22 +355,75 @@ coordinate descent (the concrete motivation for a sequential-convexification
 follow-up), all of this is one mesh / one pipeline seed / two robots at
 pilot scale, and the robustness sweep is the first item below.
 
+### 4e.0 · Does it hold up? Yes — 15 out of 15 (plan §9.9)
+
+The table above was five runs on one pipeline seed, which by this project's
+own rule is a diagnostic, not a result. So the whole sweep was repeated on
+two further seeds. Changing the seed changes both the sampled surface and the
+candidate viewpoints, so each is a genuinely different problem — the pipeline
+even needs different numbers of viewpoints to hit the same coverage target
+(49, 54 and 58 for the 0.95 target).
+
+Across all fifteen runs the joint refiner improved **both** metrics **every
+single time**: on average +2.38 ± 1.14 coverage points at 5.16 ± 2.77 % less
+makespan, and the worst run of the fifteen still gained +0.91 points while
+shaving 0.61 %. There is no run where it lost on either axis, so this is not
+an average hiding failures.
+
+The pattern across the frontier makes sense: the coverage gain is largest
+where the baseline has most left to find (+3.4 points at 15 viewpoints,
+falling to +1.2 at ~50, where little reachable surface remains), while the
+makespan saving grows with tour length (2.8 % → 6.9 %). The seed question is
+now settled; what remains open is more robots and the full-size mesh.
+
+### 4e.1 · Cold start: the honest negative (plan §9.8)
+
+The obvious follow-up question is what the same optimizer does *without* the
+pipeline's answer to start from. Answer: it plateaus well short of it, and
+the reason is instructive.
+
+Starting from a purely geometric guess (spread viewpoints over the surface,
+string them into one tour, cut it in two) the optimizer covers 0.579. Local
+refinement alone then adds almost nothing — it stops at 0.595 with 8 096
+points never seen — because a pose is nudged in small steps and rewarded
+through a smooth score that is completely flat toward surface several metres
+away. It has no way to *know* there is unseen structure over there.
+
+Giving it the discrete move it was missing (cluster what is still uncovered,
+relocate poses that are not earning their place onto those clusters, with the
+ray-caster vetting every relocation) lifts it to **0.759** — a large gain, and
+still 19 points below the pipeline's 0.951. Quadrupling the compute budget
+reproduces 0.759 exactly, so this is where the method converges, not where it
+ran out of time. What is left over is scattered speckle and pockets whose
+natural viewpoint sits inside the hull — the same tail that the earlier
+no-prior experiment hit from a completely different direction.
+
+The useful conclusion is a boundary on the claim: **this work improves plans;
+it does not yet replace the planner.** Greedy set cover over hundreds of
+ray-cast candidates is a strong *global* mechanism, and local moves plus
+greedy repair do not reconstruct it from a naive start. That is worth stating
+plainly in the paper rather than leaving for a reviewer to ask about.
+
 ## 5 · Next steps (rewritten for the pivot, priority order)
 
 1. ~~Inner solver for the warm arm~~ — **done 2026-07-24 (§4e): bar met.**
-2. **Robustness sweep**: ≥3 pipeline seeds × the frontier, then R > 2 and the
-   50 m mesh — nothing in §4e is a claim until this passes (the §3 rule).
-3. **Cold start** with the same solver (+ adaptive term weighting).
+2. ~~Cold start~~ — **done (§4e.1): bar missed, 0.759 vs 0.951.** The claim
+   is scoped to refinement; a global selection mechanism over continuous
+   poses is the open idea if we ever want the standalone version.
+3. ~~Robustness sweep across seeds~~ — **done (§4e.0): 15/15, it holds.**
+   Still open on this axis: R > 2 robots and the 50 m mesh.
 4. **SCP / coordinated wave moves** — the measured front-advance limitation
    says exactly what a second-order method could still win.
 5. Then: MPC/receding-horizon mode, theory framing, and the paper skeleton.
    The parked online results (§4.3/§4c) stay citable as history.
 
 **Overall state in one sentence (2026-07-24, end of day):** the joint-OCP
-direction has passed its go/no-go — an elastic-band coordinate-descent
-refiner with ray-cast-audited acceptance Pareto-dominates the thesis
-pipeline's own coverage/makespan frontier at every measured operating point
-(matched pose and route budgets, their scorer, collision-clear, 4–7 s per
-solve, bit-reproducible) — and the road ahead is robustness seeds, the cold
-arm, and an SCP-style upgrade for the coordinated moves coordinate descent
-provably cannot make.
+direction has passed its go/no-go and survived its robustness check — an
+elastic-band coordinate-descent refiner with ray-cast-audited acceptance
+improves both coverage and makespan over the thesis pipeline in 15 of 15
+runs across three seeds and five operating points (matched pose and route
+budgets, their scorer, collision-clear, 5–18 s per solve) — while cold start
+plateaus 19 points short, which scopes the paper to *refining* plans rather
+than replacing the planner; next up are more robots, the full-size mesh, and
+an SCP-style upgrade for the coordinated moves coordinate descent provably
+cannot make.

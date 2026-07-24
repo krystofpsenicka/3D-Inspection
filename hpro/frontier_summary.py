@@ -1,72 +1,149 @@
 """Aggregate the §9 headroom frontier: pipeline operating points vs their
 joint-refined (elastic + audit-gate) counterparts.
 
-Reads every ``hpro/results/frontier/<name>/joint_pilot.json`` produced by
+Reads every ``hpro/results/frontier*/<name>/joint_pilot.json`` produced by
 ``joint_pilot.py --modes warm`` runs over baselines generated at different
 ``--target_coverage`` settings, and renders one coverage-vs-makespan frontier
 plot plus a table. The question it answers (RESEARCH_PLAN.md §9.3): does the
 joint optimizer dominate the pipeline's own coverage/makespan frontier, and
 by how much at each operating point?
+
+Directory names encode the operating point and (optionally) the pipeline
+seed: ``pilot_tc78`` is seed 42 (the original sweep), ``pilot_s7_tc78`` is
+seed 7. With more than one seed present, the per-operating-point deltas are
+reported as mean ± std across seeds and the §3.4 rule ("no claim from fewer
+than ~5 runs, always mean ± std") is what this table exists to satisfy.
 """
 
+import argparse
 import glob
 import json
 import os
+import re
+import statistics
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTIER = os.path.join(_DIR, "results", "frontier")
+_RESULTS = os.path.join(_DIR, "results")
 
 
-def main():
-    rows = []
-    for path in sorted(glob.glob(os.path.join(FRONTIER, "*", "joint_pilot.json"))):
+def parse_name(name):
+    """'pilot_s7_tc78' -> (7, 78); 'pilot_tc78' -> (42, 78);
+    'pilot_baseline' -> (42, 95)."""
+    m = re.match(r"pilot(?:_s(\d+))?_tc(\d+)$", name)
+    if m:
+        return int(m.group(1) or 42), int(m.group(2))
+    m = re.match(r"pilot_s(\d+)_baseline$", name)
+    if m:
+        return int(m.group(1)), 95
+    if name == "pilot_baseline":
+        return 42, 95
+    return None, None
+
+
+def load_runs():
+    runs = []
+    for path in sorted(glob.glob(
+            os.path.join(_RESULTS, "frontier*", "*", "joint_pilot.json"))):
         name = os.path.basename(os.path.dirname(path))
+        seed, tc = parse_name(name)
+        if seed is None:
+            continue
         with open(path) as fh:
             data = json.load(fh)
         by = {r["tag"]: r for r in data["results"]}
-        rows.append((name, by))
+        if "pipeline" not in by or "joint-warm" not in by:
+            continue
+        runs.append(dict(name=name, seed=seed, tc=tc, by=by))
+    return runs
 
-    rows.sort(key=lambda r: r[1]["pipeline"]["n_poses"])
 
-    print(f"{'baseline':<14} {'arm':<12} {'cov':>7} {'makespan':>9} "
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--plot_seed", type=int, default=42,
+                    help="Which seed's frontier to draw (table covers all).")
+    args = ap.parse_args()
+
+    runs = load_runs()
+    if not runs:
+        raise SystemExit(f"No runs found under {_RESULTS}/frontier*/")
+    seeds = sorted({r["seed"] for r in runs})
+
+    print(f"{'run':<18} {'seed':>4} {'arm':<12} {'cov':>7} {'makespan':>9} "
           f"{'total':>8} {'poses':>6} {'vias':>5} {'clear':>6} {'wall s':>7}")
-    for name, by in rows:
+    for r in sorted(runs, key=lambda r: (r["seed"], r["tc"])):
         for tag in ("pipeline", "joint-warm"):
-            r = by.get(tag)
-            if r is None:
-                continue
-            print(f"{name:<14} {tag:<12} {r['coverage']:>7.4f} "
-                  f"{r['makespan']:>8.1f}m {r['total_length']:>7.1f}m "
-                  f"{r['n_poses']:>6d} {r.get('n_vias', 0):>5d} "
-                  f"{r['min_clearance']:>6.2f} {r['wall_s']:>7.1f}")
-        p, j = by["pipeline"], by.get("joint-warm")
-        if j:
-            print(f"{'':<14} {'Δ':<12} {j['coverage']-p['coverage']:>+7.4f} "
-                  f"{j['makespan']-p['makespan']:>+8.1f}m")
+            v = r["by"][tag]
+            print(f"{r['name']:<18} {r['seed']:>4} {tag:<12} "
+                  f"{v['coverage']:>7.4f} {v['makespan']:>8.1f}m "
+                  f"{v['total_length']:>7.1f}m {v['n_poses']:>6d} "
+                  f"{v.get('n_vias', 0):>5d} {v['min_clearance']:>6.2f} "
+                  f"{v['wall_s']:>7.1f}")
+        p, j = r["by"]["pipeline"], r["by"]["joint-warm"]
+        print(f"{'':<18} {'':>4} {'Δ':<12} {j['coverage']-p['coverage']:>+7.4f} "
+              f"{j['makespan']-p['makespan']:>+8.1f}m")
 
+    # Per-operating-point aggregation across seeds.
+    print(f"\n=== across {len(seeds)} pipeline seed(s) {seeds} ===")
+    print(f"{'target':>7} {'n':>3} {'V (poses)':>12} {'Δcoverage (pts)':>22} "
+          f"{'Δmakespan (%)':>20} {'dominated':>10}")
+    agg_rows = []
+    for tc in sorted({r["tc"] for r in runs}):
+        grp = [r for r in runs if r["tc"] == tc]
+        dcov = [100 * (r["by"]["joint-warm"]["coverage"]
+                       - r["by"]["pipeline"]["coverage"]) for r in grp]
+        dmk = [100 * (r["by"]["joint-warm"]["makespan"]
+                      / r["by"]["pipeline"]["makespan"] - 1) for r in grp]
+        vs = [r["by"]["pipeline"]["n_poses"] for r in grp]
+        dom = sum(1 for c, m in zip(dcov, dmk) if c > 0 and m < 0)
+        sd = (lambda x: statistics.stdev(x) if len(x) > 1 else 0.0)
+        print(f"{tc/100:>7.2f} {len(grp):>3d} "
+              f"{min(vs):>5d}–{max(vs):<6d} "
+              f"{statistics.mean(dcov):>+13.2f} ± {sd(dcov):<6.2f} "
+              f"{statistics.mean(dmk):>+11.2f} ± {sd(dmk):<6.2f} "
+              f"{dom:>5d}/{len(grp):<4d}")
+        agg_rows.append((tc, dcov, dmk, dom, len(grp)))
+
+    all_dcov = [c for _, dc, _, _, _ in agg_rows for c in dc]
+    all_dmk = [m for _, _, dm, _, _ in agg_rows for m in dm]
+    n_dom = sum(d for _, _, _, d, _ in agg_rows)
+    n_all = sum(n for _, _, _, _, n in agg_rows)
+    sd = (lambda x: statistics.stdev(x) if len(x) > 1 else 0.0)
+    print(f"\noverall: Δcov {statistics.mean(all_dcov):+.2f} ± "
+          f"{sd(all_dcov):.2f} pts, Δmakespan "
+          f"{statistics.mean(all_dmk):+.2f} ± {sd(all_dmk):.2f} %, "
+          f"Pareto-dominated in {n_dom}/{n_all} runs "
+          f"(worst Δcov {min(all_dcov):+.2f} pts, "
+          f"worst Δmakespan {max(all_dmk):+.2f} %)")
+
+    plot_runs = sorted([r for r in runs if r["seed"] == args.plot_seed],
+                       key=lambda r: r["by"]["pipeline"]["n_poses"])
+    if not plot_runs:
+        return
     fig, ax = plt.subplots(figsize=(6.4, 4.8))
-    px = [by["pipeline"]["makespan"] for _, by in rows]
-    py = [by["pipeline"]["coverage"] for _, by in rows]
-    jx = [by["joint-warm"]["makespan"] for _, by in rows if "joint-warm" in by]
-    jy = [by["joint-warm"]["coverage"] for _, by in rows if "joint-warm" in by]
-    ax.plot(px, py, "s-", color="0.35", label="pipeline (set cover + VRP + ST-A*)")
+    px = [r["by"]["pipeline"]["makespan"] for r in plot_runs]
+    py = [r["by"]["pipeline"]["coverage"] for r in plot_runs]
+    jx = [r["by"]["joint-warm"]["makespan"] for r in plot_runs]
+    jy = [r["by"]["joint-warm"]["coverage"] for r in plot_runs]
+    ax.plot(px, py, "s-", color="0.35",
+            label="pipeline (set cover + VRP + ST-A*)")
     ax.plot(jx, jy, "o-", color="crimson",
             label="joint refinement (elastic band, audit-gated)")
-    for (name, by), x0, y0, x1, y1 in zip(rows, px, py, jx, jy):
+    for r, x0, y0, x1, y1 in zip(plot_runs, px, py, jx, jy):
         ax.annotate("", xy=(x1, y1), xytext=(x0, y0),
                     arrowprops=dict(arrowstyle="->", color="0.6", lw=0.8))
-        ax.annotate(f"V={by['pipeline']['n_poses']}", (x0, y0),
+        ax.annotate(f"V={r['by']['pipeline']['n_poses']}", (x0, y0),
                     textcoords="offset points", xytext=(4, -10), fontsize=8)
     ax.set_xlabel("makespan (m)")
     ax.set_ylabel("coverage (pipeline's own ray-cast)")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=9, loc="lower right")
-    ax.set_title("coverage / makespan frontier: pipeline vs joint refinement")
-    out = os.path.join(FRONTIER, "frontier.png")
+    ax.set_title("coverage / makespan frontier: pipeline vs joint refinement"
+                 + (f"  (seed {args.plot_seed})" if len(seeds) > 1 else ""))
+    out = os.path.join(_RESULTS, "frontier", "frontier.png")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     print(f"\nSaved: {out}")

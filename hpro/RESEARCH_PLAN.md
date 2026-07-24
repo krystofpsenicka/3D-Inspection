@@ -92,12 +92,14 @@ tells you where the work actually stands.*
 > quality gate" idea, without re-discussing with him. §0.1–§0.5 below remain accurate
 > as history and for the Stage-A/operator layer, which §9 still builds on.
 >
-> **⚠ 2026-07-24: the §9.3 headroom question is ANSWERED — read §9.7.** The
-> elastic-band + audit-gate warm solver Pareto-dominates the pipeline's own
-> coverage/makespan frontier at every measured operating point (matched pose
-> budgets, their scorer, collision-clear): +1.0…+2.9 coverage pts at −1.5…−8.3 %
-> makespan, ≈10–20 % makespan at matched coverage mid-frontier, in 4–7 s per
-> solve. Next actions are §9.7's list (seeds → cold arm → SCP → MPC).
+> **⚠ 2026-07-24: the §9.3 headroom question is ANSWERED — read §9.7, then
+> §9.9 and §9.8.** The elastic-band + audit-gate warm solver Pareto-dominates
+> the pipeline's own coverage/makespan frontier: **15 of 15 runs across three
+> pipeline seeds × five operating points**, +2.38 ± 1.14 coverage points at
+> −5.16 ± 2.77 % makespan, matched pose budgets, their scorer, collision-clear,
+> 5–18 s per solve (§9.9 — the seed axis is closed; R>2 and the 50 m mesh are
+> not). **The cold arm fails its bar** (0.759 vs 0.951, §9.8), which scopes the
+> claim to *refinement*, not standalone planning. Next: SCP → R>2 → MPC.
 
 ### 0.1 Repo state — nothing is merged
 
@@ -1614,7 +1616,9 @@ weighting is the designed fix).
 2. Then cold arm (same solver + adaptive term weights), then the R>2 sweep.
 3. Everything runs via
    `ipy_inspection hpro/joint_pilot.py --pipeline_dir outputs/pilot_baseline`
-   (baseline is committed; regenerate with the §9.5 item-1 settings if not).
+   (**correction 2026-07-24: the baselines are NOT committed** — `outputs/`
+   is untracked, being ~1 MB of regenerable binary per run. Regenerate with
+   the exact `run_full_pipeline.py` invocation recorded in §9.7.)
 4. Keep the §9.4 rules: sanity gate before optimizing, hard re-score by their
    ray-cast, report wall-clock including backbone prepare, ≥5 seeds for any
    stochastic claim.
@@ -1725,15 +1729,150 @@ cover and cuOpt). Caveats: single mesh, single pipeline seed, R=2, pilot
 scale (25 m, 20 k points); the interpolated matched-coverage savings assume
 frontier convexity between measured points.
 
+**Reproducing it from scratch** (nothing under `outputs/` is committed).
+One baseline per operating point, varying only `--target_coverage` over
+0.65 / 0.78 / 0.85 / 0.90 / 0.95:
+
+```bash
+python scripts/run_full_pipeline.py --output outputs/pilot_tc78 \
+  -n 2 --mesh_target_length 25.0 --num_surface_points 20000 \
+  --num_candidates 600 --target_coverage 0.78 \
+  --frustum_near 0.1 --frustum_far 6.0 --frustum_fov_deg 40.0 \
+  --frustum_aspect 1.0 --solver cuopt --alpha 0.5 --seed 42
+python hpro/joint_pilot.py --pipeline_dir outputs/pilot_tc78 \
+  --modes warm --out hpro/results/frontier/pilot_tc78
+python hpro/frontier_summary.py     # table + frontier.png
+```
+
+(`outputs/pilot_baseline` is the 0.95 point, kept under its original name.)
+
 **Next (priority order):**
 
-1. **Robustness**: ≥3 pipeline seeds × the frontier sweep (the §3.4 rule
-   applies before any of this is claimed), then R>2 and the 50 m mesh.
-2. **Cold arm** with the same machinery (geometric init → elastic + expand;
-   the §9.3 cold bar is unchanged).
+1. ~~**Robustness**: ≥3 pipeline seeds~~ — done, **15/15 dominated**: §9.9.
+   Still open on this axis: R>2 and the 50 m mesh.
+2. ~~**Cold arm**~~ — done, and it **fails its bar**: see §9.8.
 3. **SCP / coordinated wave moves** for the front-advance limitation — the
    measured prey pools quantify exactly what a second-order method could
    still win.
 4. Then the MPC/receding-horizon mode and the paper skeleton (§9.2 framing:
    the same solver run receding-horizon, warm starts = real-time iterations).
    claimed number (the pilot's single-seed runs are diagnostics, not results).
+
+### 9.8 Cold start (2026-07-24): it plateaus at 0.759 — the standalone-planner claim is NOT supported
+
+*Run: `hpro/joint_pilot.py --pipeline_dir outputs/pilot_baseline --modes cold`,
+results in `hpro/results/cold_arm/`. Same solver, same audit gate, same
+per-robot route budgets and pose count as §9.7's warm arm — only the
+initialisation and the phase order differ, so warm and cold are one method
+measured from two starts.*
+
+**Design.** The cold arm starts from `cold_start()`'s geometric init (k-means
+view targets → normal-offset poses at mid-range standoff → one NN+2-opt tour
+cut into R chunks; no ray-casts, no set cover) and runs **expand-first**:
+there is no baseline coverage to defend, so the whole surface is prey and the
+run *is* the expand phase, followed by a tighten pass. Vias are given a much
+larger budget (40/robot vs 8) because an NN tour over the whole structure
+crosses the hull far more often than a VRP route does — 80 were inserted.
+
+**Local refinement alone cannot plan (measured).** Expand-only cold went
+0.5794 → 0.5952 and stopped with **8 096 points still uncovered**. The
+mechanism is not subtle: a pose is moved by trust-regioned leans (0.4 m per
+half-sweep) and rewarded through a sigmoid of a metric margin with sharpness
+12 m⁻¹, so it has *no gradient whatsoever* toward surface several metres
+away. Once every pose is locally optimal, the run is over regardless of how
+much surface is missing.
+
+**So the discrete half of §3.5's two-timescale idea was re-used** as a
+`_reseed_pass`: k-means the still-uncovered points, and relocate poses onto
+those clusters. It is a proposal like any other — the ray-cast oracle audits
+it, and it is accepted only if verified coverage rises, the route budget
+holds, and the new segments are clear — so it cannot degrade a solution. Two
+fixes were needed to make it fire at all, both worth recording:
+
+- **Anchor on a cluster medoid with that point's own normal**, not the
+  centroid with an averaged normal. Once a cluster wraps around curvature the
+  centroid floats off the surface and the mean normal cancels; 10 of 12
+  proposals were then rejected for seeing too few new points.
+- **Apply the same net-delta rule used everywhere else** (capture − uniquely
+  abandoned > 0) rather than requiring donors that uniquely hold nothing. At
+  cold-start coverage almost every pose is the sole cover of something, so
+  the strict rule allowed only 3 relocations in a whole run; the net rule
+  allowed 23 and moved coverage 0.595 → 0.759.
+- Trying donor slots **cheapest-first until one passes** (not just the single
+  cheapest) recovered the relocations that the cheapest slot's blocked
+  segments were killing (19 of 48 clusters).
+
+**Result and verdict:**
+
+| arm | coverage | makespan | clearance | wall |
+|---|---|---|---|---|
+| cold init (geometric, unoptimized) | 0.5794 | 76.7 m | −1.16 m (infeasible) | — |
+| cold, expand only | 0.5952 | 78.2 m | 0.43 m | 140 s |
+| **cold, expand + reseed** | **0.7594** | 106.5 m | 0.43 m | 163 s |
+| pipeline baseline (for reference) | 0.9507 | 113.0 m | — | 174 s |
+
+**This plateau is real, not a compute budget artifact**: raising the expand
+budget 4× (200 → 800 sweeps) reproduces 0.7594 exactly. The reseed passes
+themselves decay (11, 6, 2, 2, 1, 1 relocations) and then stop finding
+anything acceptable — the leftover prey is scattered speckle below the
+minimum cluster size, or sits in concavities where the normal-offset
+viewpoint is itself inside the structure. **That is the same speckle/trickle
+tail documented for the no-prior work in §3.8**, arrived at from a completely
+different direction, which is at least a consistent story about where
+point-cloud-surrogate planning runs out.
+
+**What this means for the claim.** The §9.3 cold bar ("within a few points of
+baseline coverage in comparable wall-clock") is **not met** — 0.759 vs 0.951
+is a 19-point gap. Stated honestly, this bounds the paper: greedy set cover
+over 600 ray-cast candidates is a strong *global assignment* mechanism, and
+local moves plus greedy repair from a dumb geometric init do not reproduce
+it. The supported claim is therefore the **refinement** one (§9.7): given any
+operating point the combinatorial planner produces, joint optimization
+strictly improves it on both metrics. "Joint optimization as a standalone
+replacement planner" is not supported by this evidence and should not be
+written until some genuinely global mechanism (submodular selection over
+*continuous* poses, or a much better-informed init) is tried.
+
+**Do not quietly drop this section when writing the paper.** A reviewer will
+ask what happens without the warm start; the answer above is the honest one,
+and it is more useful than silence.
+
+### 9.9 Robustness (2026-07-24): 15/15 across three pipeline seeds — §9.7 now stands as a result
+
+*The §9.7 numbers were single-seed diagnostics. The §3.4 rule ("no claim from
+fewer than ~5 runs, always mean ± std") demanded this sweep before any of it
+could be written down as a finding. Runs: pipeline seeds 42 (the original), 1
+and 7 × the same five `--target_coverage` operating points = 15 baselines,
+each refined by the warm elastic arm. Baselines `outputs/pilot_s{1,7}_tc*`,
+results `hpro/results/frontier_seeds/`, aggregated by
+`hpro/frontier_summary.py`.*
+
+Changing the pipeline seed changes the sampled surface cloud AND the
+candidate set, so each seed is a genuinely different instance — the
+baselines land on different pose counts for the same coverage target (e.g.
+0.95 → 49, 54 and 58 viewpoints). What is compared is always the joint arm
+against *its own* baseline on *its own* cloud.
+
+| target | n | V range | Δcoverage (pts) | Δmakespan (%) | dominated |
+|---|---|---|---|---|---|
+| 0.65 | 3 | 15 | +3.41 ± 2.07 | −2.83 ± 3.05 | 3/3 |
+| 0.78 | 3 | 20–21 | +2.89 ± 0.13 | −6.05 ± 1.92 | 3/3 |
+| 0.85 | 3 | 27–28 | +2.53 ± 0.22 | −2.94 ± 1.57 | 3/3 |
+| 0.90 | 3 | 34–37 | +1.86 ± 0.49 | −7.05 ± 1.57 | 3/3 |
+| 0.95 | 3 | 49–58 | +1.21 ± 0.28 | −6.92 ± 3.05 | 3/3 |
+
+**Overall: Δcoverage +2.38 ± 1.14 points, Δmakespan −5.16 ± 2.77 %,
+Pareto-dominated in 15 of 15 runs.** The worst single run of the fifteen
+still improves both metrics (+0.91 points, −0.61 %), so domination is not a
+mean effect hiding failures — there is no run where the joint arm loses on
+either axis. The trend across the frontier is consistent and mechanistic: the
+coverage gain shrinks as the baseline saturates (+3.4 points at V=15 down to
++1.2 at V≈50, where little remains reachable) while the makespan saving
+grows (−2.8 % → −6.9 %, longer tours having more slack to recover).
+
+Clearance held at ≥ 0.44 m in every run (constraint 0.50 m; the sub-0.50
+cases are baseline-inherited home legs the vias could not fully fix, still
+better than the pipeline's own 0.415 m). Wall-clock 5.5–17.6 s per solve.
+
+**Status of the §9.7 claim: it survives.** Single-mesh, R=2, pilot-scale
+remain open (R>2 and the 50 m mesh are next); the seed dimension is closed.

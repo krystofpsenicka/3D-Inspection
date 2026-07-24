@@ -1,0 +1,103 @@
+{
+  "args": {
+    "pipeline_dir": "outputs/pilot_s1_tc65",
+    "out": "hpro/results/frontier_seeds/pilot_s1_tc65",
+    "steps": 400,
+    "cold_steps": 1200,
+    "lambda_route": 0.02,
+    "alpha": 0.5,
+    "lr_pos": 0.05,
+    "lr_rot": 0.02,
+    "beta": 1.0,
+    "backbone": "zbuf",
+    "keep_target": 0.55,
+    "keep_margin": 0.05,
+    "lambda_route_cold": 0.002,
+    "w_cover": 20.0,
+    "cap_pos": 0.04,
+    "cap_rot": 0.02,
+    "objective": "constrained",
+    "solver": "elastic",
+    "eb_sweeps": 40,
+    "eb_inner": 25,
+    "eb_lr": 0.02,
+    "eb_mu": 200.0,
+    "eb_slack": 0.02,
+    "eb_tol": 0.02,
+    "eb_rounds": 3,
+    "no_prune": false,
+    "no_expand": false,
+    "eb_expand_sweeps": 30,
+    "cold_expand_sweeps": 200,
+    "cold_max_vias": 40,
+    "reseed_clusters": 48,
+    "reseed_min_cluster": 40,
+    "reseed_min_gain": 25,
+    "reseed_slot_tries": 25,
+    "reseed_after": 2,
+    "eb_debug": false,
+    "eb_trust": 0.4,
+    "eb_trust_rot": 0.25,
+    "eb_keep_soft": 0.05,
+    "eb_repair": 25,
+    "eb_gain_sharp": 12.0,
+    "eb_w_gain": 1.0,
+    "eb_route_reg": 0.3,
+    "al_every": 30,
+    "col_samples": 10,
+    "sep_samples": 48,
+    "d_separation": 0.8,
+    "robot_radius": 0.35,
+    "clearance_margin": 0.15,
+    "speed": 2.0,
+    "frustum_sharpness": 12.0,
+    "seed": 0,
+    "modes": "warm",
+    "no_show": false
+  },
+  "results": [
+    {
+      "tag": "pipeline",
+      "coverage": 0.6594,
+      "makespan": 53.88374710083008,
+      "total_length": 103.68630599975586,
+      "per_robot": [
+        49.80255889892578,
+        53.88374710083008
+      ],
+      "min_clearance": NaN,
+      "n_poses": 15,
+      "wall_s": NaN
+    },
+    {
+      "tag": "warm-init",
+      "coverage": 0.6594,
+      "makespan": 53.583343505859375,
+      "total_length": 102.78228759765625,
+      "per_robot": [
+        49.198944091796875,
+        53.583343505859375
+      ],
+      "min_clearance": 1.0261473655700684,
+      "n_poses": 15,
+      "n_vias": 0,
+      "wall_s": 0.0
+    },
+    {
+      "tag": "joint-warm",
+      "coverage": 0.70155,
+      "makespan": 53.55598831176758,
+      "total_length": 100.3309440612793,
+      "per_robot": [
+        46.77495574951172,
+        53.55598831176758
+      ],
+      "min_clearance": 0.9596002101898193,
+      "n_poses": 15,
+      "n_vias": 0,
+      "wall_s": 5.526651370000764,
+      "n_pruned": 0,
+      "claimed_captures": 843
+    }
+  ]
+}

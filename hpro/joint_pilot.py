@@ -544,9 +544,148 @@ def _insert_vias(pos, rot, view, homes, esdf, args, max_vias=8):
     return n_ins
 
 
+def _reseed_pass(pos, rot, view, homes, esdf, args, gt_vis, audited,
+                 budgets, times, pts_np, normals_np, standoff):
+    """Relocate zero-value poses onto clusters of still-uncovered surface.
+
+    Coordinate descent moves poses by small trust-regioned leans, and the
+    capture reward is a sigmoid of a metric margin — so a pose has no
+    gradient whatsoever toward surface several metres away. Cold start
+    therefore saturates with whole regions unvisited (measured: 0.579 →
+    0.595 with 8 096 prey points left). This is the discrete half of the
+    §3.5 two-timescale idea, re-used here: cluster what is still uncovered,
+    and teleport poses that hold nothing unique onto those clusters. The
+    move is a *proposal* like any other — audited by the ray-caster,
+    accepted only if verified coverage rises and the route budget holds —
+    so it cannot degrade the solution.
+
+    Returns (n_relocated, gt_vis).
+    """
+    device = gt_vis.device
+    R = len(pos)
+    margin = args.robot_radius + args.clearance_margin
+    prey = (~gt_vis.any(dim=0)).nonzero(as_tuple=True)[0]
+    if len(prey) < args.reseed_min_cluster:
+        return 0, gt_vis
+
+    prey_np = pts_np[prey.cpu().numpy()]
+    n_cl = min(args.reseed_clusters, max(1, len(prey_np)
+                                         // args.reseed_min_cluster))
+    labels = _kmeans(prey_np, n_cl, np.random.default_rng(args.seed))
+    order = sorted(np.unique(labels), key=lambda u: -(labels == u).sum())
+
+    T = [len(p) for p in pos]
+    off = np.concatenate([[0], np.cumsum(T)]).astype(int)
+    view_all = torch.cat(view)
+    n_moved = 0
+    rej = dict(small=0, blocked=0, low_gain=0, no_donor=0, budget=0,
+               seg=0, sep=0)
+    for u in order:
+        m = labels == u
+        if m.sum() < args.reseed_min_cluster:
+            rej['small'] += 1
+            continue
+        # Anchor on the cluster's MEDOID and use that point's own normal.
+        # A centroid + averaged normal is meaningless once a cluster wraps
+        # around curvature — the centroid floats off the surface and the
+        # mean normal cancels (measured: 10 of 12 proposals then saw fewer
+        # than the minimum new points and were rejected).
+        idx_m = np.nonzero(m)[0]
+        pm = prey_np[m]
+        medoid = idx_m[np.argmin(np.linalg.norm(pm - pm.mean(axis=0),
+                                                axis=1))]
+        nrm = normals_np[int(prey[int(medoid)])]
+        nrm = nrm / (np.linalg.norm(nrm) + 1e-12)
+        cand = prey_np[medoid] + nrm * standoff
+        cand_t = torch.tensor(cand, dtype=torch.float32,
+                              device=device).unsqueeze(0)
+        if float(esdf(cand_t)) < margin:
+            rej['blocked'] += 1
+            continue           # viewpoint itself is not clear
+        look = torch.tensor(-nrm, dtype=torch.float32, device=device)
+        up = torch.tensor([0.0, 0.0, 1.0], device=device)
+        if abs(float((look * up).sum())) > 0.95:
+            up = torch.tensor([0.0, 1.0, 0.0], device=device)
+        cand_rot = torch.cat([look, up]).unsqueeze(0)
+
+        rows = audited(cand_t, cand_rot)
+        gain_mask = rows[0] & ~gt_vis.any(dim=0)
+        if int(gain_mask.sum()) < args.reseed_min_gain:
+            rej['low_gain'] += 1
+            continue
+
+        # Donor: a view pose that is nobody's sole cover, relocated from the
+        # chain slot where the swap costs the least route.
+        sole = gt_vis.sum(dim=0) == 1
+        cands = []
+        for r in range(R):
+            for i in range(T[r]):
+                g = off[r] + i
+                if not bool(view_all[g]):
+                    continue               # vias are route, not viewpoints
+                # Net rule, as everywhere else: the donor may hold unique
+                # surface as long as the relocation captures strictly more
+                # than it abandons. Demanding donors that hold nothing
+                # unique is far too strict at cold-start coverage — almost
+                # every pose is the sole cover of something (measured: only
+                # 3 relocations accepted in a whole run).
+                net = int(gain_mask.sum()) - int(
+                    (gt_vis[g] & sole & ~rows[0]).sum())
+                if net < args.reseed_min_gain:
+                    continue
+                p_prev = pos[r][i - 1] if i > 0 else homes[r]
+                p_next = pos[r][i + 1] if i < T[r] - 1 else homes[r]
+                old_c = float((pos[r][i] - p_prev).norm()
+                              + (pos[r][i] - p_next).norm())
+                new_c = float((cand_t[0] - p_prev).norm()
+                              + (cand_t[0] - p_next).norm())
+                cands.append((new_c - old_c, r, i, g))
+        if not cands:
+            rej['no_donor'] += 1
+            continue
+        # Try slots cheapest-first: the cheapest is often the one whose
+        # segments cut the hull, and giving up there abandoned most
+        # relocations (measured: 19 of 48 clusters rejected on segment
+        # clearance alone when only the best slot was tried).
+        L = [float(chain_lengths(chain(homes[rr], pos[rr])).sum())
+             for rr in range(R)]
+        placed = False
+        for dcost, r, i, g in sorted(cands)[:args.reseed_slot_tries]:
+            if budgets is not None and L[r] + dcost > budgets[r] + 1e-6:
+                rej['budget'] += 1
+                continue
+            p_prev = pos[r][i - 1] if i > 0 else homes[r]
+            p_next = pos[r][i + 1] if i < T[r] - 1 else homes[r]
+            seg = _pose_seg_samples(cand_t, p_prev.unsqueeze(0),
+                                    p_next.unsqueeze(0), 4 * args.col_samples)
+            if float(esdf(seg).min()) < margin - 1e-3:
+                rej['seg'] += 1
+                continue
+            trial = [pos[rr].clone() for rr in range(R)]
+            trial[r][i] = cand_t[0]
+            if R > 1 and _max_sep_violation(_chains_of(homes, trial), times,
+                                            args.speed,
+                                            args.d_separation) > 1e-3:
+                rej['sep'] += 1
+                continue
+            pos[r][i] = cand_t[0]
+            rot[r][i] = cand_rot[0]
+            gt_vis[g] = rows[0]
+            n_moved += 1
+            placed = True
+            break
+        if not placed:
+            continue
+    if args.eb_debug:
+        print(f"      [dbg reseed] prey={len(prey)} clusters={n_cl} "
+              f"moved={n_moved} rejects={rej}", flush=True)
+    return n_moved, gt_vis
+
+
 def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                      keep_idx, label="warm", uncovered_idx=None, budgets=None,
-                     audit=None):
+                     audit=None, shorten_first=True, max_vias=8,
+                     reseed=None):
     """Elastic-band coordinate descent over poses (§9.6 solver design #6).
 
     ``audit`` (optional but used by default): callable
@@ -631,7 +770,8 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
           f"{int((req < 0).sum())} (surrogate-blind: only non-degradation is "
           f"asked of them), target margin {args.keep_margin} m")
 
-    n_vias = _insert_vias(pos, rot, view, homes, esdf, args)
+    n_vias = _insert_vias(pos, rot, view, homes, esdf, args,
+                          max_vias=max_vias)
     if n_vias:
         print(f"    [{label}] inserted {n_vias} via waypoint(s): segments of "
               f"the straight warm start ran below the {margin:.2f} m "
@@ -1023,7 +1163,11 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
     L = lengths_now()
     print(f"    [{label}] init: total={sum(L):.1f} m makespan={max(L):.1f} m "
           f"({sum(int(v.sum()) for v in view)} poses + {n_vias} vias)")
-    for rnd in range(args.eb_rounds):
+    # Cold start skips the leading shorten rounds: with almost nothing yet
+    # covered there is no coverage worth protecting and shortening first just
+    # collapses the chain toward its own straight line. Cold goes
+    # expand-then-tighten; warm goes shorten/prune-then-expand-then-tighten.
+    for rnd in range(args.eb_rounds if shorten_first else 0):
         prev_total = sum(lengths_now())
         stall = 0
         for sweep in range(args.eb_sweeps):
@@ -1073,11 +1217,42 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                   f"budgets "
                   + (", ".join(f'{b:.1f} m' for b in budgets)
                      if budgets else "none"))
+        capt_prev, capt_stall, n_reseeded = None, 0, 0
         for sweep in range(args.eb_expand_sweeps):
             a0, c0 = sweep_step(0, expand=True)
             a1, c1 = sweep_step(1, expand=True)
             if gt_vis is not None:
                 claimed_capt = int(gt_vis.any(dim=0).sum()) - floor_count
+                # Gradient capture saturates long before the surface is
+                # covered (no signal toward distant regions). When it does,
+                # hand the slow timescale a turn: relocate valueless poses
+                # onto the largest uncovered clusters, then resume sweeping.
+                capt_stall = (capt_stall + 1 if capt_prev == claimed_capt
+                              else 0)
+                capt_prev = claimed_capt
+                if reseed is not None and capt_stall >= args.reseed_after:
+                    nre, gt_vis = _reseed_pass(
+                        pos, rot, view, homes, esdf, args, gt_vis, audited,
+                        budgets, times, reseed["pts_np"],
+                        reseed["normals_np"], reseed["standoff"])
+                    n_reseeded += nre
+                    capt_stall = 0
+                    if nre:
+                        keep_idx = gt_vis.any(dim=0).nonzero(as_tuple=True)[0]
+                        Mcur = _metric_margins(layer, pts_t, torch.cat(pos),
+                                               torch.cat(rot))
+                        bst = Mcur[torch.cat(view)][:, keep_idx].max(
+                            dim=0).values
+                        req = torch.minimum(torch.full_like(bst, cap_req),
+                                            bst)
+                        claimed_capt = (int(gt_vis.any(dim=0).sum())
+                                        - floor_count)
+                        capt_prev = claimed_capt
+                        print(f"    [{label}] reseed: relocated {nre} pose(s) "
+                              f"to uncovered clusters -> net +{claimed_capt} "
+                              f"pts vs floor", flush=True)
+                    elif a0 + a1 == 0:
+                        break            # neither gradients nor reseed move
             else:
                 claimed_capt += c0 + c1
             L = lengths_now()
@@ -1282,6 +1457,28 @@ def parse_args():
     p.add_argument("--no_expand", action="store_true",
                    help="Disable the coverage-expansion phase.")
     p.add_argument("--eb_expand_sweeps", type=int, default=30)
+    p.add_argument("--cold_expand_sweeps", type=int, default=200,
+                   help="Expand sweeps for the cold arm (it must "
+                        "build all coverage, not top up a warm start).")
+    p.add_argument("--cold_max_vias", type=int, default=40,
+                   help="Via budget per robot for the cold arm: its "
+                        "NN-ordered geometric tour crosses the hull "
+                        "far more often than a VRP route does.")
+    p.add_argument("--reseed_clusters", type=int, default=48,
+                   help="k-means clusters over the still-uncovered "
+                        "surface per reseed pass.")
+    p.add_argument("--reseed_min_cluster", type=int, default=40,
+                   help="Ignore uncovered clusters smaller than this "
+                        "(speckle is not worth a pose).")
+    p.add_argument("--reseed_min_gain", type=int, default=25,
+                   help="Minimum ray-cast-verified new points for a "
+                        "relocation to be proposed.")
+    p.add_argument("--reseed_slot_tries", type=int, default=25,
+                   help="Chain slots tried (cheapest first) when "
+                        "relocating a pose to an uncovered cluster.")
+    p.add_argument("--reseed_after", type=int, default=2,
+                   help="Expand sweeps with no capture progress "
+                        "before the discrete reseed pass fires.")
     p.add_argument("--eb_debug", action="store_true")
     p.add_argument("--eb_trust", type=float, default=0.4,
                    help="Expand trust region: max waypoint displacement "
@@ -1446,6 +1643,18 @@ def main():
 
     modes = [m.strip() for m in args.modes.split(",")]
     arm_chains = {}
+
+    def audit_fn(p, r6):
+        """Pipeline ray-cast rows for arbitrary poses (bool (n, N)).
+
+        The acceptance oracle for the elastic solver: the surrogate proposes,
+        this measures. Every call is counted and reported (§9.7 fairness).
+        """
+        Vb, _ = query.compute_visibility_batch(
+            cp.asarray(p.detach().cpu().numpy(), dtype=cp.float32),
+            cp.asarray(sixd_to_rotmats(r6), dtype=cp.float32))
+        return torch.tensor(cp.asnumpy(Vb).astype(bool), device=device)
+
     if "warm" in modes:
         if args.solver == "elastic":
             # Reference arm: the VRP waypoints joined by straight segments,
@@ -1471,15 +1680,6 @@ def main():
                                          dtype=torch.long, device=device)
             uncov_idx = torch.tensor(np.nonzero(~gt_union)[0],
                                      dtype=torch.long, device=device)
-
-            def audit_fn(p, r6):
-                """Pipeline ray-cast rows for arbitrary poses (bool (n, N))."""
-                Vb, _ = query.compute_visibility_batch(
-                    cp.asarray(p.detach().cpu().numpy(), dtype=cp.float32),
-                    cp.asarray(sixd_to_rotmats(r6), dtype=cp.float32))
-                return torch.tensor(cp.asnumpy(Vb).astype(bool),
-                                    device=device)
-
             pos_w, rot_w, info_w = optimize_elastic(
                 pts_t, layer, homes_t, route_pos, route_rot, esdf, args,
                 keep_idx_full, label="warm", uncovered_idx=uncov_idx,
@@ -1504,7 +1704,6 @@ def main():
               f"clear={res['min_clearance']:.2f} m wall={res['wall_s']:.1f} s")
 
     if "cold" in modes:
-        print(f"[6] COLD joint solve ({args.cold_steps} steps) …")
         standoff = 0.5 * (float(fr["near"]) + float(fr["far"]))
         cp_pos, cp_rot = cold_start(pts_np, normals_np, homes_np,
                                     len(sel_pos), K, standoff, rng)
@@ -1512,14 +1711,51 @@ def main():
                     for p in cp_pos]
         init_rot = [torch.tensor(r, dtype=torch.float32, device=device)
                     for r in cp_rot]
-        steps_saved, lr_saved = args.steps, args.lambda_route
-        args.steps, args.lambda_route = args.cold_steps, args.lambda_route_cold
-        pos_c, rot_c, info_c = optimize_joint(
-            pts_t, layer, homes_t, init_pos, init_rot, esdf, args,
-            "cold", keep_pairs=None)
-        args.steps, args.lambda_route = steps_saved, lr_saved
-        res = evaluate("joint-cold", query, esdf, homes_t, pos_c, rot_c, args)
+        view_c = None
+        if args.solver == "elastic":
+            print("[6] COLD joint solve (elastic band, expand-first) …")
+            # Cold has no baseline coverage to defend: the whole surface is
+            # prey and the run IS the expand phase (then a tighten pass).
+            # Same feasibility invariants, same audit gate, same per-robot
+            # route budgets — only the init and the phase order differ, so
+            # cold and warm are the same solver measured from two starts.
+            res0 = evaluate("cold-init", query, esdf, homes_t,
+                            [p.clone() for p in init_pos],
+                            [r.clone() for r in init_rot], args)
+            res0["wall_s"] = 0.0
+            results.append(res0)
+            print(f"    cold-init (geometric, no ray-casts, unoptimized): "
+                  f"cov={res0['coverage']:.4f} "
+                  f"makespan={res0['makespan']:.1f} m "
+                  f"clear={res0['min_clearance']:.2f} m")
+            all_idx = torch.arange(len(pts_np), dtype=torch.long,
+                                   device=device)
+            sw_saved = args.eb_expand_sweeps
+            args.eb_expand_sweeps = args.cold_expand_sweeps
+            pos_c, rot_c, info_c = optimize_elastic(
+                pts_t, layer, homes_t, init_pos, init_rot, esdf, args,
+                all_idx, label="cold", uncovered_idx=all_idx,
+                budgets=exec_lengths, audit=audit_fn, shorten_first=False,
+                max_vias=args.cold_max_vias,
+                reseed=dict(pts_np=pts_np, normals_np=normals_np,
+                            standoff=standoff))
+            args.eb_expand_sweeps = sw_saved
+            view_c = info_c["view"]
+        else:
+            print(f"[6] COLD joint solve ({args.cold_steps} steps) …")
+            steps_saved, lr_saved = args.steps, args.lambda_route
+            args.steps, args.lambda_route = (args.cold_steps,
+                                             args.lambda_route_cold)
+            pos_c, rot_c, info_c = optimize_joint(
+                pts_t, layer, homes_t, init_pos, init_rot, esdf, args,
+                "cold", keep_pairs=None)
+            args.steps, args.lambda_route = steps_saved, lr_saved
+        res = evaluate("joint-cold", query, esdf, homes_t, pos_c, rot_c, args,
+                       view_list=view_c)
         res["wall_s"] = info_c["wall_s"]
+        for k in ("n_pruned", "n_vias", "claimed_captures", "audited_poses"):
+            if k in info_c:
+                res[k] = info_c[k]
         results.append(res)
         arm_chains["joint-cold"] = [
             chain(homes_t[r], pos_c[r]).cpu().numpy() for r in range(K)]
