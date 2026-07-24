@@ -45,7 +45,7 @@
     "eb_route_reg": 0.3,
     "al_every": 30,
     "col_samples": 10,
-    "sep_samples": 48,
+    "sep_samples": 600,
     "d_separation": 0.8,
     "robot_radius": 0.35,
     "clearance_margin": 0.15,
@@ -66,6 +66,7 @@
         65.57403564453125
       ],
       "min_clearance": NaN,
+      "min_separation": 1.4999998807907104,
       "n_poses": 21,
       "wall_s": NaN
     },
@@ -79,6 +80,12 @@
         63.195228576660156
       ],
       "min_clearance": 0.022646017372608185,
+      "min_separation": 1.5,
+      "mission_time_s": 31.597614288330078,
+      "start_offsets": [
+        0.0,
+        0.0
+      ],
       "n_poses": 21,
       "n_vias": 0,
       "wall_s": 0.0
@@ -93,9 +100,15 @@
         62.02558898925781
       ],
       "min_clearance": 0.5016550421714783,
+      "min_separation": 1.5,
+      "mission_time_s": 31.012794494628906,
+      "start_offsets": [
+        0.0,
+        0.0
+      ],
       "n_poses": 21,
       "n_vias": 2,
-      "wall_s": 11.981519122000464,
+      "wall_s": 9.433183717001157,
       "n_pruned": 1,
       "claimed_captures": 604
     }

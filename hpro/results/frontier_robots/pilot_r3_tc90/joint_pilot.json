@@ -1,7 +1,7 @@
 {
   "args": {
-    "pipeline_dir": "outputs/pilot_tc85",
-    "out": "hpro/results/frontier/pilot_tc85",
+    "pipeline_dir": "outputs/pilot_r3_tc90",
+    "out": "hpro/results/frontier_robots/pilot_r3_tc90",
     "steps": 400,
     "cold_steps": 1200,
     "lambda_route": 0.02,
@@ -58,59 +58,64 @@
   "results": [
     {
       "tag": "pipeline",
-      "coverage": 0.85855,
-      "makespan": 78.11924743652344,
-      "total_length": 149.41900634765625,
+      "coverage": 0.90245,
+      "makespan": 74.30329895019531,
+      "total_length": 209.34283447265625,
       "per_robot": [
-        78.11924743652344,
-        71.29975891113281
+        74.30329895019531,
+        69.58556365966797,
+        65.45397186279297
       ],
       "min_clearance": NaN,
-      "min_separation": 1.4999998807907104,
-      "n_poses": 28,
+      "min_separation": 1.2850594520568848,
+      "n_poses": 35,
       "wall_s": NaN
     },
     {
       "tag": "warm-init",
-      "coverage": 0.85855,
-      "makespan": 77.0009765625,
-      "total_length": 147.91756439208984,
+      "coverage": 0.90245,
+      "makespan": 72.50293731689453,
+      "total_length": 204.81342315673828,
       "per_robot": [
-        77.0009765625,
-        70.91658782958984
+        72.50293731689453,
+        67.84527587890625,
+        64.4652099609375
       ],
-      "min_clearance": 0.8598239421844482,
-      "min_separation": 1.5,
-      "mission_time_s": 38.50048828125,
+      "min_clearance": 0.1327870488166809,
+      "min_separation": 0.7231096029281616,
+      "mission_time_s": 36.251468658447266,
       "start_offsets": [
+        0.0,
         0.0,
         0.0
       ],
-      "n_poses": 28,
+      "n_poses": 35,
       "n_vias": 0,
       "wall_s": 0.0
     },
     {
       "tag": "joint-warm",
-      "coverage": 0.8824,
-      "makespan": 74.54005432128906,
-      "total_length": 141.41533660888672,
+      "coverage": 0.92015,
+      "makespan": 70.02653503417969,
+      "total_length": 195.15130996704102,
       "per_robot": [
-        74.54005432128906,
-        66.87528228759766
+        70.02653503417969,
+        62.93033218383789,
+        62.19444274902344
       ],
-      "min_clearance": 0.8598239421844482,
-      "min_separation": 1.5,
-      "mission_time_s": 37.27002716064453,
+      "min_clearance": 0.46833568811416626,
+      "min_separation": 1.173685908317566,
+      "mission_time_s": 35.013267517089844,
       "start_offsets": [
+        0.0,
         0.0,
         0.0
       ],
-      "n_poses": 28,
-      "n_vias": 0,
-      "wall_s": 6.200855064998905,
-      "n_pruned": 0,
-      "claimed_captures": 477
+      "n_poses": 35,
+      "n_vias": 4,
+      "wall_s": 10.639540971000315,
+      "n_pruned": 1,
+      "claimed_captures": 354
     }
   ]
 }

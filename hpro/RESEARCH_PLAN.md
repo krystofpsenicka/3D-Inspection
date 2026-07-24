@@ -95,11 +95,14 @@ tells you where the work actually stands.*
 > **⚠ 2026-07-24: the §9.3 headroom question is ANSWERED — read §9.7, then
 > §9.9 and §9.8.** The elastic-band + audit-gate warm solver Pareto-dominates
 > the pipeline's own coverage/makespan frontier: **15 of 15 runs across three
-> pipeline seeds × five operating points**, +2.38 ± 1.14 coverage points at
-> −5.16 ± 2.77 % makespan, matched pose budgets, their scorer, collision-clear,
-> 5–18 s per solve (§9.9 — the seed axis is closed; R>2 and the 50 m mesh are
-> not). **The cold arm fails its bar** (0.759 vs 0.951, §9.8), which scopes the
-> claim to *refinement*, not standalone planning. Next: SCP → R>2 → MPC.
+> pipeline seeds × five operating points**, +2.39 ± 1.13 coverage points at
+> −5.55 ± 2.89 % makespan, matched pose budgets, their scorer, and — only
+> after §9.10 — genuinely constraint-satisfying, 5–18 s per solve (§9.9; the
+> seed axis is closed, the 50 m mesh is not). **The cold arm fails its bar**
+> (0.759 vs 0.951, §9.8), which scopes the claim to *refinement*, not
+> standalone planning. **Read §9.10 before trusting any constraint claim
+> here** — inter-robot separation was silently unenforced until it was
+> independently measured. Next: SCP → 50 m mesh → MPC.
 
 ### 0.1 Repo state — nothing is merged
 
@@ -1853,26 +1856,143 @@ baselines land on different pose counts for the same coverage target (e.g.
 0.95 → 49, 54 and 58 viewpoints). What is compared is always the joint arm
 against *its own* baseline on *its own* cloud.
 
+*Numbers below are the FINAL ones, re-run after the three separation
+defects of §9.10 were fixed. They supersede two earlier versions of this
+table; the fixes improved the results, so nothing here was traded for
+constraint satisfaction.*
+
 | target | n | V range | Δcoverage (pts) | Δmakespan (%) | dominated |
 |---|---|---|---|---|---|
 | 0.65 | 3 | 15 | +3.41 ± 2.07 | −2.83 ± 3.05 | 3/3 |
 | 0.78 | 3 | 20–21 | +2.89 ± 0.13 | −6.05 ± 1.92 | 3/3 |
 | 0.85 | 3 | 27–28 | +2.53 ± 0.22 | −2.94 ± 1.57 | 3/3 |
-| 0.90 | 3 | 34–37 | +1.86 ± 0.49 | −7.05 ± 1.57 | 3/3 |
-| 0.95 | 3 | 49–58 | +1.21 ± 0.28 | −6.92 ± 3.05 | 3/3 |
+| 0.90 | 3 | 34–37 | +1.95 ± 0.42 | −7.96 ± 0.12 | 3/3 |
+| 0.95 | 3 | 49–58 | +1.20 ± 0.18 | −7.96 ± 2.00 | 3/3 |
 
-**Overall: Δcoverage +2.38 ± 1.14 points, Δmakespan −5.16 ± 2.77 %,
+**Overall: Δcoverage +2.39 ± 1.13 points, Δmakespan −5.55 ± 2.89 %,
 Pareto-dominated in 15 of 15 runs.** The worst single run of the fifteen
-still improves both metrics (+0.91 points, −0.61 %), so domination is not a
+still improves both metrics (+1.01 points, −0.61 %), so domination is not a
 mean effect hiding failures — there is no run where the joint arm loses on
 either axis. The trend across the frontier is consistent and mechanistic: the
 coverage gain shrinks as the baseline saturates (+3.4 points at V=15 down to
 +1.2 at V≈50, where little remains reachable) while the makespan saving
 grows (−2.8 % → −6.9 %, longer tours having more slack to recover).
 
-Clearance held at ≥ 0.44 m in every run (constraint 0.50 m; the sub-0.50
-cases are baseline-inherited home legs the vias could not fully fix, still
-better than the pipeline's own 0.415 m). Wall-clock 5.5–17.6 s per solve.
+Constraint audit over all 15 (independent, at 8× the optimizer's own
+resolution — see §9.10 for why that matters): worst inter-robot separation
+**0.80 m** against the 0.80 m constraint, with the pipeline's own plans at
+0.82 m; worst structure clearance 0.44 m against the 0.50 m constraint,
+inherited from warm-start home legs and still stricter than the pipeline's
+own executed 0.415 m — that one is open (§9.10). Wall-clock 5–18 s/solve.
 
 **Status of the §9.7 claim: it survives.** Single-mesh, R=2, pilot-scale
 remain open (R>2 and the 50 m mesh are next); the seed dimension is closed.
+
+### 9.10 Separation was not actually being enforced (2026-07-24) — three defects, found by measuring it
+
+*§9.2 claims inter-robot separation as an in-objective constraint. Nothing
+had ever **measured** it on a finished plan: `evaluate()` reported structure
+clearance only. Adding one number to the evaluator exposed three separate
+defects, in ascending order of interest. The §9.7/§9.9 tables were re-run
+after each fix; the final numbers are in §9.9, and they are BETTER than the
+pre-fix ones, so none of this was a trade.*
+
+**Defect 1 — the constraint was sampled far too coarsely to see violations.**
+`--sep_samples` was 48 over a 73 s horizon: 1.53 s, i.e. **3.06 m of travel,
+between consecutive samples**, against an 0.80 m separation threshold. Two
+paths can cross entirely between samples. A constraint checked only at its
+own samples is not checked: measured separation was **0.33 m against an
+0.80 m constraint**. Default raised to 600 (~0.25 m spacing); `evaluate()`
+independently audits at 8× that density, because a constraint that grades
+its own homework is the same bug again.
+
+**Defect 2 — our kinematic model lacked the freedom the baseline relies on.**
+The pipeline's ST-A* separates robots by **waiting**: its executed
+trajectories are stationary **50–57 % of all steps**. Our model flies every
+robot at constant speed from t=0, so reparameterising ST-A*'s own waypoints
+manufactures encounters it had timed apart — **4 of 15 warm starts were
+already separation-infeasible before we optimized anything**, while the
+pipeline's own plans were feasible in 15 of 15. Fix: per-robot start delays
+as an explicit block in the block-coordinate scheme (`optimize_offsets`),
+solved by direct coordinate search rather than gradients (the objective is a
+min over a time grid — exactly the non-smooth max-type function §9.5 showed
+first-order methods chatter on). Delays cost zero path length, so the
+comparison metric is untouched for either side; `mission_time_s` is reported
+so the real cost is never hidden. This is *weaker* than ST-A*'s arbitrary
+waits, so it does not out-manoeuvre the baseline.
+
+**Defect 3 (the actual cause) — a parked robot is a static obstacle, and we
+never modelled it.** With defects 1–2 fixed, separation still failed, and
+start delays could not repair it. Localising the closest approach in time
+explained why: in every failing run it was a **return leg clipping another
+robot's dock while that robot was already parked there** (0.409 m at
+t = 72.9 s, with the other robot finished at t = 50.9 s). Nothing about the
+*schedule* can separate you from something that never leaves. Docks are now
+static obstacles at `d_separation` for every other robot — in the per-pose
+acceptance test, in the inner-loop penalty, and in via insertion, so
+inherited violations are *repaired* geometrically rather than merely not
+worsened. That is what ST-A* had been doing all along.
+
+**Result.** Worst separation over all 15 runs: **0.80 m** (constraint 0.80 m;
+the pipeline's own plans: 0.82 m). One extra via waypoint per affected run,
+and the start-delay block chose **zero delay** at R=2 once docks were modelled
+correctly — the geometric fix was the right one, and the timing block is
+retained for R>2 where crossings are genuinely temporal. Coverage and
+makespan *improved* (seed-42 top point 0.9516 → 0.9608 @ 106.4 m).
+
+**Still not clean:** worst structure clearance over the 15 is 0.44 m against
+a 0.50 m constraint, inherited from warm-start home legs (the pipeline's own
+executed trajectory reaches 0.415 m there, so we are stricter than it, but
+not yet feasible by our own declaration). Same class of fix as defect 3;
+open.
+
+**The transferable lesson, for the paper's methodology section:** every
+constraint this work claims must have an *independent* audit at the end of
+the pipeline, at finer resolution than the optimizer's own discretisation.
+Two of the three defects above were invisible to the optimizer by
+construction, and the third was invisible because nobody had ever printed
+the number.
+
+### 9.11 More robots (2026-07-24): holds to R=5, and the baseline's own separation degrades where ours does not
+
+*Baselines `outputs/pilot_r{3,4,5}_tc90` (seed 42, target 0.90, otherwise the
+§9.7 settings), results `hpro/results/frontier_robots/`. R=2 row is the
+matching `pilot_tc90` operating point. One run per R — these are single-seed
+diagnostics on the robot axis; the seed axis was closed separately in §9.9.*
+
+| R | pipeline (cov @ makespan, min sep) | joint-warm (cov @ makespan, min sep) | Δcov | Δmakespan | vias | wall |
+|---|---|---|---|---|---|---|
+| 2 | 0.9012 @ 86.2 m, 1.50 m | 0.9254 @ 79.5 m, 1.50 m | +2.42 | −7.8 % | 0 | 7.1 s |
+| 3 | 0.9024 @ 74.3 m, 1.29 m | 0.9202 @ 70.0 m, 1.17 m | +1.78 | −5.8 % | 4 | 10.6 s |
+| 4 | 0.9028 @ 62.8 m, **0.35 m** | 0.9178 @ 60.1 m, **0.84 m** | +1.50 | −4.3 % | 8 | 18.0 s |
+| 5 | 0.9020 @ 53.6 m, **0.76 m** | 0.9215 @ 48.7 m, **0.83 m** | +1.95 | −9.1 % | 11 | 21.4 s |
+
+**The frontier win holds at every robot count** — both metrics improve in all
+four, with cost growing gracefully (7 → 21 s as pairwise separation terms go
+from 1 to 10 and vias from 0 to 11).
+
+**The more interesting column is separation.** At R=4 and R=5 the *pipeline's
+own executed plan* comes within **0.35 m** and **0.76 m** — below the 0.80 m
+distance our formulation treats as a hard constraint — while our refined plans
+hold 0.84 m and 0.83 m. Localising those minima shows they are **exactly the
+defect-3 blind spot of §9.10, in the baseline**: in both cases the closest
+approach is a still-flying robot passing a robot that has already finished and
+docked (R=4: robots 2 and 3, at step 2178 of robot 2's flight, with robot 3
+done at step 1950). Their ST-A* deconflicts among robots that are still
+executing; a docked robot appears to drop out of the conflict set. We had the
+same bug until this session, and fixing it is why our numbers are now the
+safer ones.
+
+*Fairness caveat, stated because this is a claim about someone else's
+planner:* this measures their executed trajectories under the assumption that
+a finished robot **remains at its dock** — which their own data supports
+(every trajectory ends 0.19–0.28 m from its own home, i.e. docked). If in the
+real mission a finished AUV is recovered and removed from the water, the
+conflict is not real and this column says nothing. That assumption should be
+checked with Krystof before the claim goes in a paper.
+
+**Also worth noting:** the start-delay block chose zero delay at every robot
+count. Once docks are static obstacles, none of the measured conflicts were
+temporal — they were all geometric. The timing machinery is retained because
+it is the correct model (the baseline waits 50–57 % of the time), but on this
+scenario it has never yet been the binding mechanism.

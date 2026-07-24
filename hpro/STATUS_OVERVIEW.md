@@ -8,9 +8,13 @@
 > open problem it left.
 >
 > **⚠ 2026-07-24: that open problem is solved and the headroom question is
-> answered — read §4e below and RESEARCH_PLAN.md §9.7.** The joint refiner now
-> Pareto-dominates the pipeline's own coverage-vs-makespan frontier at every
-> measured operating point.
+> answered — read §4e below and RESEARCH_PLAN.md §9.7.** The joint refiner
+> Pareto-dominates the pipeline's own coverage-vs-makespan frontier in 15 of
+> 15 runs across three seeds (§4e.0), and holds to 5 robots (§4e.2). Two
+> boundaries found the same day: cold start plateaus 19 points short (§4e.1),
+> so the claim is *refinement*, not standalone planning; and the separation
+> constraint was silently unenforced until it was measured (§4e.2) — read
+> that before trusting any constraint claim here.
 
 *Written for reading alongside the work. The formal evidence document is
 [`RESEARCH_PLAN.md`](RESEARCH_PLAN.md); this file explains the same state in prose,
@@ -365,9 +369,10 @@ even needs different numbers of viewpoints to hit the same coverage target
 (49, 54 and 58 for the 0.95 target).
 
 Across all fifteen runs the joint refiner improved **both** metrics **every
-single time**: on average +2.38 ± 1.14 coverage points at 5.16 ± 2.77 % less
-makespan, and the worst run of the fifteen still gained +0.91 points while
-shaving 0.61 %. There is no run where it lost on either axis, so this is not
+single time**: on average +2.39 ± 1.13 coverage points at 5.55 ± 2.89 % less
+makespan, and the worst run of the fifteen still gained +1.01 points while
+shaving 0.61 %. (These are the final numbers, re-measured after the
+separation fixes in §4e.2 — which improved them.) There is no run where it lost on either axis, so this is not
 an average hiding failures.
 
 The pattern across the frontier makes sense: the coverage gain is largest
@@ -375,6 +380,43 @@ where the baseline has most left to find (+3.4 points at 15 viewpoints,
 falling to +1.2 at ~50, where little reachable surface remains), while the
 makespan saving grows with tour length (2.8 % → 6.9 %). The seed question is
 now settled; what remains open is more robots and the full-size mesh.
+
+### 4e.2 · The separation constraint was not real until today (plan §9.10, §9.11)
+
+The paper's claim includes keeping robots apart. Nobody had ever *measured*
+whether finished plans actually did — the evaluator reported distance to the
+structure but not distance between robots. Printing that one number exposed
+three problems stacked on top of each other:
+
+1. **The check was too coarse to see anything.** Separation was tested at 48
+   moments spread over the whole mission — 3 m of travel apart — against an
+   80 cm rule. Two robots can pass each other completely between checks. Real
+   separation was 33 cm.
+2. **Our robots could not wait, and the baseline's do — constantly.** The
+   pipeline's robots are stationary for 50–57 % of every mission; that is how
+   its planner keeps them apart. Our model flew everyone at a fixed speed from
+   the same instant, so replaying its own routes created near-misses it had
+   deliberately timed away. Robots can now be given staggered departures.
+3. **The real culprit: a parked robot is an obstacle, and we had not said so.**
+   Every failure turned out to be a robot on its way home clipping *another
+   robot's dock* while that robot was already sitting there. No amount of
+   scheduling helps against something that never moves. Docks are now
+   obstacles like any other, and the route bends around them.
+
+After the fixes, the worst separation across all fifteen runs is exactly at
+the 80 cm limit, and coverage and makespan both *improved* — so nothing was
+traded away to get there.
+
+The same investigation, extended to more robots (§9.11), produced the
+sharpest result of the session. With 3, 4 and 5 robots the refiner still wins
+on both metrics. But at 4 and 5 robots **the pipeline's own plans come within
+35 cm and 76 cm** — under its own safety distance — while ours hold 84 and
+83 cm. The cause is the identical blind spot we had just fixed in ourselves:
+its planner stops deconflicting a robot once that robot has finished and
+docked. Worth flagging: this reads their trajectories assuming a finished AUV
+stays in the water at its dock (which their data shows it does). If finished
+vehicles are recovered instead, the observation does not apply — that is a
+question for Krystof before it goes anywhere near a paper.
 
 ### 4e.1 · Cold start: the honest negative (plan §9.8)
 
@@ -412,18 +454,23 @@ plainly in the paper rather than leaving for a reviewer to ask about.
    poses is the open idea if we ever want the standalone version.
 3. ~~Robustness sweep across seeds~~ — **done (§4e.0): 15/15, it holds.**
    Still open on this axis: R > 2 robots and the 50 m mesh.
-4. **SCP / coordinated wave moves** — the measured front-advance limitation
+4. ~~R > 2 robots~~ — **done (§4e.2): holds to 5 robots**, and our plans are
+   measurably safer than the baseline's there. The 50 m mesh is still open.
+5. **SCP / coordinated wave moves** — the measured front-advance limitation
    says exactly what a second-order method could still win.
-5. Then: MPC/receding-horizon mode, theory framing, and the paper skeleton.
+6. Then: MPC/receding-horizon mode, theory framing, and the paper skeleton.
    The parked online results (§4.3/§4c) stay citable as history.
 
 **Overall state in one sentence (2026-07-24, end of day):** the joint-OCP
-direction has passed its go/no-go and survived its robustness check — an
+direction has passed its go/no-go and survived its robustness checks — an
 elastic-band coordinate-descent refiner with ray-cast-audited acceptance
-improves both coverage and makespan over the thesis pipeline in 15 of 15
-runs across three seeds and five operating points (matched pose and route
-budgets, their scorer, collision-clear, 5–18 s per solve) — while cold start
-plateaus 19 points short, which scopes the paper to *refining* plans rather
-than replacing the planner; next up are more robots, the full-size mesh, and
-an SCP-style upgrade for the coordinated moves coordinate descent provably
-cannot make.
+improves both coverage and makespan over the thesis pipeline in 15 of 15 runs
+across three seeds and five operating points, and in all four robot counts up
+to five (matched pose and route budgets, their scorer, and now genuinely
+constraint-satisfying, 5–21 s per solve) — bounded by two honest negatives
+found the same day: cold start plateaus 19 points short, scoping the paper to
+*refining* plans rather than replacing the planner, and the separation
+constraint turned out to be unenforced until it was independently measured,
+which is now the methodological rule for every constraint this work claims;
+next up are the full-size mesh and an SCP-style upgrade for the coordinated
+moves coordinate descent provably cannot make.

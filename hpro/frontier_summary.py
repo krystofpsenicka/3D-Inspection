@@ -73,7 +73,8 @@ def main():
     seeds = sorted({r["seed"] for r in runs})
 
     print(f"{'run':<18} {'seed':>4} {'arm':<12} {'cov':>7} {'makespan':>9} "
-          f"{'total':>8} {'poses':>6} {'vias':>5} {'clear':>6} {'wall s':>7}")
+          f"{'total':>8} {'poses':>6} {'vias':>5} {'clear':>6} {'sep':>6} "
+          f"{'wall s':>7}")
     for r in sorted(runs, key=lambda r: (r["seed"], r["tc"])):
         for tag in ("pipeline", "joint-warm"):
             v = r["by"][tag]
@@ -81,6 +82,7 @@ def main():
                   f"{v['coverage']:>7.4f} {v['makespan']:>8.1f}m "
                   f"{v['total_length']:>7.1f}m {v['n_poses']:>6d} "
                   f"{v.get('n_vias', 0):>5d} {v['min_clearance']:>6.2f} "
+                  f"{v.get('min_separation', float('nan')):>6.2f} "
                   f"{v['wall_s']:>7.1f}")
         p, j = r["by"]["pipeline"], r["by"]["joint-warm"]
         print(f"{'':<18} {'':>4} {'Δ':<12} {j['coverage']-p['coverage']:>+7.4f} "
@@ -106,6 +108,19 @@ def main():
               f"{statistics.mean(dmk):>+11.2f} ± {sd(dmk):<6.2f} "
               f"{dom:>5d}/{len(grp):<4d}")
         agg_rows.append((tc, dcov, dmk, dom, len(grp)))
+
+    # Constraint audit: separation and clearance are claimed as constraints,
+    # so the worst case over all runs is the number that matters, not a mean.
+    seps = [r["by"]["joint-warm"].get("min_separation") for r in runs]
+    seps = [s for s in seps if s is not None and s == s]
+    base_seps = [r["by"]["pipeline"].get("min_separation") for r in runs]
+    base_seps = [s for s in base_seps if s is not None and s == s]
+    clears = [r["by"]["joint-warm"]["min_clearance"] for r in runs]
+    if seps:
+        print(f"\nconstraint audit (worst over {len(seps)} runs): "
+              f"min inter-robot separation {min(seps):.2f} m "
+              f"(pipeline's own: {min(base_seps):.2f} m), "
+              f"min clearance {min(clears):.2f} m")
 
     all_dcov = [c for _, dc, _, _, _ in agg_rows for c in dc]
     all_dmk = [m for _, _, dm, _, _ in agg_rows for m in dm]

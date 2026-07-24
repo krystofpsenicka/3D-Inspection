@@ -200,16 +200,29 @@ def segment_samples(ch: torch.Tensor, per_seg: int) -> torch.Tensor:
 
 
 def positions_at_times(ch: torch.Tensor, times: torch.Tensor,
-                       speed: float) -> torch.Tensor:
-    """Robot position at global times, flying `ch` at constant `speed`.
+                       speed: float, offset: float = 0.0) -> torch.Tensor:
+    """Robot position at global times, flying `ch` at constant `speed` after
+    waiting `offset` seconds at its home.
 
     Differentiable w.r.t. the chain positions (segment index selection is
-    detached, as in any piecewise-linear interpolation). Past the end of the
-    path the robot parks at the final position.
+    detached, as in any piecewise-linear interpolation). Before departure the
+    robot sits at home; past the end of the path it parks at the final
+    position.
+
+    The offset exists because the baseline uses this freedom heavily and we
+    otherwise cannot: the pipeline's ST-A* separates robots by *waiting* —
+    its executed trajectories are stationary 50–57 % of all steps — while a
+    constant-speed reparameterisation of the same waypoints has no way to
+    express that, and manufactures encounters ST-A* had timed apart
+    (measured: 4 of 15 warm starts infeasible on separation before any
+    optimization). Start offsets are strictly weaker than arbitrary waits,
+    so this does not out-manoeuvre the baseline; and they leave path length
+    — the metric both sides are compared on — untouched.
     """
     seg = chain_lengths(ch)                              # (M,)
     cum = torch.cat([seg.new_zeros(1), torch.cumsum(seg, 0)])   # (M+1,)
-    s = (times * speed).clamp(max=float(cum[-1].detach()))
+    s = ((times - offset) * speed).clamp(min=0.0,
+                                         max=float(cum[-1].detach()))
     idx = torch.searchsorted(cum.detach(), s.detach(), right=True) - 1
     idx = idx.clamp(0, len(seg) - 1)
     frac = ((s - cum[idx]) / seg[idx].clamp_min(1e-9)).clamp(0.0, 1.0)
@@ -239,14 +252,50 @@ def _chains_of(homes, pos_list):
     return [chain(homes[r], pos_list[r]) for r in range(len(pos_list))]
 
 
-def _max_sep_violation(chains, times, speed, d_sep) -> float:
+def _max_sep_violation(chains, times, speed, d_sep, offsets=None) -> float:
     v = 0.0
+    off = offsets if offsets is not None else [0.0] * len(chains)
     for a in range(len(chains)):
         for b in range(a + 1, len(chains)):
-            pa = positions_at_times(chains[a], times, speed)
-            pb = positions_at_times(chains[b], times, speed)
+            pa = positions_at_times(chains[a], times, speed, off[a])
+            pb = positions_at_times(chains[b], times, speed, off[b])
             v = max(v, float((d_sep - (pa - pb).norm(dim=1)).max()))
     return max(v, 0.0)
+
+
+def optimize_offsets(chains, times, speed, d_sep, lengths, grid=48,
+                     rounds=3):
+    """Choose per-robot start delays that de-conflict the schedule.
+
+    A separate block in the block-coordinate scheme: offsets affect ONLY the
+    separation constraint (never coverage, never path length), so they are
+    solved by direct coordinate search rather than by gradients — the
+    objective in this block is a min over a time grid, which is exactly the
+    non-smooth max-type function first-order methods handle worst (§9.5's
+    lesson about chattering argmaxes).
+
+    Robot 0's departure is pinned at t=0 (only relative timing matters).
+    Returns (offsets, max_violation) with offsets in seconds.
+    """
+    R = len(chains)
+    if R < 2:
+        return [0.0] * R, 0.0
+    span = max(lengths) / speed
+    offsets = [0.0] * R
+    best = _max_sep_violation(chains, times, speed, d_sep, offsets)
+    for _ in range(rounds):
+        improved = False
+        for r in range(1, R):
+            cur = offsets[r]
+            for cand in np.linspace(0.0, span, grid):
+                offsets[r] = float(cand)
+                v = _max_sep_violation(chains, times, speed, d_sep, offsets)
+                if v < best - 1e-6:
+                    best, cur, improved = v, float(cand), True
+            offsets[r] = cur
+        if not improved or best <= 0.0:
+            break
+    return offsets, best
 
 
 def _pose_seg_samples(x, prev, nxt, per_seg):
@@ -257,11 +306,34 @@ def _pose_seg_samples(x, prev, nxt, per_seg):
     return torch.cat([s1, s2], dim=1)
 
 
-def _pose_col_violation(esdf, x, prev, nxt, margin, per_seg):
-    """(Vm,) worst clearance violation over each pose's two adjacent segments."""
+def _dock_violation(samples, docks, d_sep):
+    """(Vm,) worst encroachment on another robot's dock.
+
+    A robot that has finished is parked at its home for the rest of the
+    mission, so its dock is a *static* obstacle to everyone else — no
+    schedule can separate you from something that never leaves. This was
+    the actual cause of the separation failures measured on 2026-07-24:
+    the closest approach in every failing run was a return leg clipping the
+    other robot's home while that robot was already parked there (e.g.
+    0.409 m at t=72.9 s with the other robot done at t=50.9 s), which is why
+    start-delay optimization could not repair it.
+
+    samples (Vm, S, 3), docks (Vm, H, 3) -> (Vm,)
+    """
+    if docks is None or docks.shape[1] == 0:
+        return samples.new_zeros(samples.shape[0])
+    d = (samples.unsqueeze(2) - docks.unsqueeze(1)).norm(dim=-1)  # (Vm,S,H)
+    return F.relu(d_sep - d).amax(dim=2).amax(dim=1)
+
+
+def _pose_col_violation(esdf, x, prev, nxt, margin, per_seg,
+                        docks=None, d_sep=0.0):
+    """(Vm,) worst violation over each pose's two adjacent segments: static
+    structure clearance, plus encroachment on other robots' docks."""
     s = torch.cat([_pose_seg_samples(x, prev, nxt, per_seg),
                    x.unsqueeze(1)], dim=1)
-    return F.relu(margin - esdf(s)).amax(dim=1)
+    v = F.relu(margin - esdf(s)).amax(dim=1)
+    return torch.maximum(v, _dock_violation(s, docks, d_sep))
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +565,8 @@ def _prune_pass(pos, rot, view, homes, layer, pts_t, esdf, args, keep_idx,
     return n_removed, gt_vis
 
 
-def _insert_vias(pos, rot, view, homes, esdf, args, max_vias=8):
+def _insert_vias(pos, rot, view, homes, esdf, args, max_vias=8,
+                 use_docks=True):
     """Insert route-only via waypoints into segments that violate clearance.
 
     The analogue of the pipeline's ST-A* detours: a via carries no visibility
@@ -513,21 +586,42 @@ def _insert_vias(pos, rot, view, homes, esdf, args, max_vias=8):
             ch = chain(homes[r], pos[r])
             s = segment_samples(ch, 40).reshape(len(ch) - 1, 40, 3)
             with torch.no_grad():
-                d = esdf(s)
-            seg_min, seg_arg = d.min(dim=1)
-            viol = (seg_min < margin - 1e-3).nonzero(as_tuple=True)[0]
+                # Slack against BOTH static obstacles: the structure, and
+                # other robots' docks (a parked robot never moves, so this
+                # is a clearance problem, not a scheduling one).
+                slack = d = esdf(s) - margin
+                if use_docks and len(homes) > 1:
+                    others = homes[[o for o in range(len(homes)) if o != r]]
+                    dd_ = (s.unsqueeze(2) - others.view(1, 1, -1, 3)
+                           ).norm(dim=-1).amin(dim=2)
+                    slack = torch.minimum(slack, dd_ - args.d_separation)
+            seg_min, seg_arg = slack.min(dim=1)
+            viol = (seg_min < -1e-3).nonzero(as_tuple=True)[0]
             if len(viol) == 0:
                 break
             k = int(viol[0])
             x = s[k, int(seg_arg[k])].detach().clone()
+            others = (homes[[o for o in range(len(homes)) if o != r]]
+                      if use_docks and len(homes) > 1 else None)
             for _ in range(30):
                 xx = x.unsqueeze(0).clone().requires_grad_(True)
                 dd = esdf(xx)
-                if float(dd) >= margin + 0.1:
-                    break
-                g = torch.autograd.grad(dd.sum(), xx)[0][0]
-                x = (x + g / g.norm().clamp_min(1e-6)
-                     * float(margin + 0.1 - dd) * 1.2).detach()
+                need_struct = float(margin + 0.1 - dd)
+                if need_struct > 0.0:
+                    g = torch.autograd.grad(dd.sum(), xx)[0][0]
+                    x = (x + g / g.norm().clamp_min(1e-6)
+                         * need_struct * 1.2).detach()
+                    continue
+                if others is not None:
+                    dv = x.unsqueeze(0) - others                # (H, 3)
+                    dn = dv.norm(dim=1)
+                    j = int(dn.argmin())
+                    need_dock = float(args.d_separation + 0.1 - dn[j])
+                    if need_dock > 0.0:      # push radially off the dock
+                        x = (x + dv[j] / dn[j].clamp_min(1e-6)
+                             * need_dock * 1.2).detach()
+                        continue
+                break
             if len(pos[r]):
                 ri = min(k, len(pos[r]) - 1)
                 rrow = rot[r][ri:ri + 1]
@@ -808,9 +902,13 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
         mov = torch.tensor(mov_l, dtype=torch.long, device=device)
         fix_mask = torch.ones(V, dtype=torch.bool, device=device)
         fix_mask[mov] = False
+        rob_of = np.asarray(rob_l)
+        # Other robots' docks, per mover: static obstacles at d_separation.
+        docks = (torch.stack([homes[[o for o in range(R) if o != rr]]
+                              for rr in rob_of]) if R > 1 else None)
         return dict(T=T, off=off, all_pos=all_pos, all_rot=all_rot,
                     view_all=torch.cat(view), mov=mov,
-                    rob_of=np.asarray(rob_l), fix_mask=fix_mask,
+                    rob_of=rob_of, fix_mask=fix_mask, docks=docks,
                     prev=torch.stack(prev_l), nxt=torch.stack(nxt_l))
 
     def responsibilities(sc):
@@ -843,6 +941,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
         mov, prev, nxt = sc["mov"], sc["prev"], sc["nxt"]
         all_pos, all_rot = sc["all_pos"], sc["all_rot"]
         view_all, fix_mask, off = sc["view_all"], sc["fix_mask"], sc["off"]
+        docks = sc["docks"]
         Vm = len(mov)
         view_mov = view_all[mov]
 
@@ -860,7 +959,8 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
             old_route = ((all_pos[mov] - prev).norm(dim=1)
                          + (all_pos[mov] - nxt).norm(dim=1))
             old_cv = _pose_col_violation(esdf, all_pos[mov], prev, nxt,
-                                         margin, args.col_samples)
+                                         margin, args.col_samples,
+                                         docks, args.d_separation)
             sep_before = (_max_sep_violation(_chains_of(homes, pos), times,
                                              args.speed, args.d_separation)
                           if R > 1 else 0.0)
@@ -929,6 +1029,10 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 gain = gm[view_mov].sum()
             s = _pose_seg_samples(x, prev, nxt, args.col_samples)
             pen = pen + F.relu(margin + args.eb_slack - esdf(s)).square().sum()
+            if docks is not None:
+                dd = (s.unsqueeze(2) - docks.unsqueeze(1)).norm(dim=-1)
+                pen = pen + F.relu(args.d_separation + args.eb_slack
+                                   - dd).square().sum()
             if R > 1 or (expand and budgets is not None):
                 full = all_pos.clone()
                 full[mov] = x
@@ -969,6 +1073,10 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 opt2.zero_grad()
                 s = _pose_seg_samples(x, prev, nxt, args.col_samples)
                 pen = F.relu(margin + args.eb_slack - esdf(s)).square().sum()
+                if docks is not None:
+                    dd = (s.unsqueeze(2) - docks.unsqueeze(1)).norm(dim=-1)
+                    pen = pen + F.relu(args.d_separation + args.eb_slack
+                                       - dd).square().sum()
                 if float(pen) <= 1e-10:
                     break
                 (args.eb_mu * pen).backward()
@@ -995,7 +1103,8 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 new_kv = torch.zeros(Vm, device=device)
             new_route = (xd - prev).norm(dim=1) + (xd - nxt).norm(dim=1)
             new_cv = _pose_col_violation(esdf, xd, prev, nxt, margin,
-                                         args.col_samples)
+                                         args.col_samples, docks,
+                                         args.d_separation)
             old_v = torch.maximum(old_kv, old_cv)
             new_v = torch.maximum(new_kv, new_cv)
             if expand:
@@ -1293,6 +1402,19 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 print(f"    [{label}] post-expand prune: removed {npr} poses "
                       f"-> total={sum(L):.1f} m makespan={max(L):.1f} m")
 
+    # Timing block, last: with the geometry settled, choose start delays that
+    # de-conflict the schedule. Path length (the comparison metric) is
+    # untouched by this; mission time is reported so the cost is visible.
+    L = lengths_now()
+    offsets, sep_viol = optimize_offsets(_chains_of(homes, pos), times,
+                                         args.speed, args.d_separation, L)
+    if R > 1:
+        print(f"    [{label}] timing block: start delays "
+              + ", ".join(f"{o:.1f} s" for o in offsets)
+              + f" -> separation violation {sep_viol:.3f} m "
+              f"(was {_max_sep_violation(_chains_of(homes, pos), times, args.speed, args.d_separation):.3f} m "
+              f"with simultaneous departure)")
+
     wall = time.perf_counter() - t0
     if gt_vis is not None:
         print(f"    [{label}] audit gate: {audit_count[0]} poses ray-cast "
@@ -1300,7 +1422,8 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
     return pos, rot, dict(wall_s=wall, trace=log, n_pruned=n_pruned_total,
                           n_vias=n_vias, view=view,
                           claimed_captures=claimed_capt,
-                          audited_poses=audit_count[0])
+                          audited_poses=audit_count[0],
+                          offsets=offsets)
 
 
 def cold_start(pts_np, normals_np, homes_np, n_poses, R, standoff, rng):
@@ -1370,7 +1493,7 @@ def hard_coverage(query, positions_np, rotmats_np):
 
 
 def evaluate(tag, query, esdf_np_fn, homes_t, pos_list, rot_list, args,
-             view_list=None):
+             view_list=None, offsets=None):
     """Score by the pipeline's own machinery. Coverage uses only VIEW poses
     (via waypoints are path, not viewpoints — the analogue of ST-A* detour
     points); lengths and clearance use the full chains including vias."""
@@ -1385,9 +1508,31 @@ def evaluate(tag, query, esdf_np_fn, homes_t, pos_list, rot_list, args,
     lengths = [float(chain_lengths(c).sum()) for c in chains]
     dense = torch.cat([segment_samples(c, 40) for c in chains])
     min_clear = float(esdf_np_fn(dense).min())
+    # Inter-robot separation on a common time grid, denser than the one the
+    # optimizer constrains (a constraint checked only at its own samples is
+    # not checked). Reported, never repaired — same discipline as clearance.
+    off = offsets if offsets is not None else [0.0] * R
+    min_sep = float("inf")
+    if R > 1:
+        with torch.no_grad():
+            t_max = 1.05 * (max(off) + max(lengths) / args.speed)
+            times = torch.linspace(0.0, t_max, 8 * args.sep_samples,
+                                   device=vpos.device)
+            for a in range(R):
+                for b in range(a + 1, R):
+                    pa = positions_at_times(chains[a], times, args.speed,
+                                            off[a])
+                    pb = positions_at_times(chains[b], times, args.speed,
+                                            off[b])
+                    min_sep = min(min_sep, float((pa - pb).norm(dim=1).min()))
+    # Mission time includes any start delay, so the timing block's cost is
+    # never hidden behind the path-length metric.
+    mission_time = max(off[r] + lengths[r] / args.speed for r in range(R))
     return dict(tag=tag, coverage=cov, makespan=max(lengths),
                 total_length=sum(lengths), per_robot=lengths,
-                min_clearance=min_clear, n_poses=int(vpos.shape[0]),
+                min_clearance=min_clear, min_separation=min_sep,
+                mission_time_s=mission_time, start_offsets=list(off),
+                n_poses=int(vpos.shape[0]),
                 n_vias=sum(len(p) for p in pos_list) - int(vpos.shape[0]))
 
 
@@ -1503,7 +1648,15 @@ def parse_args():
                         "only keeps chains taut).")
     p.add_argument("--al_every", type=int, default=30)
     p.add_argument("--col_samples", type=int, default=10)
-    p.add_argument("--sep_samples", type=int, default=48)
+    p.add_argument("--sep_samples", type=int, default=600,
+                   help="Time samples for the inter-robot separation "
+                        "constraint. Must be fine enough that a violation "
+                        "cannot hide between samples: at 48 (the pilot's "
+                        "original value) consecutive samples were 3.1 m of "
+                        "travel apart, so two paths could cross entirely "
+                        "unseen and the constraint was effectively "
+                        "unenforced (measured: 0.33 m achieved against an "
+                        "0.80 m constraint). 600 gives ~0.25 m spacing.")
     p.add_argument("--d_separation", type=float, default=0.8)
     p.add_argument("--robot_radius", type=float, default=0.35)
     p.add_argument("--clearance_margin", type=float, default=0.15)
@@ -1597,12 +1750,27 @@ def main():
         t = np.asarray(traj)[:, :3]
         exec_lengths.append(float(np.linalg.norm(np.diff(t, axis=0), axis=1).sum())
                             if len(t) > 1 else 0.0)
+    # The pipeline's own separation, on its own space-time grid: ST-A* plans
+    # in space-time, so its trajectories are already synchronised per step
+    # (a robot that finishes early parks at its last pose). This is the
+    # number our AL separation constraint has to be judged against.
+    trajs = [np.asarray(t)[:, :3] for t in data["exec_result"].all_traj_positions]
+    base_sep = float("inf")
+    n_steps = max(len(t) for t in trajs)
+    padded = [np.vstack([t, np.repeat(t[-1:], n_steps - len(t), axis=0)])
+              if len(t) < n_steps else t for t in trajs]
+    for a in range(K):
+        for b in range(a + 1, K):
+            base_sep = min(base_sep, float(np.linalg.norm(
+                padded[a] - padded[b], axis=1).min()))
     results = [dict(tag="pipeline", coverage=base_cov,
                     makespan=max(exec_lengths), total_length=sum(exec_lengths),
                     per_robot=exec_lengths, min_clearance=float("nan"),
+                    min_separation=base_sep,
                     n_poses=len(sel_pos), wall_s=float("nan"))]
     print(f"    baseline: cov={base_cov:.4f} makespan={max(exec_lengths):.1f} m "
-          f"total={sum(exec_lengths):.1f} m ({len(sel_pos)} poses)")
+          f"total={sum(exec_lengths):.1f} m ({len(sel_pos)} poses), "
+          f"min inter-robot separation {base_sep:.2f} m")
 
     # Warm start: per-robot ordered waypoints from the VRP routes.
     route_pos, route_rot = [], []
@@ -1692,7 +1860,7 @@ def main():
                 "warm", keep_pairs=keep_pairs)
             view_w = None
         res = evaluate("joint-warm", query, esdf, homes_t, pos_w, rot_w, args,
-                       view_list=view_w)
+                       view_list=view_w, offsets=info_w.get("offsets"))
         res["wall_s"] = info_w["wall_s"]
         for k in ("n_pruned", "n_vias", "claimed_captures"):
             if k in info_w:
@@ -1751,7 +1919,7 @@ def main():
                 "cold", keep_pairs=None)
             args.steps, args.lambda_route = steps_saved, lr_saved
         res = evaluate("joint-cold", query, esdf, homes_t, pos_c, rot_c, args,
-                       view_list=view_c)
+                       view_list=view_c, offsets=info_c.get("offsets"))
         res["wall_s"] = info_c["wall_s"]
         for k in ("n_pruned", "n_vias", "claimed_captures", "audited_poses"):
             if k in info_c:
@@ -1770,10 +1938,11 @@ def main():
     print(f"\n=== headroom pilot (lambda_route={args.lambda_route}, "
           f"alpha={args.alpha}) ===")
     print(f"{'arm':<12} {'coverage':>9} {'makespan':>9} {'total':>8} "
-          f"{'minclear':>9} {'poses':>6} {'wall s':>7}")
+          f"{'minclear':>9} {'minsep':>8} {'poses':>6} {'wall s':>7}")
     for r in results:
         print(f"{r['tag']:<12} {r['coverage']:>9.4f} {r['makespan']:>8.1f}m "
               f"{r['total_length']:>7.1f}m {r['min_clearance']:>8.2f}m "
+              f"{r.get('min_separation', float('nan')):>7.2f}m "
               f"{r['n_poses']:>6d} {r['wall_s']:>7.1f}")
 
     plot(results, pts_np, homes_np, data, args, arm_chains)

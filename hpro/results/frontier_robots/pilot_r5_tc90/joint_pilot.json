@@ -1,7 +1,7 @@
 {
   "args": {
-    "pipeline_dir": "outputs/pilot_tc85",
-    "out": "hpro/results/frontier/pilot_tc85",
+    "pipeline_dir": "outputs/pilot_r5_tc90",
+    "out": "hpro/results/frontier_robots/pilot_r5_tc90",
     "steps": 400,
     "cold_steps": 1200,
     "lambda_route": 0.02,
@@ -58,59 +58,74 @@
   "results": [
     {
       "tag": "pipeline",
-      "coverage": 0.85855,
-      "makespan": 78.11924743652344,
-      "total_length": 149.41900634765625,
+      "coverage": 0.902,
+      "makespan": 53.60834503173828,
+      "total_length": 233.74175262451172,
       "per_robot": [
-        78.11924743652344,
-        71.29975891113281
+        53.60834503173828,
+        46.16667938232422,
+        41.601898193359375,
+        43.6387939453125,
+        48.726036071777344
       ],
       "min_clearance": NaN,
-      "min_separation": 1.4999998807907104,
-      "n_poses": 28,
+      "min_separation": 0.7636595964431763,
+      "n_poses": 36,
       "wall_s": NaN
     },
     {
       "tag": "warm-init",
-      "coverage": 0.85855,
-      "makespan": 77.0009765625,
-      "total_length": 147.91756439208984,
+      "coverage": 0.902,
+      "makespan": 51.14208221435547,
+      "total_length": 228.84099578857422,
       "per_robot": [
-        77.0009765625,
-        70.91658782958984
+        51.14208221435547,
+        45.22230529785156,
+        39.99825668334961,
+        43.80147933959961,
+        48.67687225341797
       ],
-      "min_clearance": 0.8598239421844482,
-      "min_separation": 1.5,
-      "mission_time_s": 38.50048828125,
+      "min_clearance": -0.3587488532066345,
+      "min_separation": 0.7596727609634399,
+      "mission_time_s": 25.571041107177734,
       "start_offsets": [
+        0.0,
+        0.0,
+        0.0,
         0.0,
         0.0
       ],
-      "n_poses": 28,
+      "n_poses": 36,
       "n_vias": 0,
       "wall_s": 0.0
     },
     {
       "tag": "joint-warm",
-      "coverage": 0.8824,
-      "makespan": 74.54005432128906,
-      "total_length": 141.41533660888672,
+      "coverage": 0.92155,
+      "makespan": 48.742828369140625,
+      "total_length": 216.65853881835938,
       "per_robot": [
-        74.54005432128906,
-        66.87528228759766
+        48.742828369140625,
+        42.19252014160156,
+        37.286048889160156,
+        42.23686599731445,
+        46.20027542114258
       ],
-      "min_clearance": 0.8598239421844482,
-      "min_separation": 1.5,
-      "mission_time_s": 37.27002716064453,
+      "min_clearance": 0.5139304399490356,
+      "min_separation": 0.8314277529716492,
+      "mission_time_s": 24.371414184570312,
       "start_offsets": [
+        0.0,
+        0.0,
+        0.0,
         0.0,
         0.0
       ],
-      "n_poses": 28,
-      "n_vias": 0,
-      "wall_s": 6.200855064998905,
-      "n_pruned": 0,
-      "claimed_captures": 477
+      "n_poses": 36,
+      "n_vias": 11,
+      "wall_s": 21.43757463900147,
+      "n_pruned": 5,
+      "claimed_captures": 391
     }
   ]
 }
