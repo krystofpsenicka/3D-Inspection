@@ -6,6 +6,11 @@
 > pipeline. The online belief-update experiments described below (§4.3–§4c) are
 > parked, not retracted. §4d also records what the first pilot built and the one
 > open problem it left.
+>
+> **⚠ 2026-07-24: that open problem is solved and the headroom question is
+> answered — read §4e below and RESEARCH_PLAN.md §9.7.** The joint refiner now
+> Pareto-dominates the pipeline's own coverage-vs-makespan frontier at every
+> measured operating point.
 
 *Written for reading alongside the work. The formal evidence document is
 [`RESEARCH_PLAN.md`](RESEARCH_PLAN.md); this file explains the same state in prose,
@@ -295,20 +300,77 @@ exploitation = the analysis; guide/warm-start = the MPC mode's internals).
 **The headroom question — can joint optimization actually beat the decomposition — is
 therefore still open**, and it is the go/no-go for this whole direction.
 
+## 4e · Update 2026-07-24: the inner solver works, and the headroom is real
+
+The §4d open problem — an optimizer that can actually move a feasible
+multi-robot tour — was solved by the design queued last session:
+**elastic-band coordinate descent**. Poses are improved in alternating
+odd/even half-sweeps, so each moving pose's neighbours stand still: the
+gradient tug-of-war that sank all five §4d formulations simply cannot occur.
+Each move then has to pass a per-pose *acceptance test* before it is kept.
+
+Three further mechanisms made it honest, each forced by a measured failure:
+
+- **Via waypoints.** Route-only points (not viewpoints — the analogue of the
+  pipeline's ST-A* detours) bend chain segments around the hull. With them,
+  every result is collision-clear to 0.50 m — stricter than the pipeline's
+  own executed trajectory manages (0.415 m) on the same leg.
+- **The audit gate.** The surrogate's job is gradients; the pipeline's own
+  ray-caster gets the last word: every accepted move is re-audited and the
+  least valuable reverted until true coverage stays above the baseline
+  floor. This became necessary when surrogate-only invariants leaked real
+  coverage (0.9507 → 0.9483) — the z-buffer *claims* 831 of the 985
+  uncovered points are already visible, so they are invisible to both its
+  gradients and its constraints. It costs 30–310 audited poses per run; the
+  pipeline's own planning ray-casts 600.
+- **Small steps, verified trades.** A trust region keeps each move a small
+  lean (big dives abandon old coverage and get reverted wholesale), and a
+  move may only be kept if its *net* ray-cast effect — new points captured
+  minus sole-covered points dropped — is non-negative, with route spending
+  budget-capped per robot at the baseline's own executed lengths.
+
+**The result** (each row: the pipeline run at its own coverage target, then
+the joint refiner warm-started from it — same pose count, same route budget,
+scored by the pipeline's ray-caster):
+
+| V | pipeline | joint refinement | Δ |
+|---|---|---|---|
+| 15 | 0.662 @ 54.0 m | 0.673 @ 53.2 m | +1.1 pts, −1.5 % |
+| 20 | 0.781 @ 67.4 m | 0.810 @ 61.8 m | +2.9 pts, −8.3 % |
+| 28 | 0.859 @ 78.1 m | 0.882 @ 74.5 m | +2.4 pts, −4.6 % |
+| 35 | 0.901 @ 86.2 m | 0.925 @ 79.5 m | +2.4 pts, −7.8 % |
+| 49 | 0.951 @ 113.0 m | 0.960 @ 108.7 m | +0.9 pts, −3.8 % |
+
+Every point improves **both** metrics at once; at matched coverage the
+makespan savings read ≈10–20 % through the middle of the frontier, and the
+V=49 result (0.960) is above anything the pipeline reached at any cost. Each
+solve takes 4–7 seconds against the pipeline's ~174 s. A repeat run
+reproduced its numbers bit-for-bit. **The §9.3 go/no-go bar is met.**
+
+The honest fine print: pure route-shortening at a fixed coverage is
+near-tight (~3 % — greedy's poses each hold unique points, so nothing can be
+dropped); the wins come from the coverage-for-metres trade the staged
+pipeline cannot express. Coordinated "front advance" moves are beyond
+coordinate descent (the concrete motivation for a sequential-convexification
+follow-up), all of this is one mesh / one pipeline seed / two robots at
+pilot scale, and the robustness sweep is the first item below.
+
 ## 5 · Next steps (rewritten for the pivot, priority order)
 
-1. **Inner solver for the warm arm** (plan §9.6): coordinate descent / SCP; success =
-   ≥10 % makespan reduction at ≥ baseline coverage, collision-free by construction.
-   If no formulation can move the pipeline's numbers, stop and rethink the direction.
-2. Cold start with the same solver (+ adaptive term weighting), then R > 2.
-3. Only after the headroom verdict: MPC/receding-horizon mode, theory framing, and
-   the paper skeleton. The parked online results (§4.3/§4c) stay citable as history.
+1. ~~Inner solver for the warm arm~~ — **done 2026-07-24 (§4e): bar met.**
+2. **Robustness sweep**: ≥3 pipeline seeds × the frontier, then R > 2 and the
+   50 m mesh — nothing in §4e is a claim until this passes (the §3 rule).
+3. **Cold start** with the same solver (+ adaptive term weighting).
+4. **SCP / coordinated wave moves** — the measured front-advance limitation
+   says exactly what a second-order method could still win.
+5. Then: MPC/receding-horizon mode, theory framing, and the paper skeleton.
+   The parked online results (§4.3/§4c) stay citable as history.
 
-**Overall state in one sentence (2026-07-23, end of day):** the online-planning story
-is parked by decision; the new headline — joint multi-robot trajectory optimization
-as optimal control, judged against the thesis pipeline on its own metrics — has its
-full experimental scaffolding built and verified (baseline, conventions, collision
-field, a validated scale-free visibility backbone, plus a measured negative result
-for the pretrained neural one), and hangs on one open technical problem: a
-constrained inner solver that can actually shorten a feasible multi-robot tour, with
-two concrete candidate designs queued for the next session.
+**Overall state in one sentence (2026-07-24, end of day):** the joint-OCP
+direction has passed its go/no-go — an elastic-band coordinate-descent
+refiner with ray-cast-audited acceptance Pareto-dominates the thesis
+pipeline's own coverage/makespan frontier at every measured operating point
+(matched pose and route budgets, their scorer, collision-clear, 4–7 s per
+solve, bit-reproducible) — and the road ahead is robustness seeds, the cold
+arm, and an SCP-style upgrade for the coordinated moves coordinate descent
+provably cannot make.

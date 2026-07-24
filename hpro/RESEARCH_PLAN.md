@@ -91,6 +91,13 @@ tells you where the work actually stands.*
 > Krystof's decision — do not resume them, and do not resume the "frozen regime /
 > quality gate" idea, without re-discussing with him. §0.1–§0.5 below remain accurate
 > as history and for the Stage-A/operator layer, which §9 still builds on.
+>
+> **⚠ 2026-07-24: the §9.3 headroom question is ANSWERED — read §9.7.** The
+> elastic-band + audit-gate warm solver Pareto-dominates the pipeline's own
+> coverage/makespan frontier at every measured operating point (matched pose
+> budgets, their scorer, collision-clear): +1.0…+2.9 coverage pts at −1.5…−8.3 %
+> makespan, ≈10–20 % makespan at matched coverage mid-frontier, in 4–7 s per
+> solve. Next actions are §9.7's list (seeds → cold arm → SCP → MPC).
 
 ### 0.1 Repo state — nothing is merged
 
@@ -1598,7 +1605,7 @@ best); the term-balancing between coverage-seeking and route economy under
 SGD is unresolved (fixed weights are scale-fragile; gradient-norm-adaptive
 weighting is the designed fix).
 
-### 9.6 Resume point for the next session
+### 9.6 Resume point for the next session — DONE 2026-07-24, see §9.7
 
 1. **Inner solver, warm arm first**: implement elastic-band coordinate descent
    over poses (cheapest correct option; margins already metric) — or SCP if
@@ -1610,4 +1617,123 @@ weighting is the designed fix).
    (baseline is committed; regenerate with the §9.5 item-1 settings if not).
 4. Keep the §9.4 rules: sanity gate before optimizing, hard re-score by their
    ray-cast, report wall-clock including backbone prepare, ≥5 seeds for any
+   stochastic claim.
+
+### 9.7 Headroom answered (2026-07-24): the joint refiner Pareto-dominates the pipeline's own frontier
+
+*The §9.6 solver was built this session (`optimize_elastic` in
+`hpro/joint_pilot.py`, `--solver elastic`, now the default for the warm arm)
+and the §9.3 headroom question got a measured answer. Everything below is one
+run per operating point, but the solver is deterministic — a repeat of the
+V=20 configuration reproduced 0.8101 @ 61.8 m bit-for-bit — and the baselines
+are the pipeline's own deterministic seed-42 solutions.*
+
+**The solver that finally worked, and the failure ladder that shaped it.**
+Elastic-band coordinate descent: poses updated in alternating odd/even
+half-sweeps so every mover's chain neighbours are frozen (no route-gradient
+cancellation, no shared segments — each half-sweep is a batch of independent
+9-parameter problems), a penalty inner loop (SGD + per-step caps), and a
+per-pose acceptance test that keeps the state feasible. On top of it, four
+mechanisms, each added because a measured failure demanded it:
+
+1. **Via waypoints** — route-only points (excluded from coverage scoring and
+   the pose budget; the analogue of the pipeline's ST-A* detour points),
+   inserted at init where the straight VRP chains cut below the 0.50 m
+   clearance constraint. Note the pipeline's *own executed trajectory* dips
+   to 0.415 m clearance on the same leg (robot 1 home approach) — our final
+   chains are held to a stricter standard than the baseline achieves.
+2. **The audit gate** — the pipeline's own ray-caster
+   (`RaycastingVisibilityQueryCuda`) used as an *acceptance oracle*: each
+   half-sweep's accepted movers are re-audited and the least valuable
+   reverted until aggregate hard coverage stays above the baseline floor.
+   This is the Stage-B audit-loop pattern (surrogate steers gradients,
+   measurement gates acceptance; accept/reject only, never repair). It became
+   necessary when the pure surrogate invariant leaked real coverage
+   (0.9507 → 0.9483: 598 surrogate-blind points plus zbuf false positives —
+   at V=49, 831 of the 985 ray-cast-uncovered points are *claimed visible*
+   by the surrogate, so they are invisible to its gradients AND its
+   constraints). Fairness: 30–310 poses audited per run, against the 600
+   candidate poses the pipeline itself ray-casts before selecting; audit
+   time is inside our reported wall-clock.
+3. **A per-half-sweep trust region** (0.4 m position, 0.25 6D) in the expand
+   phase — without it the capture reward pulls movers metres toward prey,
+   they abandon their old coverage wholesale, and the gate reverts every
+   single move (measured: zero accepted at V≤35). Net-positive coverage
+   trades are small leans; the ratchet (capture → re-anchor the keep set →
+   lean again) supplies the range.
+4. **Per-mover net-delta acceptance** — a move must have ray-cast
+   (captures − sole-covered losses) ≥ 0, > 0 if it pays route (budget-gated
+   per robot against the baseline's own executed lengths). A floor-only gate
+   without this dissipated captured surplus into route (+64 points decayed
+   to +12 in one sweep); a strictly monotone gate without tradeability
+   deadlocked front-advance at +70. The floor (final coverage ≥ baseline)
+   stays as the batch-level backstop.
+
+**Result — one row per pipeline operating point (its own `--target_coverage`
+sweep: 0.65/0.78/0.85/0.90/0.95, seed 42, V = poses selected by its greedy),
+all scored by the pipeline's ray-caster, joint arm at matched pose count and
+per-robot route budgets:**
+
+| V | pipeline (cov @ makespan) | joint-warm (cov @ makespan) | Δcov | Δmakespan | wall |
+|---|---|---|---|---|---|
+| 15 | 0.6623 @ 54.0 m | 0.6728 @ 53.2 m | **+1.05 pts** | −1.5 % | 3.8 s |
+| 20 | 0.7812 @ 67.4 m | 0.8101 @ 61.8 m | **+2.89 pts** | −8.3 % | 7.2 s |
+| 28 | 0.8586 @ 78.1 m | 0.8824 @ 74.5 m | **+2.38 pts** | −4.6 % | 6.0 s |
+| 35 | 0.9012 @ 86.2 m | 0.9254 @ 79.5 m | **+2.42 pts** | −7.8 % | 6.5 s |
+| 49 | 0.9507 @ 113.0 m | 0.9598 @ 108.7 m | **+0.91 pts** | −3.8 % | 6.6 s |
+
+Strict Pareto domination at every measured operating point: more coverage AND
+less makespan at the same pose budget, minimum clearance ≥ 0.50 m everywhere
+(vias included). Read at **matched coverage** by interpolating the pipeline's
+own frontier, the makespan savings are: ~13 % at 0.81, ~10 % at 0.88, ~20 %
+at 0.925; 0.9598 lies *above the pipeline's entire measured frontier* (its
+own operating point tops out at 0.9507; its candidate union caps it at
+0.9864 at any cost). **The §9.3 success bar — ≥10 % makespan at ≥ baseline
+coverage — is met across the middle of the frontier**, with the gains coming
+from exactly the trade the staged decomposition cannot express: set cover
+fixes the pose set before routing costs exist, so it can neither slide a
+viewpoint to a cheaper vantage nor spend saved metres on more coverage.
+
+**What did NOT work, stated plainly (these are findings, not failures to
+hide):**
+
+- **Pure shortening at the pipeline's own operating point is near-tight.**
+  With coverage pinned exactly (no trades), sliding+pruning recovers only
+  ~3 % makespan at V=49, most of it from straightening the ST-A* detours
+  (the separately-reported `warm-init` row); 0–1 poses prunable — greedy set
+  cover leaves every pose the sole holder of some points. The headroom is in
+  the coverage-per-metre exchange, not in pure route polish.
+- **Front-advance waves are beyond coordinate descent.** A pose advancing
+  along the hull loses trailing sole-covered points before its (frozen)
+  neighbour can pick them up; such coordinated multi-pose moves are never
+  proposed because proposals are made against current coverage. This is the
+  concrete SCP/second-order motivation for the paper, and the reason large
+  prey pools remain at low V (3 799 uncovered points still in play at V=20
+  when the ratchet saturates).
+- **The zbuf surrogate cannot see its own false positives** (by definition),
+  so ~5 % of the surface is invisible to gradient capture at V=49. The audit
+  gate contains the damage; a better-calibrated surrogate would raise the
+  ceiling. (NVPS stays dead at this scale — §9.5.)
+
+**Fairness ledger** (for the eventual paper): matched pose budgets; per-robot
+route budgets = the baseline's own executed lengths; scored by their
+ray-caster; clearance constraint (0.50 m) stricter than their executed
+minimum (0.415 m); their planning ray-casts 600 candidate poses vs our 30–310
+audited poses; joint wall-clock 4–7 s per operating point (their full
+pipeline solve: ~174 s at V=49, which includes candidate ray-casting, set
+cover and cuOpt). Caveats: single mesh, single pipeline seed, R=2, pilot
+scale (25 m, 20 k points); the interpolated matched-coverage savings assume
+frontier convexity between measured points.
+
+**Next (priority order):**
+
+1. **Robustness**: ≥3 pipeline seeds × the frontier sweep (the §3.4 rule
+   applies before any of this is claimed), then R>2 and the 50 m mesh.
+2. **Cold arm** with the same machinery (geometric init → elastic + expand;
+   the §9.3 cold bar is unchanged).
+3. **SCP / coordinated wave moves** for the front-advance limitation — the
+   measured prey pools quantify exactly what a second-order method could
+   still win.
+4. Then the MPC/receding-horizon mode and the paper skeleton (§9.2 framing:
+   the same solver run receding-horizon, warm starts = real-time iterations).
    claimed number (the pilot's single-seed runs are diagnostics, not results).

@@ -1,0 +1,96 @@
+{
+  "args": {
+    "pipeline_dir": "outputs/pilot_tc65",
+    "out": "hpro/results/frontier/pilot_tc65",
+    "steps": 400,
+    "cold_steps": 1200,
+    "lambda_route": 0.02,
+    "alpha": 0.5,
+    "lr_pos": 0.05,
+    "lr_rot": 0.02,
+    "beta": 1.0,
+    "backbone": "zbuf",
+    "keep_target": 0.55,
+    "keep_margin": 0.05,
+    "lambda_route_cold": 0.002,
+    "w_cover": 20.0,
+    "cap_pos": 0.04,
+    "cap_rot": 0.02,
+    "objective": "constrained",
+    "solver": "elastic",
+    "eb_sweeps": 40,
+    "eb_inner": 25,
+    "eb_lr": 0.02,
+    "eb_mu": 200.0,
+    "eb_slack": 0.02,
+    "eb_tol": 0.02,
+    "eb_rounds": 3,
+    "no_prune": false,
+    "no_expand": false,
+    "eb_expand_sweeps": 30,
+    "eb_debug": false,
+    "eb_trust": 0.4,
+    "eb_trust_rot": 0.25,
+    "eb_keep_soft": 0.05,
+    "eb_repair": 25,
+    "eb_gain_sharp": 12.0,
+    "eb_w_gain": 1.0,
+    "eb_route_reg": 0.3,
+    "al_every": 30,
+    "col_samples": 10,
+    "sep_samples": 48,
+    "d_separation": 0.8,
+    "robot_radius": 0.35,
+    "clearance_margin": 0.15,
+    "speed": 2.0,
+    "frustum_sharpness": 12.0,
+    "seed": 0,
+    "modes": "warm",
+    "no_show": false
+  },
+  "results": [
+    {
+      "tag": "pipeline",
+      "coverage": 0.6623,
+      "makespan": 54.038665771484375,
+      "total_length": 105.10877227783203,
+      "per_robot": [
+        54.038665771484375,
+        51.070106506347656
+      ],
+      "min_clearance": NaN,
+      "n_poses": 15,
+      "wall_s": NaN
+    },
+    {
+      "tag": "warm-init",
+      "coverage": 0.6623,
+      "makespan": 53.18998336791992,
+      "total_length": 101.93943405151367,
+      "per_robot": [
+        53.18998336791992,
+        48.74945068359375
+      ],
+      "min_clearance": 0.6375772356987,
+      "n_poses": 15,
+      "n_vias": 0,
+      "wall_s": 0.0
+    },
+    {
+      "tag": "joint-warm",
+      "coverage": 0.67285,
+      "makespan": 53.18998336791992,
+      "total_length": 101.14910125732422,
+      "per_robot": [
+        53.18998336791992,
+        47.9591178894043
+      ],
+      "min_clearance": 0.6375772356987,
+      "n_poses": 15,
+      "n_vias": 0,
+      "wall_s": 3.8184468550007296,
+      "n_pruned": 0,
+      "claimed_captures": 211
+    }
+  ]
+}
