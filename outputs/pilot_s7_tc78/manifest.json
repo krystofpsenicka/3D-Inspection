@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "mesh": {
+    "path": "/home/troja-lab-02/Desktop/Krystof/3D-Inspection/models/duke_of_lancaster_uk_clipped.glb",
+    "pose": [
+      0,
+      0,
+      1.5,
+      0.7071067811865476,
+      -0.7071067811865476,
+      0.0,
+      0.0
+    ],
+    "target_length": 25.0,
+    "scale_factor": 1.1883278197105644,
+    "bounds_min": [
+      -11.025496890149942,
+      -2.2964078190088393,
+      0.13771900818616345
+    ],
+    "bounds_max": [
+      13.974503109850064,
+      2.2638833150512974,
+      4.033008583536122
+    ]
+  },
+  "frustum": {
+    "fov_deg": 40.0,
+    "fov_y_rad": 0.6981317007977318,
+    "aspect": 1.0,
+    "near": 0.1,
+    "far": 6.0
+  },
+  "args": {
+    "output": "outputs/pilot_s7_tc78",
+    "num_robots": 2,
+    "mesh_target_length": 25.0,
+    "num_surface_points": 20000,
+    "num_candidates": 600,
+    "target_coverage": 0.78,
+    "frustum_near": 0.1,
+    "frustum_far": 6.0,
+    "frustum_fov_deg": 40.0,
+    "frustum_aspect": 1.0,
+    "solver": "cuopt",
+    "alpha": 0.5,
+    "seed": 7,
+    "curvature_weighting": true,
+    "resample_fraction": 0.0,
+    "resampling_strategy": "optimal",
+    "k_coverage": 1,
+    "side": "outside",
+    "verbose": false
+  },
+  "files": {
+    "pointcloud": "pointcloud.npz",
+    "candidates": "candidates.npz",
+    "optimization_result_npz": "optimization_result.npz",
+    "optimization_result_json": "optimization_result.json",
+    "vrp": "vrp.json",
+    "exec_result_npz": "exec_result.npz",
+    "exec_result_json": "exec_result.json"
+  },
+  "has_full_visibility_map": true
+}

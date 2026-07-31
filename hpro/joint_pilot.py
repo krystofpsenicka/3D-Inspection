@@ -885,6 +885,54 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
               f"{float(gt_vis.any(dim=0).float().mean()):.4f} (surplus above "
               f"the floor is tradeable — final coverage can only exceed it)")
 
+    # Continuation + demand-potential state (both off unless flagged).
+    gain_sharp = args.eb_gain_sharp
+    demand = None
+
+    def build_demand():
+        """Cluster still-uncovered surface into demand wells.
+
+        The capture reward is a sigmoid of a metric margin, so a pose with no
+        prey within a metre or so has *no gradient at all* — the cold-start
+        landscape is flat almost everywhere (§9.8). These wells supply the
+        missing long-range signal: an anchor per uncovered cluster, weighted
+        by how much surface it still owes, that a starved pose can be pulled
+        toward in position space.
+
+        Anchors are normal-offset VIEWPOINTS (medoid + normal * standoff),
+        not raw centroids — the same lesson `_reseed_pass` learned: a
+        centroid floats off the surface as soon as a cluster wraps around
+        curvature, and the mean normal cancels.
+        """
+        if gt_vis is None or reseed is None:
+            return None
+        prey_i = (~gt_vis.any(dim=0)).nonzero(as_tuple=True)[0]
+        if len(prey_i) < args.eb_demand_min:
+            return None
+        pn = reseed["pts_np"][prey_i.cpu().numpy()]
+        k = min(args.eb_demand_clusters,
+                max(1, len(pn) // args.eb_demand_min))
+        labels = _kmeans(pn, k, np.random.default_rng(args.seed))
+        A, W = [], []
+        for u in np.unique(labels):
+            m = labels == u
+            if m.sum() < args.eb_demand_min:
+                continue
+            idx_m = np.nonzero(m)[0]
+            pm = pn[m]
+            med = idx_m[np.argmin(np.linalg.norm(pm - pm.mean(axis=0),
+                                                 axis=1))]
+            nrm = reseed["normals_np"][int(prey_i[int(med)])]
+            nrm = nrm / (np.linalg.norm(nrm) + 1e-12)
+            A.append(pn[med] + nrm * reseed["standoff"])
+            W.append(float(m.sum()))
+        if not A:
+            return None
+        return dict(
+            anchors=torch.tensor(np.asarray(A), dtype=torch.float32,
+                                 device=device),
+            w=torch.tensor(W, dtype=torch.float32, device=device))
+
     def scaffold(parity):
         T = [len(p) for p in pos]
         off = np.concatenate([[0], np.cumsum(T)]).astype(int)
@@ -982,6 +1030,49 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                           >= cap_req).sum(dim=1).float()
                     old_cap = torch.where(view_mov, oc, torch.zeros_like(oc))
             do_gain = expand and len(pool_act) > 0
+            # Demand potential: assign each STARVED, LOW-VALUE mover to a
+            # well. Starved = captures no pool point right now (its capture
+            # reward is flat, so gradients cannot help it); low-value = it is
+            # the sole cover of at most `eb_demand_max_uniq` points.
+            # Requiring sole cover of NOTHING is far too strict at cold-start
+            # coverage — measured, exactly 1 mover of 65 ever qualified and
+            # no speculative move was ever accepted, the same way
+            # `_reseed_pass` found only 3 donors a run before it switched to
+            # a net rule. What protects coverage here is not the eligibility
+            # test but the audit gate: it re-measures every accepted move and
+            # reverts offenders until the ray-cast floor holds.
+            # Assignment is made ONCE per half-sweep
+            # and frozen through the inner loop — a well re-chosen every
+            # step is the chattering global argmax that killed §9.5's
+            # formulation 5.
+            dem_free = dem_anchor = dem_w = old_dem = None
+            if (expand and args.eb_demand_w > 0.0 and demand is not None
+                    and int(view_mov.sum())):
+                if gt_vis is not None:
+                    sole_now = gt_vis.sum(dim=0) == 1
+                    uniq = (gt_vis[mov] & sole_now.unsqueeze(0)).sum(dim=1)
+                else:
+                    uniq = torch.zeros(Vm, dtype=torch.long, device=device)
+                # Eligibility is the NET rule alone. A "captures nothing
+                # right now" test was tried first and was useless: `old_cap`
+                # counts pool points the SURROGATE claims at capture margin,
+                # while the pool is what the RAY-CASTER says is uncovered —
+                # so a nonzero `old_cap` is precisely a surrogate false
+                # positive, and gating on it left 1 eligible mover of 65
+                # (measured) and zero accepted drifts.
+                dem_free = (uniq <= args.eb_demand_max_uniq) & view_mov
+                if int(dem_free.sum()):
+                    anc, dw = demand["anchors"], demand["w"]
+                    dist = (all_pos[mov].unsqueeze(1)
+                            - anc.unsqueeze(0)).norm(dim=2)      # (Vm, K)
+                    # Most owed surface per metre of approach: demand alone
+                    # sends every starved pose to the single biggest well.
+                    a_of = (dw.unsqueeze(0) / (dist + 1.0)).argmax(dim=1)
+                    dem_anchor = anc[a_of]
+                    dem_w = dw[a_of] / float(dw.max())
+                    old_dem = dist.gather(1, a_of.unsqueeze(1)).squeeze(1)
+                else:
+                    dem_free = None
             L_now = [float(chain_lengths(chain(homes[r], pos[r])).sum())
                      for r in range(R)]
 
@@ -1024,9 +1115,14 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 pen = pen + kw * F.relu(req_un + args.eb_slack
                                         - m).square().sum()
             if do_gain:
-                gm = torch.sigmoid(args.eb_gain_sharp
-                                   * (Mm[:, pool_act] - cap_req))
+                gm = torch.sigmoid(gain_sharp * (Mm[:, pool_act] - cap_req))
                 gain = gm[view_mov].sum()
+            pot = x.new_zeros(())
+            if dem_free is not None:
+                # Constant-magnitude pull (gradient of a distance) so the
+                # signal does not vanish with range — the whole point is to
+                # reach surface the sigmoid cannot see.
+                pot = (dem_w * (x - dem_anchor).norm(dim=1))[dem_free].sum()
             s = _pose_seg_samples(x, prev, nxt, args.col_samples)
             pen = pen + F.relu(margin + args.eb_slack - esdf(s)).square().sum()
             if docks is not None:
@@ -1050,7 +1146,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                         pen = pen + F.relu(chain_lengths(chs[r]).sum()
                                            - budgets[r]).square()
             (route_w * route + args.eb_mu * pen
-             - args.eb_w_gain * gain).backward()
+             - args.eb_w_gain * gain + args.eb_demand_w * pot).backward()
             x0, q0 = x.detach().clone(), q.detach().clone()
             opt.step()
             with torch.no_grad():
@@ -1166,6 +1262,38 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                     if budgets is None or L_new[rr] + dr[v] <= budgets[rr] + 1e-6:
                         acc_np[v] = True
                         L_new[rr] += dr[v]
+                if dem_free is not None:
+                    # Speculative relocation. A starved pose can only ever
+                    # earn `dc > 0` once it has ALREADY arrived somewhere
+                    # useful, so a capture-only acceptance rule forbids the
+                    # very drift the demand potential exists to produce.
+                    # These movers are the sole cover of at most
+                    # `eb_demand_max_uniq` points, so a drift can cost at
+                    # most that much (`dc >= -eb_demand_max_uniq`) and the
+                    # audit gate below still defends the ray-cast floor — so
+                    # closing on a well is admitted as its own reason to
+                    # move, lowest priority and last in line for budget.
+                    new_dem = (xd - dem_anchor).norm(dim=1)
+                    closing = ((dem_free & (new_dem < old_dem - 1e-3))
+                               .cpu().numpy())
+                    spec = sorted([v for v in range(Vm)
+                                   if closing[v] and feas_np[v]
+                                   and not acc_np[v]],
+                                  key=lambda v: -float(dem_w[v]))
+                    n_spec = 0
+                    for v in spec:
+                        rr = int(rob_of[v])
+                        if (budgets is None
+                                or L_new[rr] + dr[v] <= budgets[rr] + 1e-6):
+                            acc_np[v] = True
+                            L_new[rr] += dr[v]
+                            n_spec += 1
+                    if args.eb_debug:
+                        print(f"      [dbg demand p{parity}] free="
+                              f"{int(dem_free.sum())}/{Vm} closing="
+                              f"{int(closing.sum())} spec-accepted={n_spec} "
+                              f"(starved-by-old_cap would be "
+                              f"{int((old_cap == 0).sum())})", flush=True)
                 accept = torch.tensor(acc_np, device=device)
                 if args.eb_debug:
                     print(f"      [dbg expand p{parity}] feas="
@@ -1173,6 +1301,41 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                           f"dc max={dc.max():.0f} dr=({dr.min():+.3f},"
                           f"{dr.max():+.3f}) newv max={float(new_v.max()):.4f} "
                           f"acc={int(accept.sum())}", flush=True)
+            # Separation gate, per mover. Reverting the WHOLE half-sweep on
+            # any separation regression is far too blunt at cold start: the
+            # chains interleave, so one conflicting mover cancelled every
+            # capture its 10-34 co-movers had earned, and the expand phase
+            # died by sweep 4 (measured: violation 0.0000 -> 0.4521 m,
+            # 15 moves dropped, before the reseed pass could ever fire).
+            # Same rule as the coverage audit gate below: drop the least
+            # valuable offenders one at a time until the constraint holds.
+            if R > 1 and int(accept.sum()):
+                sep_cap = max(sep_before, tol)
+
+                def sep_of(mask):
+                    trial = all_pos.clone()
+                    trial[mov[mask]] = xd[mask]
+                    return _max_sep_violation(
+                        _chains_of(homes, [trial[off[r]:off[r + 1]]
+                                           for r in range(R)]),
+                        times, args.speed, args.d_separation)
+
+                if sep_of(accept) > sep_cap:
+                    val = (dc if expand
+                           else (old_route - new_route).cpu().numpy())
+                    n_drop = 0
+                    for v in sorted(accept.nonzero(as_tuple=True)[0].tolist(),
+                                    key=lambda v: val[v]):
+                        accept[v] = False
+                        n_drop += 1
+                        if not int(accept.sum()) or sep_of(accept) <= sep_cap:
+                            break
+                    if args.eb_debug:
+                        print(f"      [dbg sep-gate p{parity}] dropped "
+                              f"{n_drop} offending mover(s), kept "
+                              f"{int(accept.sum())}", flush=True)
+                    if int(accept.sum()) and sep_of(accept) > sep_cap:
+                        return 0, 0          # no legal subset
             # GT audit gate: aggregate hard coverage may never drop. Audit
             # the accepted movers' rows, then revert the least valuable
             # offenders until coverage is non-decreasing (accept/reject only
@@ -1224,6 +1387,11 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                                                times, args.speed,
                                                args.d_separation)
                 if sep_after > max(sep_before, tol):
+                    if args.eb_debug:
+                        print(f"      [dbg sep-revert p{parity}] "
+                              f"{len(acc)} move(s) dropped: violation "
+                              f"{sep_before:.4f} -> {sep_after:.4f} m",
+                              flush=True)
                     return 0, 0              # revert whole half-sweep
             for r in range(R):
                 pos[r], rot[r] = new_pos[r], new_rot[r]
@@ -1328,6 +1496,16 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                      if budgets else "none"))
         capt_prev, capt_stall, n_reseeded = None, 0, 0
         for sweep in range(args.eb_expand_sweeps):
+            if args.eb_gain_sharp_lo is not None:
+                # Graduated non-convexity: wide, shallow basins first (every
+                # marginally-outside point pulls a little), sharpened toward
+                # the true near-indicator reward as poses settle.
+                f = min(1.0, sweep / max(1, args.eb_anneal_sweeps))
+                gain_sharp = float(args.eb_gain_sharp_lo
+                                   * (args.eb_gain_sharp
+                                      / args.eb_gain_sharp_lo) ** f)
+            if args.eb_demand_w > 0.0 and sweep % args.eb_demand_every == 0:
+                demand = build_demand()
             a0, c0 = sweep_step(0, expand=True)
             a1, c1 = sweep_step(1, expand=True)
             if gt_vis is not None:
@@ -1339,6 +1517,13 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 capt_stall = (capt_stall + 1 if capt_prev == claimed_capt
                               else 0)
                 capt_prev = claimed_capt
+                # A sweep that accepted NOTHING is the strongest possible
+                # stall signal — it is exactly when the discrete move should
+                # take over, not when the loop should quit. (The old code
+                # broke out below on a0+a1==0 before `capt_stall` could ever
+                # reach `reseed_after`, so cold start never reseeded at all.)
+                if a0 + a1 == 0:
+                    capt_stall = max(capt_stall, args.reseed_after)
                 if reseed is not None and capt_stall >= args.reseed_after:
                     nre, gt_vis = _reseed_pass(
                         pos, rot, view, homes, esdf, args, gt_vis, audited,
@@ -1367,11 +1552,15 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
             L = lengths_now()
             print(f"    [{label} expand {sweep+1:3d}] net +{claimed_capt} "
                   f"pts vs floor (pool {len(pool)}), total={sum(L):.1f} m "
-                  f"makespan={max(L):.1f} m", flush=True)
+                  f"makespan={max(L):.1f} m"
+                  + (f" [sharp {gain_sharp:.2f}]"
+                     if args.eb_gain_sharp_lo is not None else "")
+                  + (f" [wells {len(demand['w'])}]"
+                     if demand is not None else ""), flush=True)
             log.append(dict(expand=sweep + 1, captured=claimed_capt,
                             total=sum(L), makespan=max(L)))
-            if a0 + a1 == 0:
-                break
+            if a0 + a1 == 0 and (gt_vis is None or reseed is None):
+                break        # no reseed available: gradients are all there is
 
         # Post-expand shorten round: convert whatever route the captures did
         # not spend back into makespan (keep set is re-anchored to the
@@ -1642,6 +1831,33 @@ def parse_args():
                    help="Sigmoid sharpness (1/m) of the capture reward on "
                         "uncovered-point metric margins.")
     p.add_argument("--eb_w_gain", type=float, default=1.0)
+    p.add_argument("--eb_gain_sharp_lo", type=float, default=None,
+                   help="Continuation (graduated non-convexity): start the "
+                        "expand phase at this capture-reward sharpness and "
+                        "anneal geometrically up to --eb_gain_sharp over "
+                        "--eb_anneal_sweeps. Low sharpness widens the basin "
+                        "so marginally-outside points still pull. Default "
+                        "off (constant --eb_gain_sharp).")
+    p.add_argument("--eb_anneal_sweeps", type=int, default=20,
+                   help="Expand sweeps over which --eb_gain_sharp_lo ramps "
+                        "up to --eb_gain_sharp.")
+    p.add_argument("--eb_demand_w", type=float, default=0.0,
+                   help="Weight of the long-range demand potential: pulls "
+                        "poses that capture nothing and hold no unique "
+                        "coverage toward the nearest high-demand cluster of "
+                        "still-uncovered surface. Default 0 (off).")
+    p.add_argument("--eb_demand_max_uniq", type=int, default=25,
+                   help="A pose may be pulled toward a demand well while it "
+                        "is the sole cover of at most this many points (a "
+                        "net rule, as in --reseed_min_gain; 0 would demand "
+                        "poses that hold nothing unique, which at cold-start "
+                        "coverage is almost none of them).")
+    p.add_argument("--eb_demand_clusters", type=int, default=24,
+                   help="Max demand wells clustered from uncovered surface.")
+    p.add_argument("--eb_demand_min", type=int, default=20,
+                   help="Minimum uncovered points for a demand well.")
+    p.add_argument("--eb_demand_every", type=int, default=5,
+                   help="Recluster the demand wells every N expand sweeps.")
     p.add_argument("--eb_route_reg", type=float, default=0.3,
                    help="Route weight during the expand phase (length is "
                         "governed by the per-robot budget constraint; this "
