@@ -222,6 +222,16 @@ the refiner stays in the paper it is worth a frontier-wide ablation (~15 configs
 
 ### 5e. Open items
 
+> **RESOLVED 2026-08-05 — both clearance items. See RESEARCH_PLAN §9.12 and
+> STATUS_OVERVIEW §4f.** The cause was resolution, not a bad trade: the solver
+> sampled segments at a fixed 10 points (up to 0.78 m apart on a 7.8 m
+> segment) and stopped where its own samples read clear. Sampling is now
+> spacing-bounded (`--col_spacing`, 5 cm), the audit runs at 640 samples/
+> segment, and all 18 frontier runs were re-solved: worst clearance 0.4427 →
+> **0.5200 m**, with the win unchanged (15/15, +2.42 ± 1.05 pts,
+> −5.39 ± 2.75 %). The pipeline's own clearance is measured too — 0.33–1.20 m,
+> under a looser 0.40 m grid-inflation rule of its own.
+
 * **Structure clearance is below its constraint on the WARM arm too, and that
   is the arm the paper depends on.** Margin is 0.50 m
   (`robot_radius` 0.35 + `clearance_margin` 0.15); the 40-samples/segment audit

@@ -1,0 +1,176 @@
+{
+  "args": {
+    "pipeline_dir": "outputs/pilot_s1_tc90",
+    "out": "hpro/results/frontier_clear/frontier_seeds/pilot_s1_tc90",
+    "steps": 400,
+    "cold_steps": 1200,
+    "lambda_route": 0.02,
+    "alpha": 0.5,
+    "lr_pos": 0.05,
+    "lr_rot": 0.02,
+    "beta": 1.0,
+    "backbone": "zbuf",
+    "keep_target": 0.55,
+    "keep_margin": 0.05,
+    "lambda_route_cold": 0.002,
+    "w_cover": 20.0,
+    "cap_pos": 0.04,
+    "cap_rot": 0.02,
+    "objective": "constrained",
+    "solver": "elastic",
+    "eb_sweeps": 40,
+    "eb_inner": 25,
+    "eb_lr": 0.02,
+    "eb_mu": 200.0,
+    "eb_slack": 0.02,
+    "eb_tol": 0.02,
+    "eb_rounds": 3,
+    "no_prune": false,
+    "no_expand": false,
+    "eb_expand_sweeps": 30,
+    "cold_expand_sweeps": 200,
+    "cold_max_vias": 40,
+    "reseed_clusters": 48,
+    "reseed_min_cluster": 40,
+    "reseed_min_gain": 25,
+    "reseed_slot_tries": 25,
+    "reseed_after": 2,
+    "eb_debug": false,
+    "eb_trust": 0.4,
+    "eb_trust_rot": 0.25,
+    "eb_keep_soft": 0.05,
+    "eb_repair": 25,
+    "eb_gain_sharp": 12.0,
+    "eb_w_gain": 1.0,
+    "eb_gain_sharp_lo": null,
+    "eb_anneal_sweeps": 20,
+    "eb_demand_w": 0.0,
+    "eb_demand_max_uniq": 25,
+    "eb_demand_clusters": 24,
+    "eb_demand_min": 20,
+    "eb_demand_every": 5,
+    "eb_route_reg": 0.3,
+    "al_every": 30,
+    "col_samples": 10,
+    "col_spacing": 0.05,
+    "col_samples_max": 2000,
+    "audit_samples": 640,
+    "sep_samples": 600,
+    "d_separation": 0.8,
+    "robot_radius": 0.35,
+    "clearance_margin": 0.15,
+    "speed": 2.0,
+    "frustum_sharpness": 12.0,
+    "seed": 0,
+    "modes": "warm",
+    "no_show": true
+  },
+  "results": [
+    {
+      "tag": "pipeline",
+      "coverage": 0.90275,
+      "makespan": 95.5279541015625,
+      "total_length": 183.86348724365234,
+      "per_robot": [
+        88.33553314208984,
+        95.5279541015625
+      ],
+      "min_clearance": NaN,
+      "min_separation": 1.0607784986495972,
+      "n_poses": 37,
+      "wall_s": NaN
+    },
+    {
+      "tag": "warm-init",
+      "coverage": 0.90275,
+      "makespan": 94.2813491821289,
+      "total_length": 180.10363006591797,
+      "per_robot": [
+        85.82228088378906,
+        94.2813491821289
+      ],
+      "min_clearance": -0.1301996260881424,
+      "clearance_res": {
+        "10": 0.04095545411109924,
+        "40": -0.122603639960289,
+        "160": -0.1301785409450531,
+        "640": -0.1301996260881424
+      },
+      "min_separation": 0.5231529474258423,
+      "mission_time_s": 47.14067459106445,
+      "start_offsets": [
+        0.0,
+        0.0
+      ],
+      "n_poses": 37,
+      "n_vias": 0,
+      "wall_s": 0.0
+    },
+    {
+      "tag": "joint-warm",
+      "coverage": 0.9203,
+      "makespan": 89.93359375,
+      "total_length": 172.99921417236328,
+      "per_robot": [
+        83.06562042236328,
+        89.93359375
+      ],
+      "min_clearance": 0.5320097804069519,
+      "clearance_res": {
+        "10": 0.533855676651001,
+        "40": 0.532127320766449,
+        "160": 0.532127320766449,
+        "640": 0.5320097804069519
+      },
+      "min_separation": 0.8252713680267334,
+      "mission_time_s": 44.966796875,
+      "start_offsets": [
+        0.0,
+        0.0
+      ],
+      "n_poses": 37,
+      "n_vias": 4,
+      "wall_s": 11.437035726034082,
+      "n_pruned": 2,
+      "claimed_captures": 351,
+      "clear_trace": [
+        {
+          "phase": "init (pre-via)",
+          "clear_solver": -0.13028410077095032,
+          "clear_audit": -0.1301996260881424,
+          "solver_per_seg": 193
+        },
+        {
+          "phase": "via insertion",
+          "clear_solver": 0.5113193988800049,
+          "clear_audit": 0.5113902688026428,
+          "solver_per_seg": 193
+        },
+        {
+          "phase": "shorten round 0",
+          "clear_solver": 0.5016270875930786,
+          "clear_audit": 0.5014041066169739,
+          "solver_per_seg": 193
+        },
+        {
+          "phase": "shorten round 1",
+          "clear_solver": 0.5016270875930786,
+          "clear_audit": 0.5014041066169739,
+          "solver_per_seg": 193
+        },
+        {
+          "phase": "expand",
+          "clear_solver": 0.5320143699645996,
+          "clear_audit": 0.5320097804069519,
+          "solver_per_seg": 181
+        },
+        {
+          "phase": "tighten",
+          "clear_solver": 0.5320143699645996,
+          "clear_audit": 0.5320097804069519,
+          "solver_per_seg": 181
+        }
+      ]
+    }
+  ]
+}

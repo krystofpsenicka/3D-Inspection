@@ -298,6 +298,47 @@ def optimize_offsets(chains, times, speed, d_sep, lengths, grid=48,
     return offsets, best
 
 
+def _col_per_seg(args, *pairs, growth: float = 0.0) -> int:
+    """Samples per segment for a collision check, from a spacing target.
+
+    A *count* per segment is the wrong quantity to fix. At
+    ``col_samples=10`` a 7.8 m transit leg is checked every 0.78 m, and a
+    straight segment grazing the hull dips roughly ``h^2 / (8 d)`` between
+    samples — about 5 cm here. That is exactly the amount by which finished
+    plans sat *inside* a 0.50 m clearance constraint the solver believed it
+    was satisfying: measured 2026-08-05, the shorten phase pulls the chain
+    taut until its own 10-sample view reads 0.5215 m while the truth at
+    convergence is 0.4725 m (§9.12). What has to be bounded is the sample
+    *spacing*; the count then follows from how long the segment is.
+
+    ``pairs`` are (a, b) endpoint tensors of the segments about to be
+    checked; the returned count is driven by the longest of them, so every
+    segment in the batch is sampled at least as finely as the target.
+    ``growth`` pads that length by how far an endpoint may still travel
+    before the check is used again — the count must be fixed for the whole
+    half-sweep, because an acceptance test that compares a violation before
+    a move against a violation after it at a *different* resolution is
+    comparing two different quantities.
+    """
+    if args.col_spacing <= 0.0:
+        return args.col_samples
+    with torch.no_grad():
+        longest = max(float((b - a).norm(dim=-1).max()) for a, b in pairs)
+    need = int(math.ceil((longest + growth) / args.col_spacing))
+    if need > args.col_samples_max and not _col_per_seg._warned:
+        _col_per_seg._warned = True
+        print(f"    [warn] --col_samples_max {args.col_samples_max} binds: a "
+              f"{longest + growth:.1f} m segment needs {need} samples for "
+              f"{args.col_spacing:.3f} m spacing, so clearance is checked "
+              f"every {(longest + growth) / args.col_samples_max:.3f} m "
+              f"there. Raise --col_samples_max to restore the guarantee.",
+              flush=True)
+    return int(min(max(need, args.col_samples), args.col_samples_max))
+
+
+_col_per_seg._warned = False
+
+
 def _pose_seg_samples(x, prev, nxt, per_seg):
     """(Vm, 2*per_seg, 3): samples along prev->x and x->nxt per moving pose."""
     t = torch.linspace(0.0, 1.0, per_seg + 1, device=x.device)[1:].view(1, -1, 1)
@@ -534,7 +575,12 @@ def _prune_pass(pos, rot, view, homes, layer, pts_t, esdf, args, keep_idx,
             if best is None or best[0] <= 1e-3:
                 break
             save, r, li, g, p_prev, p_next = best
-            t = torch.linspace(0.0, 1.0, 4 * args.col_samples + 1, device=device)
+            # Floor is this test's own historical resolution, so
+            # `--col_spacing 0` is a faithful ablation here too.
+            ps = max(4 * args.col_samples,
+                     _col_per_seg(args, (p_prev.unsqueeze(0),
+                                         p_next.unsqueeze(0))))
+            t = torch.linspace(0.0, 1.0, ps + 1, device=device)
             s = p_prev.unsqueeze(0) + (p_next - p_prev).unsqueeze(0) * t.unsqueeze(1)
             if float(esdf(s).min()) < margin - tol:
                 blocked.add(g)                        # shortcut cuts the hull
@@ -576,15 +622,69 @@ def _insert_vias(pos, rot, view, homes, esdf, args, max_vias=8,
     outward along the ESDF gradient until it clears margin + 0.1 m; the
     elastic sweeps then shorten it like any other waypoint. Returns the
     number inserted.
+
+    **A via is inserted only if it is verified clear.** The gradient push can
+    fail outright: the EDT is constant across the first occupied shell, so
+    inside a thin structure every voxel reads the same −1 voxel and the
+    gradient is ~0 — the normalised step direction is then noise and the seed
+    never escapes. Before this was checked, such a seed was inserted anyway,
+    *adding* a waypoint 0.10 m inside the hull, and the loop then re-found the
+    same segment until it burned the whole via budget (measured 2026-08-05 on
+    `pilot_s1_tc85` at margin 0.40: 8 vias inserted, final clearance
+    −0.1000 m, constant through every later phase because no gradient could
+    move it). A spherical probe now backs up the gradient push, and a seed
+    that still cannot be made feasible is abandoned rather than inserted.
     """
     device = homes.device
     margin = args.robot_radius + args.clearance_margin
     n_ins = 0
+
+    def _feasible(x):
+        """Is a candidate via clear of both the structure and every dock?"""
+        with torch.no_grad():
+            if float(esdf(x.unsqueeze(0))) < margin:
+                return False
+            if use_docks and len(homes) > 1:
+                o = homes[[i for i in range(len(homes)) if i != r]]
+                if float((x.unsqueeze(0) - o).norm(dim=1).min()) \
+                        < args.d_separation:
+                    return False
+        return True
+
+    def _probe(x0):
+        """Last-resort escape when the gradient is flat: look outward along a
+        fixed set of directions at growing radii and take the first clear
+        point. Deterministic (a fixed direction set, no sampling) because
+        every result in this project has to reproduce bit-for-bit."""
+        dirs = torch.tensor(
+            [[1., 0., 0.], [-1., 0., 0.], [0., 1., 0.], [0., -1., 0.],
+             [0., 0., 1.], [0., 0., -1.],
+             [1., 1., 0.], [1., -1., 0.], [-1., 1., 0.], [-1., -1., 0.],
+             [1., 0., 1.], [1., 0., -1.], [-1., 0., 1.], [-1., 0., -1.],
+             [0., 1., 1.], [0., 1., -1.], [0., -1., 1.], [0., -1., -1.]],
+            device=device)
+        dirs = dirs / dirs.norm(dim=1, keepdim=True)
+        for rad in torch.arange(0.2, 3.01, 0.2, device=device):
+            cand = x0.unsqueeze(0) + dirs * rad
+            with torch.no_grad():
+                ok = esdf(cand) >= margin + 0.1
+            for i in ok.nonzero(as_tuple=True)[0].tolist():
+                if _feasible(cand[i]):
+                    return cand[i].detach().clone()
+        return None
+
     for r in range(len(pos)):
         guard = 0
-        while guard < max_vias:
+        failed = 0
+        dead_seeds = []
+        while guard < max_vias and failed < max_vias:
             ch = chain(homes[r], pos[r])
-            s = segment_samples(ch, 40).reshape(len(ch) - 1, 40, 3)
+            # Floor of 40 is this function's own historical resolution, kept
+            # so that `--col_spacing 0` reproduces the pre-2026-08-05 solver
+            # exactly rather than approximating it with a coarser one. The
+            # spacing rule raises it wherever segments are long.
+            ps = max(40, _col_per_seg(args, (ch[:-1], ch[1:])))
+            s = segment_samples(ch, ps).reshape(len(ch) - 1, ps, 3)
             with torch.no_grad():
                 # Slack against BOTH static obstacles: the structure, and
                 # other robots' docks (a parked robot never moves, so this
@@ -599,7 +699,19 @@ def _insert_vias(pos, rot, view, homes, esdf, args, max_vias=8,
             viol = (seg_min < -1e-3).nonzero(as_tuple=True)[0]
             if len(viol) == 0:
                 break
-            k = int(viol[0])
+            # Skip segments whose worst sample we have already failed to
+            # rescue. Keyed on world position, not segment index: inserting a
+            # via renumbers every later segment, so an index-keyed skip list
+            # would silently point at the wrong segment afterwards.
+            k = None
+            for kk in viol.tolist():
+                cand = s[kk, int(seg_arg[kk])]
+                if all(float((cand - b).norm()) > esdf.res
+                       for b in dead_seeds):
+                    k = kk
+                    break
+            if k is None:
+                break                      # every violating segment is dead
             x = s[k, int(seg_arg[k])].detach().clone()
             others = (homes[[o for o in range(len(homes)) if o != r]]
                       if use_docks and len(homes) > 1 else None)
@@ -622,6 +734,16 @@ def _insert_vias(pos, rot, view, homes, esdf, args, max_vias=8,
                              * need_dock * 1.2).detach()
                         continue
                 break
+            if not _feasible(x):
+                # The push did not escape (flat field, or wedged between the
+                # structure and a dock). Try the probe; if that fails too,
+                # abandon this seed rather than insert an infeasible via.
+                probed = _probe(s[k, int(seg_arg[k])])
+                if probed is None:
+                    dead_seeds.append(s[k, int(seg_arg[k])].detach().clone())
+                    failed += 1
+                    continue
+                x = probed
             if len(pos[r]):
                 ri = min(k, len(pos[r]) - 1)
                 rrow = rot[r][ri:ri + 1]
@@ -750,8 +872,11 @@ def _reseed_pass(pos, rot, view, homes, esdf, args, gt_vis, audited,
                 continue
             p_prev = pos[r][i - 1] if i > 0 else homes[r]
             p_next = pos[r][i + 1] if i < T[r] - 1 else homes[r]
-            seg = _pose_seg_samples(cand_t, p_prev.unsqueeze(0),
-                                    p_next.unsqueeze(0), 4 * args.col_samples)
+            seg = _pose_seg_samples(
+                cand_t, p_prev.unsqueeze(0), p_next.unsqueeze(0),
+                max(4 * args.col_samples,
+                    _col_per_seg(args, (p_prev.unsqueeze(0), cand_t),
+                                 (cand_t, p_next.unsqueeze(0)))))
             if float(esdf(seg).min()) < margin - 1e-3:
                 rej['seg'] += 1
                 continue
@@ -849,6 +974,16 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
     margin = args.robot_radius + args.clearance_margin
     cap_req = args.keep_margin
     tol = 1e-3
+    # The acceptance test admits a violation of up to `tol`, so a plan that
+    # rides the constraint lands `tol` INSIDE it — "feasible" would mean
+    # "feasible to within a millimetre". Absorb that by having the solver
+    # defend a margin tightened by exactly `tol`: a move accepted at
+    # violation <= tol then has true clearance >= margin. Measured
+    # 2026-08-05 on the 50 m mesh, where finer sampling first let the
+    # optimizer reach the boundary at all: it settled at 0.4992 m against
+    # 0.50 m. At pilot scale the optimizer never got close enough for this
+    # to show, which is exactly why it needed the bigger problem to surface.
+    col_margin = margin + tol
     t0 = time.perf_counter()
 
     with torch.no_grad():
@@ -864,12 +999,41 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
           f"{int((req < 0).sum())} (surrogate-blind: only non-degradation is "
           f"asked of them), target margin {args.keep_margin} m")
 
+    def clear_now(per_seg):
+        """Worst structure clearance over all chains at `per_seg` samples."""
+        with torch.no_grad():
+            d = torch.cat([segment_samples(chain(homes[r], pos[r]), per_seg)
+                           for r in range(R)])
+            return float(esdf(d).min())
+
+    def clear_report(phase):
+        """Solver-resolution vs audit-resolution clearance, side by side.
+
+        The gap between these two numbers IS the under-resolution defect: the
+        solver can only defend what it samples, so anything the audit finds
+        below `margin` while the solver's own view reads clear was never
+        constrained at all.
+        """
+        chs = [chain(homes[r], pos[r]) for r in range(R)]
+        ps = max(_col_per_seg(args, (c[:-1], c[1:])) for c in chs)
+        cs, ca = clear_now(ps), clear_now(args.audit_samples)
+        flag = "  <-- BELOW MARGIN" if ca < margin - 1e-6 else ""
+        print(f"    [{label}] clearance after {phase}: "
+              f"{cs:.4f} m @solver({ps}/seg)  "
+              f"{ca:.4f} m @audit({args.audit_samples}/seg){flag}",
+              flush=True)
+        return dict(phase=phase, clear_solver=cs, clear_audit=ca,
+                    solver_per_seg=ps)
+
+    clear_trace = [clear_report("init (pre-via)")]
+
     n_vias = _insert_vias(pos, rot, view, homes, esdf, args,
                           max_vias=max_vias)
     if n_vias:
         print(f"    [{label}] inserted {n_vias} via waypoint(s): segments of "
               f"the straight warm start ran below the {margin:.2f} m "
               f"clearance constraint")
+    clear_trace.append(clear_report("via insertion"))
 
     audit_count = [0]
     gt_vis = None
@@ -1006,8 +1170,14 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 old_kv = torch.zeros(Vm, device=device)
             old_route = ((all_pos[mov] - prev).norm(dim=1)
                          + (all_pos[mov] - nxt).norm(dim=1))
+            # One resolution for the whole half-sweep: the pre-move and
+            # post-move violations are compared to each other. Movers can
+            # travel at most `reach` before the comparison happens.
+            reach = max(args.eb_trust, args.cap_pos * args.eb_inner)
+            col_ps = _col_per_seg(args, (prev, all_pos[mov]),
+                                  (all_pos[mov], nxt), growth=reach)
             old_cv = _pose_col_violation(esdf, all_pos[mov], prev, nxt,
-                                         margin, args.col_samples,
+                                         col_margin, col_ps,
                                          docks, args.d_separation)
             sep_before = (_max_sep_violation(_chains_of(homes, pos), times,
                                              args.speed, args.d_separation)
@@ -1123,8 +1293,9 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 # signal does not vanish with range — the whole point is to
                 # reach surface the sigmoid cannot see.
                 pot = (dem_w * (x - dem_anchor).norm(dim=1))[dem_free].sum()
-            s = _pose_seg_samples(x, prev, nxt, args.col_samples)
-            pen = pen + F.relu(margin + args.eb_slack - esdf(s)).square().sum()
+            s = _pose_seg_samples(x, prev, nxt, col_ps)
+            pen = pen + F.relu(col_margin + args.eb_slack
+                               - esdf(s)).square().sum()
             if docks is not None:
                 dd = (s.unsqueeze(2) - docks.unsqueeze(1)).norm(dim=-1)
                 pen = pen + F.relu(args.d_separation + args.eb_slack
@@ -1158,7 +1329,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 q.copy_(q0 + d * (args.cap_rot / n.clamp_min(args.cap_rot)))
             if expand:
                 clamp_trust()
-            project_clear(esdf, [x], margin)
+            project_clear(esdf, [x], col_margin)
 
         if expand:
             # Repair pass: the capture reward may pull segments through the
@@ -1167,8 +1338,9 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
             opt2 = torch.optim.SGD([x, q], lr=args.eb_lr, momentum=0.5)
             for _ in range(args.eb_repair):
                 opt2.zero_grad()
-                s = _pose_seg_samples(x, prev, nxt, args.col_samples)
-                pen = F.relu(margin + args.eb_slack - esdf(s)).square().sum()
+                s = _pose_seg_samples(x, prev, nxt, col_ps)
+                pen = F.relu(col_margin + args.eb_slack
+                             - esdf(s)).square().sum()
                 if docks is not None:
                     dd = (s.unsqueeze(2) - docks.unsqueeze(1)).norm(dim=-1)
                     pen = pen + F.relu(args.d_separation + args.eb_slack
@@ -1185,7 +1357,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                     d = q - q0
                     n = d.norm(dim=1, keepdim=True)
                     q.copy_(q0 + d * (args.cap_rot / n.clamp_min(args.cap_rot)))
-                project_clear(esdf, [x], margin)
+                project_clear(esdf, [x], col_margin)
 
         with torch.no_grad():
             xd, qd = x.detach(), q.detach()
@@ -1198,9 +1370,8 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
             else:
                 new_kv = torch.zeros(Vm, device=device)
             new_route = (xd - prev).norm(dim=1) + (xd - nxt).norm(dim=1)
-            new_cv = _pose_col_violation(esdf, xd, prev, nxt, margin,
-                                         args.col_samples, docks,
-                                         args.d_separation)
+            new_cv = _pose_col_violation(esdf, xd, prev, nxt, col_margin,
+                                         col_ps, docks, args.d_separation)
             old_v = torch.maximum(old_kv, old_cv)
             new_v = torch.maximum(new_kv, new_cv)
             if expand:
@@ -1471,6 +1642,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
         print(f"    [{label}] prune round {rnd}: removed {npr} poses -> "
               f"total={sum(L):.1f} m makespan={max(L):.1f} m")
         log.append(dict(round=rnd, pruned=npr, total=sum(L), makespan=max(L)))
+        clear_trace.append(clear_report(f"shorten round {rnd}"))
         if npr == 0:
             break
 
@@ -1561,6 +1733,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                             total=sum(L), makespan=max(L)))
             if a0 + a1 == 0 and (gt_vis is None or reseed is None):
                 break        # no reseed available: gradients are all there is
+        clear_trace.append(clear_report("expand"))
 
         # Post-expand shorten round: convert whatever route the captures did
         # not spend back into makespan (keep set is re-anchored to the
@@ -1590,6 +1763,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
                 L = lengths_now()
                 print(f"    [{label}] post-expand prune: removed {npr} poses "
                       f"-> total={sum(L):.1f} m makespan={max(L):.1f} m")
+        clear_trace.append(clear_report("tighten"))
 
     # Timing block, last: with the geometry settled, choose start delays that
     # de-conflict the schedule. Path length (the comparison metric) is
@@ -1609,6 +1783,7 @@ def optimize_elastic(pts_t, layer, homes, init_pos, init_rot, esdf, args,
         print(f"    [{label}] audit gate: {audit_count[0]} poses ray-cast "
               f"during optimization (pipeline planning ray-casts 600)")
     return pos, rot, dict(wall_s=wall, trace=log, n_pruned=n_pruned_total,
+                          clear_trace=clear_trace,
                           n_vias=n_vias, view=view,
                           claimed_captures=claimed_capt,
                           audited_poses=audit_count[0],
@@ -1695,8 +1870,17 @@ def evaluate(tag, query, esdf_np_fn, homes_t, pos_list, rot_list, args,
     cov, _ = hard_coverage(query, vpos.cpu().numpy(), sixd_to_rotmats(vrot))
     chains = [chain(homes_t[r], pos_list[r]) for r in range(R)]
     lengths = [float(chain_lengths(c).sum()) for c in chains]
-    dense = torch.cat([segment_samples(c, 40) for c in chains])
-    min_clear = float(esdf_np_fn(dense).min())
+    # Clearance at several resolutions. A constraint checked only at its own
+    # samples is not checked ([[constraint-audit-rule]]): the minimum of a
+    # continuous quantity along a segment does not have to land on a sample,
+    # so the audit is reported as a *ladder* and the headline number is the
+    # finest rung. `res_40` is kept explicitly because every result recorded
+    # before 2026-08-05 used exactly that resolution.
+    clear_res = {}
+    for per_seg in (10, 40, 160, 640):
+        d = torch.cat([segment_samples(c, per_seg) for c in chains])
+        clear_res[str(per_seg)] = float(esdf_np_fn(d).min())
+    min_clear = clear_res[str(args.audit_samples)]
     # Inter-robot separation on a common time grid, denser than the one the
     # optimizer constrains (a constraint checked only at its own samples is
     # not checked). Reported, never repaired — same discipline as clearance.
@@ -1719,7 +1903,8 @@ def evaluate(tag, query, esdf_np_fn, homes_t, pos_list, rot_list, args,
     mission_time = max(off[r] + lengths[r] / args.speed for r in range(R))
     return dict(tag=tag, coverage=cov, makespan=max(lengths),
                 total_length=sum(lengths), per_robot=lengths,
-                min_clearance=min_clear, min_separation=min_sep,
+                min_clearance=min_clear, clearance_res=clear_res,
+                min_separation=min_sep,
                 mission_time_s=mission_time, start_offsets=list(off),
                 n_poses=int(vpos.shape[0]),
                 n_vias=sum(len(p) for p in pos_list) - int(vpos.shape[0]))
@@ -1863,7 +2048,32 @@ def parse_args():
                         "governed by the per-robot budget constraint; this "
                         "only keeps chains taut).")
     p.add_argument("--al_every", type=int, default=30)
-    p.add_argument("--col_samples", type=int, default=10)
+    p.add_argument("--col_samples", type=int, default=10,
+                   help="MINIMUM samples per path segment for the SOLVER's "
+                        "structure-clearance penalty and its per-pose "
+                        "acceptance test. --col_spacing raises this per batch "
+                        "for long segments; set --col_spacing 0 to go back to "
+                        "the fixed count (the pre-2026-08-05 behaviour, which "
+                        "under-resolved the constraint — see _col_per_seg).")
+    p.add_argument("--col_spacing", type=float, default=0.05,
+                   help="Target spacing (m) between the solver's collision "
+                        "samples. 0 disables spacing-based sampling.")
+    p.add_argument("--col_samples_max", type=int, default=2000,
+                   help="Cap on samples per segment, for memory. Whenever it "
+                        "binds, the spacing guarantee of --col_spacing is "
+                        "silently weakened, so the solver warns. 400 was too "
+                        "low at 50 m scale, where transit legs reach 45 m "
+                        "(0.11 m spacing instead of 0.05).")
+    p.add_argument("--audit_samples", type=int, default=640,
+                   help="Samples per segment for the reported clearance "
+                        "audit. Independent of --col_samples on purpose; the "
+                        "audit must out-resolve the solver "
+                        "([[constraint-audit-rule]]). 640 is where the ladder "
+                        "converges on this geometry (160 -> 640 moves the "
+                        "number by 8e-5 m). Every clearance number recorded "
+                        "before 2026-08-05 used 40, which was itself 6 mm "
+                        "optimistic; `clearance_res` in the JSON reports the "
+                        "whole ladder so old and new runs stay comparable.")
     p.add_argument("--sep_samples", type=int, default=600,
                    help="Time samples for the inter-robot separation "
                         "constraint. Must be fine enough that a violation "
@@ -2078,7 +2288,7 @@ def main():
         res = evaluate("joint-warm", query, esdf, homes_t, pos_w, rot_w, args,
                        view_list=view_w, offsets=info_w.get("offsets"))
         res["wall_s"] = info_w["wall_s"]
-        for k in ("n_pruned", "n_vias", "claimed_captures"):
+        for k in ("n_pruned", "n_vias", "claimed_captures", "clear_trace"):
             if k in info_w:
                 res[k] = info_w[k]
         results.append(res)
@@ -2137,7 +2347,8 @@ def main():
         res = evaluate("joint-cold", query, esdf, homes_t, pos_c, rot_c, args,
                        view_list=view_c, offsets=info_c.get("offsets"))
         res["wall_s"] = info_c["wall_s"]
-        for k in ("n_pruned", "n_vias", "claimed_captures", "audited_poses"):
+        for k in ("n_pruned", "n_vias", "claimed_captures",
+                  "audited_poses", "clear_trace"):
             if k in info_c:
                 res[k] = info_c[k]
         results.append(res)
@@ -2150,6 +2361,15 @@ def main():
     with open(out_json, "w") as fh:
         json.dump(dict(args=vars(args), results=results), fh, indent=2)
     print(f"\nJSON: {out_json}")
+
+    # Final chains, so any constraint can be re-audited at any resolution
+    # without re-solving. Runs before 2026-08-05 stored only scalars, which
+    # is why the §5e clearance question needed a full re-run to ask.
+    out_npz = os.path.join(args.out, "chains.npz")
+    np.savez(out_npz, **{f"{tag}__r{r}": ch
+                         for tag, chs in arm_chains.items()
+                         for r, ch in enumerate(chs)})
+    print(f"chains: {out_npz}")
 
     print(f"\n=== headroom pilot (lambda_route={args.lambda_route}, "
           f"alpha={args.alpha}) ===")

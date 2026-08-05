@@ -1996,3 +1996,322 @@ count. Once docks are static obstacles, none of the measured conflicts were
 temporal — they were all geometric. The timing machinery is retained because
 it is the correct model (the baseline waits 50–57 % of the time), but on this
 scenario it has never yet been the binding mechanism.
+
+### 9.12 Clearance was under-resolved, not unsatisfied (2026-08-05) — fixed, frontier re-run, win intact
+
+*The §5e open item from `SESSION_HANDOFF_2026-07-31.md`. It mattered more than
+the others because it sat on the **warm** arm — the one the whole paper rests
+on. Results: `hpro/results/frontier_clear/` (18 runs), independent audit
+`hpro/results/clearance_audit/`. Reproduce with `./hpro/run_frontier.sh
+hpro/results/frontier_clear` then `hpro/frontier_summary.py --root
+hpro/results/frontier_clear --compare hpro/results`.*
+
+**The defect.** 9 of the 18 stored frontier runs finished at 0.442–0.497 m
+against a 0.50 m constraint (`robot_radius` 0.35 + `clearance_margin` 0.15).
+The cause was not a weak penalty or a bad trade — it was **resolution**. The
+solver sampled each path segment at a fixed `col_samples=10` points; segments
+in these plans run up to 7.8 m, so it was checking clearance every 0.78 m. A
+straight segment grazing the hull dips about `h²/(8d)` between samples, which
+at that spacing is ~5 cm. Printing both views at once made it unambiguous
+(`pilot_baseline`, warm arm):
+
+| after phase | solver's own view (10/seg) | audit (40/seg) | converged (640/seg) |
+|---|---|---|---|
+| via insertion | 0.6097 | 0.6086 | — |
+| first shorten sweep | 0.5224 ✓ | 0.4796 ✗ | — |
+| final | 0.5215 ✓ | 0.4786 ✗ | **0.4725** ✗ |
+
+`_insert_vias` samples at 40/seg, so the plan **enters** the sweeps genuinely
+feasible. The shorten phase then pulls the chain taut against the hull and
+stops the moment its own 10-sample view reads 0.52 — landing 3 cm inside the
+constraint, in a place it never looked. Note the audit at 40/seg was itself
+6 mm optimistic: the reported 0.4786 was not the truth either.
+
+**The fix** (`_col_per_seg`): bound the sample *spacing*, not the sample
+*count*. `--col_spacing` (default 0.05 m) raises the per-segment count for the
+whole batch from the longest segment in it, padded by how far a mover can
+travel before the check is reused — the pre- and post-move violations are
+compared to each other, so they must be measured at one resolution. Every
+solver-side clearance test now goes through it: the penalty, the per-pose
+acceptance gate, the repair pass, via insertion, the prune shortcut test and
+the reseed slot test. `--col_spacing 0` restores the old fixed-count
+behaviour, so the defect is ablatable rather than merely gone.
+
+The audit moved too, per [[constraint-audit-rule]]: `--audit_samples` default
+40 → 640, and `evaluate` now reports the whole ladder (`clearance_res`:
+10/40/160/640) rather than one number, because the minimum of a continuous
+quantity along a segment need not land on a sample — a single resolution is a
+claim, not a measurement. On this geometry the ladder converges by 160
+(160 → 640 moves it by 8e-5 m). Final chains are dumped to `chains.npz` beside
+every result so any constraint can be re-audited later without re-solving;
+that this was impossible is why answering §5e needed a full re-run.
+
+**Cost of holding the constraint: nothing measurable.** All 18 runs re-solved
+(5 operating points × 3 pipeline seeds, plus R=3,4,5), same defaults, still
+bit-for-bit reproducible:
+
+| | before (§9.9) | after |
+|---|---|---|
+| Δcoverage | +2.39 ± 1.13 pts | **+2.45 ± 1.04 pts** |
+| Δmakespan | −5.55 ± 2.89 % | **−5.39 ± 2.70 %** |
+| Pareto-dominated | 15/15 | **15/15** |
+| worst run | +1.01 pts, −0.61 % | +1.01 pts, −0.61 % |
+| worst clearance, 640/seg | **0.4427 m ✗** | **0.5071 m ✓** |
+| worst separation | 0.80 m | 0.83 m |
+
+R=3/4/5 hold as well, both metrics still beating the pipeline. The floor
+sitting just above 0.50 is not a coincidence: `eb_slack` = 0.02 m is added
+inside the penalty, so the solver aims a couple of centimetres above the
+constraint and now actually gets there.
+
+*(These are the final numbers, produced by the complete 18-run sweep of
+2026-08-05 that also includes the §9.12.3 via fix and the §9.12.4 acceptance-
+tolerance fix. Intermediate values quoted during that day — +2.42 pts /
+−5.39 %, worst clearance 0.5200 m — came from earlier passes of the same sweep
+before those two fixes landed and are superseded.)*
+
+**§9.7/§9.9/§9.11 therefore stand as published on their headline numbers**, and
+for the first time the constraint in the claim is one the results demonstrably
+satisfy.
+
+#### 9.12.1 The pipeline's own clearance, measured at last (the other §5e item)
+
+Every `pipeline` row reported `min_clearance = NaN`, so "we clear the structure
+better than the baseline" was unsupported in *either* direction.
+`hpro/audit_clearance.py` — deliberately a separate program from the solver,
+since a self-report inherits the solver's blind spots — rebuilds the ESDF from
+a pipeline run on disk and re-measures the **executed ST-A\* trajectories**.
+Those are dense (longest segment 0.07 m), so their ladder is flat and the
+number is not a sampling artifact.
+
+| | min | median | max | below 0.50 m |
+|---|---|---|---|---|
+| pipeline (executed ST-A\*) | **0.3275 m** | 0.4358 m | 1.2042 m | 11 / 18 |
+| ours (joint-warm) | **0.5200 m** | 0.5905 m | 1.0249 m | **0 / 18** |
+
+Ours is the higher of the two in 14 of 18 runs; in the other 4 the pipeline had
+0.92–1.20 m of slack and we spend some of it on a shorter path, never going
+below our own constraint.
+
+**The honest reading, which is emphatically NOT "the baseline's paths are
+infeasible".** Two things have to be accounted for before any feasibility
+verdict.
+
+*(1) The pipeline enforces a looser rule.* `INFLATION_VOXELS =
+int(ROBOT_RADIUS / VOXEL_RESOLUTION) + 1` = 4 voxels = **0.40 m** of spherical
+dilation, against our 0.50 m. Its intent is plainly ROBOT_RADIUS = 0.35 m of
+true clearance, with the +1 voxel absorbing voxelization error.
+
+*(2) This ESDF is biased, and not in the direction one would guess.* Measured
+(`audit_clearance.py --calibrate 200000`, sampling the true mesh surface,
+where a perfect field would read 0):
+
+| mean | median | p1 | p99 | std |
+|---|---|---|---|---|
+| **−0.108 m** | −0.121 m | −0.221 m | +0.046 m | 0.057 |
+
+The field reads the true surface as a tenth of a metre *inside* the obstacle,
+because `distance_transform_edt` measures voxel **centre to centre**, so the
+voxelized obstacle effectively extends ~1 voxel past the real surface. The
+field is therefore **pessimistic**: it under-reports true clearance by ~0.11 m.
+Correcting for it:
+
+| | as measured | true (≈ +0.108) |
+|---|---|---|
+| pipeline, worst of 18 (`s7_tc65`) | 0.3275 m | **0.436 m** |
+| pipeline, `pilot_baseline` | 0.4134 m | 0.521 m |
+| ours, worst of 18 | 0.5200 m | 0.628 m |
+
+**Every pipeline trajectory clears the 0.35 m robot radius with margin to
+spare.** The earlier phrasing of this section called 8 of them "below 0.40 m"
+and implied a defect; that was wrong — corrected 2026-08-05 after measuring
+the bias rather than estimating it. What remains is a mild observation, not a
+claim: a few executed trajectories sit below what their own 0.40 m dilation
+should have guaranteed (≈0.51 m in true terms), plausibly the OMPL smoothing
+pass (`VRP/mapf/path_smoother.py`, `SPLINE_SAFETY_VOXELS = 1`) cutting corners
+after ST-A\* planned on the inflated grid. It is worth one sentence in a paper
+and no more.
+
+The bias is a constant offset applied to both arms, so **comparisons between
+arms are unaffected** — only absolute feasibility verdicts need the
+correction. The supported claim is therefore:
+
+> our refined plans hold a **10 cm stricter** structure-clearance constraint
+> than the plans they refine, satisfy it in every run, and are still shorter
+> and higher-coverage.
+
+and §9.12.3 checks that the win does not *depend* on that extra strictness.
+
+#### 9.12.2 What this does *not* change
+
+* **The cold-arm numbers in `SESSION_HANDOFF_2026-07-31.md` §5b/§5c predate the
+  fix** and were recorded at `min_clearance` 0.44 m — i.e. also infeasible. A
+  smoke run at the new defaults reaches 0.5078 m and 0.7593 coverage in 30
+  expand sweeps, so the fix costs cold nothing either; but the §5c go/no-go
+  verdict does not depend on it in any case, since cold missed its bar by
+  13–17 points and a *tighter* constraint can only ever cost coverage. Option
+  A stays failed and the paper stays scoped to refinement.
+* **`--col_spacing 0` reproduces the pre-fix solver bit-for-bit** (verified on
+  `pilot_baseline`: 0.478551 m at 40/seg, makespan 106.401138 m, coverage
+  0.9608 — the stored §9.7 numbers exactly). `_insert_vias` keeps a floor of 40
+  samples/segment for that reason; the floor never binds under the spacing rule
+  here, since the shortest max-segment across the 18 runs is 7.75 m and the
+  floor only takes over below 2.00 m.
+
+#### 9.12.3 Matched-margin control: the win does not depend on our stricter rule
+
+*Krystof's point, 2026-08-05: if the pipeline enforces a looser clearance rule
+than we do, then holding ourselves to 0.50 m while measuring them against it is
+not a fair comparison, and calling their paths "infeasible" is simply wrong.
+Both corrections are made — §9.12.1 above for the wording, and this section for
+the experiment. Results: `hpro/results/frontier_match/`. Reproduce with
+`./hpro/run_frontier.sh hpro/results/frontier_match --clearance_margin 0.05`.*
+
+> **⚠ PRE-FIX NUMBERS — see §9.13.** This sweep ran before §9.12.4's
+> acceptance-tolerance fix and the `col_samples_max` change, and
+> `hpro/results/frontier_match/` was subsequently deleted and is only 1/18
+> regenerated. The conclusion (the win is insensitive to the margin) is what
+> matters and is expected to hold; the figures below must be refreshed by the
+> §9.13 command before they are cited.
+
+The whole 18-run sweep was repeated with `clearance_margin` 0.15 → 0.05, i.e.
+**our constraint set to the pipeline's own 0.40 m**, everything else identical:
+
+| | at our 0.50 m | at the pipeline's 0.40 m |
+|---|---|---|
+| Δcoverage | +2.42 ± 1.05 pts | **+2.45 ± 1.04 pts** |
+| Δmakespan | −5.39 ± 2.75 % | **−5.40 ± 2.73 %** |
+| Pareto-dominated | 15/15 | **15/15** |
+| worst clearance | 0.5200 m (vs 0.50) | **0.4048 m (vs 0.40)** |
+| worst separation | 0.82 m | 0.83 m |
+
+The frontier win is **insensitive to the clearance rule** across a 10 cm range:
+the refiner is not buying coverage or makespan with proximity to the structure.
+That is the control that makes the §9.12.1 claim safe to state — we can hold
+either margin, so choosing the stricter one costs nothing and is not what
+produces the result.
+
+**The matched-margin run also exposed a real bug in `_insert_vias`, now
+fixed.** At the looser margin, `pilot_s1_tc85` finished at **−0.1000 m** —
+a waypoint 10 cm *inside* the hull, constant through every phase. Cause: the
+via seed is pushed outward along the ESDF gradient, but the result was never
+checked. The EDT is constant across the first occupied shell, so inside a thin
+structure every voxel reads the same −1 voxel, the gradient is ~0, the
+normalised step is noise, and the seed never escapes — yet a via was inserted
+there anyway, *adding* an infeasible waypoint. The loop then re-found the same
+segment until it burned all 8 vias. Fixed three ways: a via is inserted only
+if verified clear of both structure and docks; a deterministic spherical probe
+(18 fixed directions × radii to 3 m) backs up the gradient push; and a seed
+that cannot be rescued is recorded — by world position, since insertion
+renumbers segments — and abandoned instead of retried. `pilot_s1_tc85` now
+inserts 3 useful vias instead of 8 useless ones and finishes at 0.4346 m.
+
+The fix is a **no-op at the 0.50 m margin** (verified bit-identical on
+`pilot_baseline`, `pilot_s1_tc85` and `pilot_r4_tc90`), because there every
+via already verified feasible — so §9.12's table stands unchanged.
+
+#### 9.12.4 "Feasible" meant "feasible to within a millimetre" — fixed
+
+Found while checking whether `col_samples_max` was binding at 50 m scale, and
+worth recording as its own item because it is a *semantic* defect, not a
+resolution one.
+
+The acceptance test admits a move whose violation is `<= tol`, with
+`tol = 1e-3`. So a plan that rides the constraint settles exactly `tol`
+**inside** it. At pilot scale this never showed, because the optimizer never
+got close enough to the boundary to notice. On the 50 m mesh with the sampling
+cap raised (`--col_samples_max 2000`, giving the promised 0.05 m spacing on
+45 m transit legs instead of 0.11 m), it did: `full50_tc78` settled at
+**0.4992 m against a 0.50 m constraint** — 0.8 mm under, and the extra freedom
+bought it 3.5 m of makespan.
+
+Fix: the solver now defends `col_margin = margin + tol` everywhere it touches
+clearance (the penalty, the PGD projection, and both sides of the acceptance
+test), so a move accepted at violation `<= tol` has true clearance `>= margin`.
+`full50_tc78` re-solves to 0.5066 m. Two supporting changes: `col_samples_max`
+default 400 → 2000, and `_col_per_seg` now **warns when the cap binds**,
+because a silently weakened spacing guarantee is the same failure mode as §9.12
+one level up.
+
+**Consequence: every number in §9.12/§9.12.3 had to be re-measured**, since the
+tightened margin changes the reachable set. The 18-run 0.50 m sweep
+(`frontier_clear`) was re-run to completion and is what §9.12's table now
+reports.
+
+### 9.13 · STATE AS OF 2026-08-05, END OF SESSION — read before resuming
+
+Work was stopped mid-sweep at Krystof's request. Exactly what is and is not on
+disk:
+
+| results dir | state | trustworthy? |
+|---|---|---|
+| `hpro/results/frontier_clear/` | **18/18 complete**, current code | **YES — this is the reference** |
+| `hpro/results/frontier_match/` | **1/18** (deleted and only partly regenerated) | **NO — must be re-run** |
+| `hpro/results/full50/` | **empty** (deleted, not regenerated) | **NO — must be re-run** |
+| `hpro/results/clearance_audit/` | 18 files, but the *ours* column came from pre-fix chains | pipeline column YES, ours column STALE |
+| `hpro/results/frontier{,_seeds,_robots}/` | the original pre-2026-08-05 runs | historical reference only |
+
+**To resume, in order (~35 min of compute, all unattended):**
+
+```bash
+./hpro/run_frontier.sh hpro/results/frontier_match --clearance_margin 0.05
+mkdir -p hpro/results/full50/tc78 hpro/results/full50/tc90
+for t in tc78 tc90; do
+  $ipy hpro/joint_pilot.py --pipeline_dir outputs/full50_$t --modes warm \
+       --out hpro/results/full50/$t --no_show
+done
+for d in outputs/pilot_*; do n=$(basename $d); grp=frontier
+  case $n in pilot_s*) grp=frontier_seeds;; pilot_r*) grp=frontier_robots;; esac
+  $ipy hpro/audit_clearance.py $d \
+     --chains hpro/results/frontier_clear/$grp/$n/chains.npz \
+     --json_out hpro/results/clearance_audit/$n.json
+done
+```
+
+**Numbers quoted in §9.12.3 and §9.12.5 below are from PRE-fix runs** (before
+§9.12.4's tightened margin, and for §9.12.3 also before the cap change). Their
+*conclusions* are expected to survive — the fixes move clearance by ~1 cm and
+left the 0.50 m sweep's aggregate unchanged to within 0.03 pts — but the
+specific figures must be refreshed by the commands above before they go in a
+paper. They are kept, marked, rather than deleted, because the conclusions are
+what the next session needs to know.
+
+#### 9.12.5 Full-size 50 m mesh (PRE-FIX NUMBERS — re-run before citing)
+
+*Baselines `outputs/full50_tc{78,90}` (50 m wreck = 4× the pilot's surface
+area, 80k surface points, 1500 candidates, 2 robots, seed 42, otherwise the
+§9.7 settings). Generated with `scripts/run_full_pipeline.py
+--mesh_target_length 50.0 --num_surface_points 80000 --num_candidates 1500`.
+These baselines ARE on disk and do not need regenerating; only the refiner runs
+were lost.*
+
+| target | V | pipeline | joint refinement | Δcov | Δmakespan | clearance | wall |
+|---|---|---|---|---|---|---|---|
+| 0.78 | 77 | 0.7826 @ 241.8 m | 0.8141 @ 239.0 m | +3.15 | −1.2 % | 0.529 | 46 s |
+| 0.90 | 126 | 0.9004 @ 307.8 m | 0.9234 @ 285.6 m | +2.30 | −7.2 % | 0.521 | 121 s |
+
+Both Pareto-dominate, at 4× the surface area, 4× the points and 2.2–2.6× the
+viewpoint count of the pilot — **the result is not a pilot-scale artifact**,
+which was the last open axis of §5's list. Coverage gains match pilot scale
+(+2.79 ± 0.13 at 0.78, +1.97 ± 0.48 at 0.90); the 0.78 makespan saving is the
+one number that does *not* transfer (−1.2 % vs −5.93 ± 1.25 % at pilot scale)
+and should be stated rather than averaged away. Pipeline planning takes
+253–354 s against the refiner's 46–121 s. The clearance ladder converges here
+too (640 → 8192 samples/segment moves it 0.5 mm), despite transit legs of up
+to 45 m.
+
+Also visible at this scale: the pipeline's own **inter-robot separation falls
+to 0.39 m** at the 0.90 point (its rule is 0.80 m) while ours holds 0.93 m —
+the same docked-robot blind spot as §9.11, now reproduced at full size.
+
+**A hard ceiling in the baseline, found here (reproducible):** the 0.95
+operating point cannot be generated at all — `run_full_pipeline.py`
+**segfaults (exit 139) inside cuOpt's VRP solver**, twice out of two attempts,
+at 213 selected viewpoints / 93 750 constraints. An intermediate 0.93 target
+also crashes, at 155 viewpoints; 126 viewpoints succeeds. So the failure
+threshold on this problem sits between **126 and 155 viewpoints**. This is
+worth reporting honestly in both directions: it is a real scaling limit of the
+combinatorial pipeline, *and* it bounds us too, because the refiner is
+warm-started from that pipeline's output — no baseline, no refinement. It is a
+direct argument for the standalone-planner direction that §9.8 could not
+deliver.

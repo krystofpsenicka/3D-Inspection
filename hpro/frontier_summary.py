@@ -44,10 +44,10 @@ def parse_name(name):
     return None, None
 
 
-def load_runs():
+def load_runs(root=_RESULTS):
     runs = []
     for path in sorted(glob.glob(
-            os.path.join(_RESULTS, "frontier*", "*", "joint_pilot.json"))):
+            os.path.join(root, "frontier*", "*", "joint_pilot.json"))):
         name = os.path.basename(os.path.dirname(path))
         seed, tc = parse_name(name)
         if seed is None:
@@ -65,12 +65,36 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--plot_seed", type=int, default=42,
                     help="Which seed's frontier to draw (table covers all).")
+    ap.add_argument("--root", default=_RESULTS,
+                    help="Results root holding the frontier*/ groups.")
+    ap.add_argument("--compare", default=None,
+                    help="A second results root; prints per-run before/after "
+                         "deltas against it. Used for the §9.12 clearance "
+                         "re-run, where the question is not only 'does the "
+                         "constraint hold now' but 'what did holding it "
+                         "cost'.")
     args = ap.parse_args()
 
-    runs = load_runs()
+    runs = load_runs(args.root)
     if not runs:
-        raise SystemExit(f"No runs found under {_RESULTS}/frontier*/")
+        raise SystemExit(f"No runs found under {args.root}/frontier*/")
     seeds = sorted({r["seed"] for r in runs})
+
+    if args.compare:
+        old = {r["name"]: r for r in load_runs(args.compare)}
+        print(f"=== before ({args.compare}) -> after ({args.root}) ===")
+        print(f"{'run':<18} {'clearance':>19} {'coverage':>19} "
+              f"{'makespan (m)':>21}")
+        for r in sorted(runs, key=lambda r: (r["seed"], r["tc"])):
+            o = old.get(r["name"])
+            if o is None:
+                continue
+            a, b = o["by"]["joint-warm"], r["by"]["joint-warm"]
+            print(f"{r['name']:<18} "
+                  f"{a['min_clearance']:>8.4f}->{b['min_clearance']:<8.4f} "
+                  f"{a['coverage']:>8.4f}->{b['coverage']:<8.4f} "
+                  f"{a['makespan']:>9.2f}->{b['makespan']:<9.2f}")
+        print()
 
     print(f"{'run':<18} {'seed':>4} {'arm':<12} {'cov':>7} {'makespan':>9} "
           f"{'total':>8} {'poses':>6} {'vias':>5} {'clear':>6} {'sep':>6} "
@@ -158,7 +182,7 @@ def main():
     ax.legend(fontsize=9, loc="lower right")
     ax.set_title("coverage / makespan frontier: pipeline vs joint refinement"
                  + (f"  (seed {args.plot_seed})" if len(seeds) > 1 else ""))
-    out = os.path.join(_RESULTS, "frontier", "frontier.png")
+    out = os.path.join(args.root, "frontier", "frontier.png")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     print(f"\nSaved: {out}")

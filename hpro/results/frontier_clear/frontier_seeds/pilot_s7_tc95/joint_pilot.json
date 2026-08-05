@@ -1,0 +1,176 @@
+{
+  "args": {
+    "pipeline_dir": "outputs/pilot_s7_tc95",
+    "out": "hpro/results/frontier_clear/frontier_seeds/pilot_s7_tc95",
+    "steps": 400,
+    "cold_steps": 1200,
+    "lambda_route": 0.02,
+    "alpha": 0.5,
+    "lr_pos": 0.05,
+    "lr_rot": 0.02,
+    "beta": 1.0,
+    "backbone": "zbuf",
+    "keep_target": 0.55,
+    "keep_margin": 0.05,
+    "lambda_route_cold": 0.002,
+    "w_cover": 20.0,
+    "cap_pos": 0.04,
+    "cap_rot": 0.02,
+    "objective": "constrained",
+    "solver": "elastic",
+    "eb_sweeps": 40,
+    "eb_inner": 25,
+    "eb_lr": 0.02,
+    "eb_mu": 200.0,
+    "eb_slack": 0.02,
+    "eb_tol": 0.02,
+    "eb_rounds": 3,
+    "no_prune": false,
+    "no_expand": false,
+    "eb_expand_sweeps": 30,
+    "cold_expand_sweeps": 200,
+    "cold_max_vias": 40,
+    "reseed_clusters": 48,
+    "reseed_min_cluster": 40,
+    "reseed_min_gain": 25,
+    "reseed_slot_tries": 25,
+    "reseed_after": 2,
+    "eb_debug": false,
+    "eb_trust": 0.4,
+    "eb_trust_rot": 0.25,
+    "eb_keep_soft": 0.05,
+    "eb_repair": 25,
+    "eb_gain_sharp": 12.0,
+    "eb_w_gain": 1.0,
+    "eb_gain_sharp_lo": null,
+    "eb_anneal_sweeps": 20,
+    "eb_demand_w": 0.0,
+    "eb_demand_max_uniq": 25,
+    "eb_demand_clusters": 24,
+    "eb_demand_min": 20,
+    "eb_demand_every": 5,
+    "eb_route_reg": 0.3,
+    "al_every": 30,
+    "col_samples": 10,
+    "col_spacing": 0.05,
+    "col_samples_max": 2000,
+    "audit_samples": 640,
+    "sep_samples": 600,
+    "d_separation": 0.8,
+    "robot_radius": 0.35,
+    "clearance_margin": 0.15,
+    "speed": 2.0,
+    "frustum_sharpness": 12.0,
+    "seed": 0,
+    "modes": "warm",
+    "no_show": true
+  },
+  "results": [
+    {
+      "tag": "pipeline",
+      "coverage": 0.9508,
+      "makespan": 120.31385803222656,
+      "total_length": 234.32430267333984,
+      "per_robot": [
+        114.01044464111328,
+        120.31385803222656
+      ],
+      "min_clearance": NaN,
+      "min_separation": 0.9934006929397583,
+      "n_poses": 58,
+      "wall_s": NaN
+    },
+    {
+      "tag": "warm-init",
+      "coverage": 0.9508,
+      "makespan": 117.7259750366211,
+      "total_length": 230.23021697998047,
+      "per_robot": [
+        112.50424194335938,
+        117.7259750366211
+      ],
+      "min_clearance": 0.8781411647796631,
+      "clearance_res": {
+        "10": 0.8783682584762573,
+        "40": 0.8783682584762573,
+        "160": 0.8783682584762573,
+        "640": 0.8781411647796631
+      },
+      "min_separation": 0.9002848863601685,
+      "mission_time_s": 58.86298751831055,
+      "start_offsets": [
+        0.0,
+        0.0
+      ],
+      "n_poses": 58,
+      "n_vias": 0,
+      "wall_s": 0.0
+    },
+    {
+      "tag": "joint-warm",
+      "coverage": 0.965,
+      "makespan": 107.99153137207031,
+      "total_length": 212.6603546142578,
+      "per_robot": [
+        104.6688232421875,
+        107.99153137207031
+      ],
+      "min_clearance": 0.5509998798370361,
+      "clearance_res": {
+        "10": 0.5509998798370361,
+        "40": 0.5509998798370361,
+        "160": 0.5509998798370361,
+        "640": 0.5509998798370361
+      },
+      "min_separation": 0.9165129661560059,
+      "mission_time_s": 53.995765686035156,
+      "start_offsets": [
+        0.0,
+        0.0
+      ],
+      "n_poses": 58,
+      "n_vias": 1,
+      "wall_s": 11.397080831055064,
+      "n_pruned": 1,
+      "claimed_captures": 287,
+      "clear_trace": [
+        {
+          "phase": "init (pre-via)",
+          "clear_solver": 0.8783009052276611,
+          "clear_audit": 0.8781411647796631,
+          "solver_per_seg": 198
+        },
+        {
+          "phase": "via insertion",
+          "clear_solver": 0.8783009052276611,
+          "clear_audit": 0.8781411647796631,
+          "solver_per_seg": 198
+        },
+        {
+          "phase": "shorten round 0",
+          "clear_solver": 0.8783009052276611,
+          "clear_audit": 0.8781411647796631,
+          "solver_per_seg": 198
+        },
+        {
+          "phase": "shorten round 1",
+          "clear_solver": 0.8783009052276611,
+          "clear_audit": 0.8781411647796631,
+          "solver_per_seg": 198
+        },
+        {
+          "phase": "expand",
+          "clear_solver": 0.5509998798370361,
+          "clear_audit": 0.5509998798370361,
+          "solver_per_seg": 169
+        },
+        {
+          "phase": "tighten",
+          "clear_solver": 0.5509998798370361,
+          "clear_audit": 0.5509998798370361,
+          "solver_per_seg": 169
+        }
+      ]
+    }
+  ]
+}

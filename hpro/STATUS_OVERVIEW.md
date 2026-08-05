@@ -15,6 +15,17 @@
 > so the claim is *refinement*, not standalone planning; and the separation
 > constraint was silently unenforced until it was measured (§4e.2) — read
 > that before trusting any constraint claim here.
+>
+> **⚠ 2026-08-05 — read §4g FIRST, then §4f.** The structure-clearance
+> constraint was being checked at too coarse a resolution on the *warm* arm,
+> so 9 of 18 published runs sat a few centimetres inside a limit the solver
+> believed it was meeting. That, plus two further defects found the same day,
+> are fixed; all 18 runs re-solved; the headline win is unchanged (15/15,
+> **+2.45 ± 1.04 pts, −5.39 ± 2.70 %**) with every run now genuinely clearing
+> 0.50 m (worst 0.5071 m). The pipeline's own clearance has been measured for
+> the first time, and the whole thing has been shown to hold at full 50 m
+> scale. **§4g says which result files are current and which two experiments
+> were interrupted mid-re-run and must be redone before citing.**
 
 *Written for reading alongside the work. The formal evidence document is
 [`RESEARCH_PLAN.md`](RESEARCH_PLAN.md); this file explains the same state in prose,
@@ -446,6 +457,167 @@ ray-cast candidates is a strong *global* mechanism, and local moves plus
 greedy repair do not reconstruct it from a naive start. That is worth stating
 plainly in the paper rather than leaving for a reviewer to ask about.
 
+## 4f · Update 2026-08-05: the clearance constraint is now real too (plan §9.12)
+
+The 31 July handoff left one item that mattered more than the others: the
+audit said 9 of the 18 stored frontier runs finished at 0.442–0.497 m against
+a 0.50 m clearance limit — and unlike every earlier boundary case, this one
+was on the **warm** arm, the one the paper depends on.
+
+It turned out to be the *same failure mode as the separation bug*, one layer
+down. The solver checked each path segment for clearance at ten evenly spaced
+points. Segments in these plans are up to 7.8 m long, so "ten points" means
+looking every 78 cm — and a straight line that grazes a curved hull dips
+about five centimetres between two such looks. Printing the solver's own view
+and the audit's view side by side settled it in one run: the plan is genuinely
+clear (0.61 m) when the sweeps start, and the shortening phase then pulls it
+taut against the hull until *its own ten samples* read 0.52 m — while the truth
+is 0.4725 m. It stopped in a place it had never looked.
+
+The fix is to bound the sample **spacing** rather than the sample count, so a
+long segment simply gets more samples (5 cm apart, everywhere the solver
+touches clearance: the penalty, the acceptance test, the repair pass, via
+insertion, and both discrete moves). The audit moved with it, from 40 to 640
+samples per segment, and results now record the whole ladder of resolutions
+instead of one number — because a single resolution is a claim, not a
+measurement. Final trajectories are also written to disk now, so any future
+question about any constraint can be asked without re-running the solver;
+that this was impossible is why answering this one cost a full re-run.
+
+**All eighteen runs were re-solved. The result is unchanged and the constraint
+now holds:**
+
+| | before | after |
+|---|---|---|
+| coverage gain | +2.39 ± 1.13 pts | **+2.45 ± 1.04 pts** |
+| makespan saving | −5.55 ± 2.89 % | **−5.39 ± 2.70 %** |
+| improved on both metrics | 15/15 | **15/15** |
+| worst clearance | **0.4427 m — infeasible** | **0.5071 m — feasible** |
+
+So holding the constraint cost nothing measurable, which is the outcome worth
+stating: the earlier numbers were not *bought* with the violation.
+
+**And the baseline's clearance is finally measured (§9.12.1).** Every pipeline
+row used to report "not available", which meant the claim "our plans keep
+better distance from the structure" was unsupported in both directions. A
+separate audit program — separate on purpose, because a solver reporting on
+itself inherits its own blind spots — re-measures the pipeline's executed
+trajectories in the same field: they range 0.33–1.20 m, where ours never go
+below 0.52 m.
+
+**That does not make their paths unsafe, and an early draft of this section
+wrongly implied it did.** Two corrections were needed. First, the pipeline
+enforces a *looser rule than ours by design* — 0.40 m of grid inflation
+(4 voxels), whose intent is the 0.35 m robot radius, against our 0.50 m.
+Second, and less obvious, **the distance field itself is biased, in the
+opposite direction from the natural guess.** Asked what it reads at 200 000
+points sampled on the true mesh surface — where a perfect field would read
+zero — it answers **−0.108 m on average**: it treats the real surface as a
+tenth of a metre inside the obstacle, because the distance transform measures
+voxel centre to voxel centre and so the voxelized hull effectively bulges a
+voxel past the real one. The field *under*-reports clearance. Correcting for
+it, the pipeline's worst trajectory of the eighteen carries about **0.44 m** of
+true clearance — comfortably clear of the 0.35 m robot radius. Their plans are
+feasible; ours are simply held to a stricter rule.
+
+Since the bias is the same constant for both arms, it cancels in every
+comparison between them and matters only for absolute verdicts. The claim that
+survives is: **our refined plans hold a 10 cm stricter clearance constraint
+than the plans they refine, satisfy it every time, and are still shorter and
+higher-coverage.** And because "we chose a stricter constraint" invites the
+obvious objection that the win might be an artifact of that choice, the whole
+sweep was also re-run at the pipeline's *own* 0.40 m rule.
+
+**Matched-margin control (§9.12.3): the win does not depend on the rule.** All
+eighteen runs repeated with our constraint set to the pipeline's 0.40 m,
+everything else identical:
+
+| | at our 0.50 m | at their 0.40 m |
+|---|---|---|
+| coverage gain | +2.42 ± 1.05 pts | **+2.45 ± 1.04 pts** |
+| makespan saving | −5.39 ± 2.75 % | **−5.40 ± 2.73 %** |
+| improved on both | 15/15 | **15/15** |
+| worst clearance | 0.5200 (rule 0.50) | 0.4048 (rule 0.40) |
+
+*(Both columns here are pre-fix figures — see §4g. The matched-margin sweep
+needs re-running before the numbers are cited; the conclusion is expected to
+stand.)*
+
+Identical within noise across a 10 cm range of the constraint — so the refiner
+is not buying its coverage or its shorter paths by flying closer to the wreck.
+That control is what makes it safe to keep the stricter margin as the default:
+it costs nothing, and it is not where the result comes from.
+
+That experiment also earned its keep by **finding a real bug**. At the looser
+margin one run finished with a waypoint ten centimetres *inside* the hull, and
+stuck there through every phase. The via mechanism seeds a detour point by
+pushing the worst offending sample outward along the distance field — but never
+checked whether the push had worked. Inside a thin structure the field is
+perfectly flat (every occupied voxel reports the same one-voxel depth), so
+there is nothing to push along; the seed stayed put and was inserted anyway,
+adding an infeasible waypoint, after which the routine kept rediscovering the
+same segment until it exhausted its budget. Now a via is inserted only if
+verified clear, a fixed-direction spherical probe backs up the gradient when
+the field is flat, and an unrescuable seed is abandoned rather than retried.
+That run went from 8 useless vias and −0.10 m to 3 useful ones and 0.43 m. The
+fix is a no-op at the 0.50 m margin, where every via already verified — so the
+table above is unaffected.
+
+## 4g · Where this actually stands, 2026-08-05 end of session — READ FIRST
+
+Work was stopped part-way through a re-run. This section says plainly what is
+finished, what is half-finished, and what to do first next time. The formal
+version with commands is RESEARCH_PLAN §9.13.
+
+**Two more defects were found after the clearance fix above, both fixed, both
+requiring everything to be re-measured.** The first was the via bug (described
+in §4f). The second is subtler and is the more interesting of the two: the
+solver's acceptance test allowed a move whose constraint violation was up to a
+millimetre, so "feasible" quietly meant "feasible to within a millimetre" — and
+a plan that pressed right up against the limit would settle just *inside* it.
+At pilot scale this never mattered, because the optimizer never got close
+enough to the boundary to notice. On the 50 m mesh, with the sampling made as
+fine as it was supposed to be, it did: one run finished 0.8 mm inside its
+limit. The solver now defends a margin tightened by exactly that tolerance, so
+a move it accepts is genuinely feasible. Same lesson as everything else this
+session — the constraint was never wrong, the *test* was.
+
+**Trustworthy right now:**
+
+* The main 18-run sweep at our 0.50 m margin — complete, current code,
+  `hpro/results/frontier_clear/`. **15/15 Pareto-dominated, +2.45 ± 1.04
+  coverage points, −5.39 ± 2.70 % makespan, worst clearance 0.5071 m against
+  0.50, worst separation 0.83 m against 0.80.** This is the reference result.
+* The measurement that the distance field reads −0.108 m on the true surface,
+  and everything that follows from it (§4f) — it does not depend on the solver.
+* The pipeline's own executed-trajectory clearances.
+
+**Not trustworthy right now — needs ~35 minutes of unattended re-running:**
+
+* The matched-margin sweep (1 of 18 runs on disk; the rest were deleted).
+* The 50 m results (deleted). The 50 m *baselines* are still on disk and do not
+  need regenerating — only the refiner runs, ~3 minutes.
+* The "ours" column of the clearance audit files (their pipeline column is
+  still fine).
+
+The conclusions those runs supported are expected to survive — the fixes move
+clearance by about a centimetre and left the 0.50 m sweep's headline unchanged
+to within 0.03 points — but the specific numbers must be refreshed before they
+go anywhere near a paper. They are kept and marked rather than deleted, because
+the conclusions are what the next session needs.
+
+**The 50 m mesh answered its question before the results were lost (§9.12.5).**
+At four times the surface area and roughly 2.5× the viewpoints, both operating
+points that could be generated still improved on both metrics (+3.15 and +2.30
+coverage points, −1.2 % and −7.2 % makespan). So the win is not a pilot-scale
+artifact — the last open axis on the list below. Two honest details: the
+−1.2 % makespan saving at the lower operating point is well short of what
+pilot scale showed, and should be reported rather than averaged away; and the
+highest operating point **could not be generated at all**, because the
+baseline's own VRP solver segfaults reproducibly somewhere between 126 and 155
+viewpoints. That last one cuts both ways — it is a genuine scaling limit of the
+combinatorial pipeline, and it also bounds us, since we refine *its* output.
+
 ## 5 · Next steps (rewritten for the pivot, priority order)
 
 1. ~~Inner solver for the warm arm~~ — **done 2026-07-24 (§4e): bar met.**
@@ -456,12 +628,38 @@ plainly in the paper rather than leaving for a reviewer to ask about.
    Still open on this axis: R > 2 robots and the 50 m mesh.
 4. ~~R > 2 robots~~ — **done (§4e.2): holds to 5 robots**, and our plans are
    measurably safer than the baseline's there. The 50 m mesh is still open.
-5. **SCP / coordinated wave moves** — the measured front-advance limitation
-   says exactly what a second-order method could still win.
-6. Then: MPC/receding-horizon mode, theory framing, and the paper skeleton.
+5. ~~Clearance constraint actually satisfied on the warm arm~~ — **done
+   2026-08-05 (§4f): 0/18 runs violate, win unchanged.** The pipeline's own
+   clearance is measured too, so the safety comparison now exists.
+6. ~~The 50 m full-size mesh~~ — **answered 2026-08-05 (§9.12.5): both
+   generatable operating points still dominate.** Re-run the two refiner
+   solves (~3 min, baselines are on disk) since the result files were lost.
+7. **Finish the interrupted re-runs** — matched-margin sweep and the 50 m
+   solves, per §4g / RESEARCH_PLAN §9.13. ~35 min, unattended. Do this before
+   citing any number from those two experiments.
+8. **SCP / coordinated wave moves** — the measured front-advance limitation
+   says exactly what a second-order method could still win. Out of budget for
+   the current push; it is a strong future-work paragraph precisely because
+   the motivation is measured rather than asserted.
+9. Then: MPC/receding-horizon mode, theory framing, and the paper skeleton.
    The parked online results (§4.3/§4c) stay citable as history.
 
-**Overall state in one sentence (2026-07-24, end of day):** the joint-OCP
+**Overall state in one sentence (2026-08-05, end of session):** the headline
+result survived a hard constraint audit and a scale-up — the joint refiner
+still improves both coverage (+2.45 ± 1.04 pts) and makespan (−5.39 ± 2.70 %)
+over the thesis pipeline in 15 of 15 runs across three seeds and five operating
+points and in all robot counts to five, and it holds at full 50 m scale too,
+but now every run genuinely clears the 0.50 m structure constraint (worst
+0.5071 m, audited at 640 samples/segment) and the 0.80 m separation constraint
+(worst 0.83 m), after three further defects were found and fixed the same day
+(clearance sampled by count instead of spacing; vias inserted without checking
+they were feasible; and an acceptance test whose tolerance let "feasible" mean
+"a millimetre inside"); the standing boundary is unchanged — cold start
+plateaus 19 points short, so this refines plans rather than replacing the
+planner — and the immediate task is finishing two interrupted re-runs (§4g)
+before anything gets written up.
+
+**Previous one-sentence state (2026-07-24, end of day):** the joint-OCP
 direction has passed its go/no-go and survived its robustness checks — an
 elastic-band coordinate-descent refiner with ray-cast-audited acceptance
 improves both coverage and makespan over the thesis pipeline in 15 of 15 runs
