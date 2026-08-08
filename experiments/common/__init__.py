@@ -1,4 +1,4 @@
-from .config import SEEDS_3, SEEDS_5, SEEDS_10, ExperimentConfig, ModelConfig
+from .config import SEEDS_3, SEEDS_5, SEEDS_10, ModelConfig
 from .persistence import aggregate_to_csv, load_run_result, save_run_result
 from .plotting import save_figure, setup_thesis_style
 from .stats import format_mean_std, mean_ci

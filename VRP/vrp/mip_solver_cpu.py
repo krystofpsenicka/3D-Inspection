@@ -31,6 +31,8 @@ class MIPSolverCPU(VRPSolverBase):
         depots: list[int],
         alpha: float = 1.0,
         warm_start_routes: list[list[int]] | None = None,
+        beta_aware_filter: bool = True,
+        forbidden_pair_cuts: bool = True,
     ):
         from ..core.types import VRPResult
 
@@ -55,6 +57,8 @@ class MIPSolverCPU(VRPSolverBase):
             alpha=alpha,
             warm_start_routes=warm_start_routes,
             mip_gap=self.mip_gap,
+            beta_aware_filter=beta_aware_filter,
+            forbidden_pair_cuts=forbidden_pair_cuts,
         )
 
         solver = pulp.HiGHS(

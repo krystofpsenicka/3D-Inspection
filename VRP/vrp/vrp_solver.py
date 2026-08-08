@@ -37,6 +37,8 @@ def solve_vrp(
     backend: VRPBackend = VRPBackend.HIGHS,
     time_limit: int = MIP_TIME_LIMIT,
     mip_gap: float = MIP_GAP,
+    beta_aware_filter: bool = True,
+    forbidden_pair_cuts: bool = True,
 ) -> VRPResult:
     """Solve the VRP using the specified MIP backend.
 
@@ -48,6 +50,10 @@ def solve_vrp(
         backend: ``VRPBackend.CUOPT`` (GPU) or ``VRPBackend.HIGHS`` (CPU).
         time_limit: MIP solver time budget (seconds).
         mip_gap: Relative optimality gap.
+        beta_aware_filter: Enable the β-aware reachability arc filter
+            (set False to ablate this cut).
+        forbidden_pair_cuts: Enable the forbidden-pair cuts (set False to
+            ablate them). Both flags default True; both False = plain lifted MTZ.
 
     Raises:
         RuntimeError: if the selected backend fails to find a solution.
@@ -84,6 +90,8 @@ def solve_vrp(
         depots,
         alpha=alpha,
         warm_start_routes=warm_start_routes,
+        beta_aware_filter=beta_aware_filter,
+        forbidden_pair_cuts=forbidden_pair_cuts,
     )
 
     if result.status != "success":

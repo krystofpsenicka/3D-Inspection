@@ -20,4 +20,6 @@ class VRPSolverBase(ABC):
         depots: list[int],
         alpha: float = 1.0,
         warm_start_routes: list[list[int]] | None = None,
+        beta_aware_filter: bool = True,
+        forbidden_pair_cuts: bool = True,
     ) -> VRPResult: ...

@@ -108,6 +108,13 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
         makespan = max(per_v) if per_v else 0.0
         total_cost = vrp_result.total_cost
         status = vrp_result.status
+        # Solver-budget accounting (reviewer #13): record the dual bound, the
+        # achieved optimality gap, and whether the 5% target was met inside the
+        # 120 s budget vs. timing out short of it.
+        _obj = float(vrp_result.objective_value)
+        _bound = float(vrp_result.best_bound)
+        gap = (_obj - _bound) / abs(_obj) if _bound > 0 and _obj != 0 else float("nan")
+        gap_reached = bool(not np.isnan(gap) and gap <= 0.05)
 
         # No MAPF in this experiment - VRP-only LBs.
         try:
@@ -127,6 +134,8 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
         makespan = float("nan")
         total_cost = float("nan")
         status = f"failed: {exc}"
+        gap = float("nan")
+        gap_reached = False
 
     main = {
         "alpha": alpha,
@@ -137,6 +146,8 @@ def run_single(alpha: float, seed: int, og, sampler, mesh_bounds_min,
         "route_balance_ratio": makespan / min(c for c in per_v if c > 0) if any(c > 0 for c in per_v) else 0,
         "solve_time": solve_time,
         "status": status,
+        "gap": gap,
+        "gap_reached": gap_reached,
     }
     return main, lb
 

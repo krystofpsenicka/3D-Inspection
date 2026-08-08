@@ -28,6 +28,7 @@ def _compute_valid_arcs(
     depot_set: set[int],
     cost: np.ndarray,
     T_tour_ub: float,
+    apply_reach: bool = True,
 ) -> tuple[np.ndarray, cp.ndarray]:
     """Compute valid (i, j, v) arc tuples and the GPU cost matrix.
 
@@ -61,7 +62,7 @@ def _compute_valid_arcs(
 
     full_mask = i_allowed[:, :, None] & j_allowed[:, None, :] & base_mask[None, :, :]
 
-    if T_tour_ub < float("inf"):
+    if apply_reach and T_tour_ub < float("inf"):
         # Reachability filter (DL1991 Prop. 6 adapted to multi-depot VRP):
         # arc (i, j, v) is infeasible when c[d_v, i] + c[i, j] + c[j, d_v] > T_tour_ub.
         # Treat depot-indexed terms as 0 when i or j is vehicle v's own depot (the
@@ -89,6 +90,8 @@ def build_vrp_mip(
     alpha: float = VRP_ALPHA,
     warm_start_routes: list[list[int]] | None = None,
     mip_gap: float = MIP_GAP,
+    beta_aware_filter: bool = True,
+    forbidden_pair_cuts: bool = True,
 ) -> tuple:
     """Build the combined-objective VRP MIP.
 
@@ -107,6 +110,15 @@ def build_vrp_mip(
         Feasible solution for warm-starting.
     mip_gap : float
         Relative optimality gap (logging only).
+    beta_aware_filter : bool
+        If True (default), apply the β-aware per-tour upper bound as the
+        Desrochers--Laporte Prop. 6 reachability arc filter. Set False to
+        ablate this cut (keeps every structurally valid arc).
+    forbidden_pair_cuts : bool
+        If True (default), add the forbidden-pair cuts x[k,i,v]+x[i,j,v]<=1
+        for jointly infeasible consecutive arcs. Set False to ablate them.
+        These two flags are independent; setting both False recovers the
+        plain lifted-MTZ formulation.
 
     Returns
     -------
@@ -186,7 +198,9 @@ def build_vrp_mip(
     )
 
     # ── arc validity ──────────────────────────────────
-    valid_arcs, cost_gpu = _compute_valid_arcs(n, K, depots, depot_set, cost, T_tour_ub)
+    valid_arcs, cost_gpu = _compute_valid_arcs(
+        n, K, depots, depot_set, cost, T_tour_ub, apply_reach=beta_aware_filter
+    )
     logger.info("[MIP] Valid arcs: %d (of %d possible)", len(valid_arcs), n * (n - 1) * K)
 
     # ── K_inf: jointly infeasible (predecessor, arc) pairs ──────────────
@@ -201,7 +215,7 @@ def build_vrp_mip(
     # MTZ without a per-vehicle rank variable cuts off feasible solutions  --  see the
     # comment next to the MTZ loop  --  so we add the cuts as separate constraints.)
     K_inf_map: dict[tuple[int, int, int], list[int]] = {}
-    if T_tour_ub < float("inf") and n_c >= 3:
+    if forbidden_pair_cuts and T_tour_ub < float("inf") and n_c >= 3:
         valid_arc_set = {(int(r[0]), int(r[1]), int(r[2])) for r in valid_arcs}
         # Group surviving arcs by (j, v) to look up predecessors quickly.
         arcs_by_v: dict[int, list[tuple[int, int]]] = {v: [] for v in range(K)}
