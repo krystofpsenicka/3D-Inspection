@@ -1,0 +1,15 @@
+{
+  "seed": 42,
+  "num_candidates": 1000,
+  "num_points": 200000,
+  "num_viewpoints": 276,
+  "coverage": 0.950005,
+  "t_sample": 1.2219417070000418,
+  "t_vis": 0.014359183999658853,
+  "t_opt": 0.18120539099982125,
+  "t_vrp": NaN,
+  "vrp_status": "skipped",
+  "vrp_makespan": NaN,
+  "dim": "C",
+  "swept_value": 1000
+}

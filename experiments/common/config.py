@@ -13,6 +13,7 @@ import numpy as np
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 TOSCA_DIR = os.path.join(MODELS_DIR, "TOSCA-dataset")
+EXTRA_MESHES_DIR = os.path.join(MODELS_DIR, "extra_real")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "experiments", "results")
 
 # Duke pose: trimesh Y-up GLB + Isaac Y->Z = R_x(-90 deg) composed with 180 deg X.
@@ -61,6 +62,28 @@ class ModelConfig:
         )
 
     @staticmethod
+    def extra_real(name: str) -> ModelConfig:
+        """Additional real high-resolution laser-scanned meshes (Stanford 3D
+        Scanning Repository), used for stage F to test that the pipeline
+        generalizes beyond the single Duke wreck at comparable/greater geometric
+        complexity (Armadillo 0.35M, Dragon 0.87M, Happy Buddha 1.09M faces vs
+        Duke 0.58M). Same sensor/robot settings as Duke; each mesh is rescaled to
+        ``target_length`` metres. See EXTRA_REAL_MODELS."""
+        fname, tlen = _EXTRA_REAL_MESHES[name]
+        mesh_path = os.path.join(EXTRA_MESHES_DIR, fname)
+        if not os.path.exists(mesh_path):
+            raise FileNotFoundError(f"Extra real mesh not found: {mesh_path}")
+        return ModelConfig(
+            name=name,
+            mesh_path=mesh_path,
+            target_length=tlen,
+            mesh_pose=_IDENTITY_POSE,
+            num_surface_points=200_000,
+            num_candidates=1500,
+            frustum=FrustumConfig(fov_deg=40.0, near=0.1, far=6.0),
+        )
+
+    @staticmethod
     def tosca(name: str) -> ModelConfig:
         """TOSCA dataset model, e.g. 'wolf0', 'cat0'."""
         mesh_path = os.path.join(TOSCA_DIR, f"{name}.off")
@@ -91,6 +114,16 @@ TOSCA_ALL = [
     "wolf0", "cat0", "centaur0", "david0", "dog0",
     "gorilla1", "horse0", "michael0", "victoria0",
 ]
+
+# ── Stage F: additional real high-complexity meshes ─────────────────────────
+# name -> (filename under EXTRA_MESHES_DIR, target_length metres). Rescaled to a
+# ~20 m structure so the OG/inspection scale is comparable to Duke.
+_EXTRA_REAL_MESHES = {
+    "armadillo": ("Armadillo.ply", 20.0),
+    "dragon": ("dragon_vrip.ply", 20.0),
+    "happy_buddha": ("happy_vrip.ply", 20.0),
+}
+EXTRA_REAL_MODELS = list(_EXTRA_REAL_MESHES)
 
 
 # ── Parameter grids ─────────────────────────────────────────────────────────

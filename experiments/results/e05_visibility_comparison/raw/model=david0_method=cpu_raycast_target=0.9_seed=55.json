@@ -1,0 +1,16 @@
+{
+  "model": "david0",
+  "method": "cpu_raycast",
+  "target_coverage": 0.9,
+  "seed": 55,
+  "num_candidates": 500,
+  "num_viewpoints": 17,
+  "reported_coverage": 0.9084,
+  "actual_coverage": 0.90838,
+  "coverage_gap": 2.0000000000020002e-05,
+  "mean_iou": 0.9999085664749146,
+  "mean_f1": 0.9999542236328125,
+  "visibility_time": 0.923723460000474,
+  "optimization_time": 0.024889030000849743,
+  "redundancy": 1.460479974746704
+}

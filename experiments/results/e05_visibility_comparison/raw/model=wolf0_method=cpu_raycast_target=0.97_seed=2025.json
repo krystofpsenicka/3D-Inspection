@@ -1,0 +1,16 @@
+{
+  "model": "wolf0",
+  "method": "cpu_raycast",
+  "target_coverage": 0.97,
+  "seed": 2025,
+  "num_candidates": 500,
+  "num_viewpoints": 26,
+  "reported_coverage": 0.97442,
+  "actual_coverage": 0.97448,
+  "coverage_gap": -6.0000000000060005e-05,
+  "mean_iou": 0.9999108910560608,
+  "mean_f1": 0.999955415725708,
+  "visibility_time": 0.7778715459999148,
+  "optimization_time": 0.017324168999948597,
+  "redundancy": 1.6956137418746948
+}

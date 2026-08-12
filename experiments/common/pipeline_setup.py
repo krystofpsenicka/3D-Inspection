@@ -52,6 +52,7 @@ class PipelineContext:
         self._raw_tm = None
         self._o3d_mesh = None
         self._sampling_og = None
+        self._tight_og = None
         self._target_points = None
         self._normals = None
         self._surface_seed = None
@@ -135,6 +136,30 @@ class PipelineContext:
             "  OG shape: %s  free=%d", self._sampling_og.grid.shape, self._sampling_og.num_free
         )
         return self._sampling_og
+
+    def build_tight_collision_og(self):
+        """OG inflated by ROBOT_RADIUS only (min_clearance = collision_radius),
+        so an occupied cell means the robot *body* touches the surface -- i.e. an
+        actual collision, not just a reduced clearance margin. The sampling OG
+        (2*collision_radius) flags margin incursions; this one flags penetrations.
+        Cached."""
+        if self._tight_og is not None:
+            return self._tight_og
+
+        _, o3d_mesh = self.load_mesh()
+        from visibility.sampling.utils.sampling_grid_builder import build_sampling_occupancy_grid
+
+        logger.info(
+            "Building tight collision OG (res=%.2f, clearance=%.2f = robot radius) ...",
+            self.model.voxel_resolution, self.model.collision_radius,
+        )
+        self._tight_og, _, _ = build_sampling_occupancy_grid(
+            mesh=o3d_mesh,
+            frustum_far=self.model.frustum.far,
+            min_clearance=self.model.collision_radius,
+            resolution=self.model.voxel_resolution,
+        )
+        return self._tight_og
 
     def build_visibility_query(self, method: str = "raycast"):
         """Visibility query. Cached per method."""

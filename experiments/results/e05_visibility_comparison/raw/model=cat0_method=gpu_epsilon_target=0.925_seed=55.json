@@ -1,0 +1,16 @@
+{
+  "model": "cat0",
+  "method": "gpu_epsilon",
+  "target_coverage": 0.925,
+  "seed": 55,
+  "num_candidates": 500,
+  "num_viewpoints": 16,
+  "reported_coverage": 0.9275,
+  "actual_coverage": 0.90854,
+  "coverage_gap": 0.018959999999999977,
+  "mean_iou": 0.9036398530006409,
+  "mean_f1": 0.9474279880523682,
+  "visibility_time": 0.011839902001156588,
+  "optimization_time": 0.013878298999770777,
+  "redundancy": 1.4086253643035889
+}

@@ -1,0 +1,16 @@
+{
+  "model": "cat0",
+  "method": "cpu_epsilon",
+  "target_coverage": 0.9,
+  "seed": 314,
+  "num_candidates": 500,
+  "num_viewpoints": 13,
+  "reported_coverage": 0.91016,
+  "actual_coverage": 0.89514,
+  "coverage_gap": 0.015019999999999922,
+  "mean_iou": 0.90050208568573,
+  "mean_f1": 0.9458464980125427,
+  "visibility_time": 1.5666175239985023,
+  "optimization_time": 0.014931785999579006,
+  "redundancy": 1.3375450372695923
+}

@@ -27,6 +27,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from experiments.common.config import (
+    EXTRA_REAL_MODELS,
     RESULTS_DIR,
     SEEDS_3,
     TOSCA_ALL,
@@ -650,6 +651,11 @@ def main():
         for name in args.models:
             if name == "duke_of_lancaster":
                 model_configs.append(ModelConfig.duke_of_lancaster())
+            elif name in EXTRA_REAL_MODELS:
+                try:
+                    model_configs.append(ModelConfig.extra_real(name))
+                except FileNotFoundError:
+                    logger.warning("Extra-real mesh %s not found - skipping", name)
             else:
                 try:
                     model_configs.append(ModelConfig.tosca(name))

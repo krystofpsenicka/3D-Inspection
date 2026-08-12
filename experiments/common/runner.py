@@ -205,22 +205,19 @@ def free_gpu_memory(dump_arrays: bool = False) -> None:
         cp.get_default_pinned_memory_pool().free_all_blocks()
     except Exception as e:
         logger.debug("CuPy pool free failed: %s", e)
+    # NOTE: do NOT call rmm.reinitialize() here. cuOpt manages its own RMM
+    # allocations and frees them on solve return (verified: GPU stays flat at
+    # ~977 MB across many consecutive 213-node solves with gc + CuPy-pool free
+    # only). Calling rmm.reinitialize() between cuOpt solves corrupts cuOpt's
+    # allocator on this stack (cuopt 26.2 / cuDSS 0.7.1.6): the next Solve()
+    # requests an absurd allocation (~18 GB) and OOM-hangs, which is what stalled
+    # E10 overnight. gc.collect() + the CuPy pool free above are sufficient.
     try:
-        import rmm
+        import rmm  # noqa: F401  (kept so the stats adaptor stays installed)
 
-        rmm.reinitialize(pool_allocator=True, initial_pool_size=2**28)
         gc.collect()
-        try:
-            current = rmm.mr.get_current_device_resource()
-            if not isinstance(current, rmm.mr.StatisticsResourceAdaptor):
-                _RMM_STATS_MR = rmm.mr.StatisticsResourceAdaptor(current)
-                rmm.mr.set_current_device_resource(_RMM_STATS_MR)
-            else:
-                _RMM_STATS_MR = current
-        except Exception as e:
-            logger.debug("RMM stats re-wrap failed: %s", e)
     except Exception as e:
-        logger.debug("RMM reinitialize skipped: %s", e)
+        logger.debug("RMM cleanup skipped: %s", e)
     try:
         import torch
 

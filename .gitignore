@@ -51,3 +51,9 @@ Thumbs.db
 .env
 .env.*
 .claude/
+
+# Stage-F downloaded meshes (large binaries, fetched separately)
+models/extra_real/
+
+# Verbose orchestration logs (debug, not results)
+experiments/results/_camera_ready_logs/

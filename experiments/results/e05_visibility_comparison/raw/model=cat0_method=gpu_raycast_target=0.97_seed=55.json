@@ -1,0 +1,16 @@
+{
+  "model": "cat0",
+  "method": "gpu_raycast",
+  "target_coverage": 0.97,
+  "seed": 55,
+  "num_candidates": 500,
+  "num_viewpoints": 20,
+  "reported_coverage": 0.9709,
+  "actual_coverage": 0.9709,
+  "coverage_gap": 0.0,
+  "mean_iou": 1.0,
+  "mean_f1": 1.0,
+  "visibility_time": 0.007227370000691735,
+  "optimization_time": 0.016146723999554524,
+  "redundancy": 1.786363124847412
+}

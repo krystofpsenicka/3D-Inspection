@@ -1,0 +1,72 @@
+{
+  "model": "duke_of_lancaster",
+  "seed": 7,
+  "arm": "collisions",
+  "by_fleet": [
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "arm": "collisions",
+      "fleet_size": 2,
+      "num_viewpoints": 197,
+      "vrp_status": "success",
+      "coord_collision_events": 0,
+      "coord_collision_pairs": 0,
+      "indep_collision_events": 0,
+      "indep_collision_pairs": 0,
+      "coord_astar_fail": 0
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "arm": "collisions",
+      "fleet_size": 3,
+      "num_viewpoints": 199,
+      "vrp_status": "success",
+      "coord_collision_events": 0,
+      "coord_collision_pairs": 0,
+      "indep_collision_events": 0,
+      "indep_collision_pairs": 0,
+      "coord_astar_fail": 0
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "arm": "collisions",
+      "fleet_size": 4,
+      "num_viewpoints": 205,
+      "vrp_status": "success",
+      "coord_collision_events": 0,
+      "coord_collision_pairs": 0,
+      "indep_collision_events": 0,
+      "indep_collision_pairs": 0,
+      "coord_astar_fail": 0
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "arm": "collisions",
+      "fleet_size": 5,
+      "num_viewpoints": 202,
+      "vrp_status": "success",
+      "coord_collision_events": 202,
+      "coord_collision_pairs": 4,
+      "indep_collision_events": 202,
+      "indep_collision_pairs": 4,
+      "coord_astar_fail": 0
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "arm": "collisions",
+      "fleet_size": 6,
+      "num_viewpoints": 221,
+      "vrp_status": "success",
+      "coord_collision_events": 137,
+      "coord_collision_pairs": 3,
+      "indep_collision_events": 99,
+      "indep_collision_pairs": 4,
+      "coord_astar_fail": 0
+    }
+  ]
+}

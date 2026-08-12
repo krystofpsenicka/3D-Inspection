@@ -27,7 +27,13 @@ SPACE_TIME_MAX_HORIZON_S = 400.0
 SPACE_TIME_DWELL_S = 2.0
 SPACE_TIME_SAFETY_FACTOR = 3
 SPACE_TIME_MIN_LEG_STEPS = 20
-SPLINE_SAFETY_VOXELS = 1
+# Reservation inflation beyond the robot radius. At 1 vox the coarse-grid
+# separation (~0.85 m) left only ~0.15 m of slack over the 0.70 m collision
+# threshold, which the coarse->dense (0.25 s -> 0.02 s) interpolation ate at
+# K>=5, producing residual inter-robot collisions. 3 vox (~1.85 m coarse
+# separation) absorbs the interpolation drift -> 0 collisions at K=6, no makespan
+# penalty. See experiments E12/E13 collision audit.
+SPLINE_SAFETY_VOXELS = 3
 
 # ── Trajectory replay ────────────────────────────────────────────────────────
 

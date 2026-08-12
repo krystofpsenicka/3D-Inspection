@@ -1,0 +1,13 @@
+{
+  "config": "both",
+  "solve_time": 120.91874575700058,
+  "objective": 289.4538116455078,
+  "makespan": 102.85102844238281,
+  "total_cost": 476.0565948486328,
+  "best_bound": 0.8872189394531963,
+  "gap": 0.9969348514209937,
+  "gap_reached": false,
+  "status": "success",
+  "n_waypoints": 50,
+  "seed": 2024
+}

@@ -137,14 +137,16 @@ def _run_single(ctx, cfg, seed):
     exec_result, routes = _coordinated_mapf(art)
     trajs = exec_result.all_traj_positions
 
-    env_counts = find_environment_collisions(trajs, art.og)
+    env_counts = find_environment_collisions(trajs, art.og)            # margin (2*r clearance)
+    env_actual = find_environment_collisions(trajs, ctx.build_tight_collision_og())  # body penetration (r)
     inter = find_trajectory_collisions(trajs, radius=ROBOT_RADIUS)
     min_sep, breach_pairs = _min_separation(trajs)
     worst_visit, missed_wp, total_wp = _coverage_survival(art, routes, exec_result)
 
     row.update({
-        "env_collision_samples": int(sum(env_counts)),
+        "env_collision_samples": int(sum(env_counts)),          # within 2*r clearance (margin)
         "env_collision_per_robot": [int(c) for c in env_counts],
+        "env_actual_penetration_samples": int(sum(env_actual)),  # within r (robot body hits surface)
         "inter_robot_events_padded": len(inter),   # padding-inclusive (reference)
         "min_separation_m": min_sep,
         "d_safe_m": D_SAFE,
@@ -155,9 +157,10 @@ def _run_single(ctx, cfg, seed):
         "waypoints_total": total_wp,
         "makespan_s": exec_result.actual_makespan,
     })
-    logger.info("  env=%d min_sep=%.2fm breach_pairs=%d missed_wp=%d/%d worst_visit=%.2fm",
-                row["env_collision_samples"], min_sep, breach_pairs,
-                missed_wp, total_wp, worst_visit)
+    logger.info("  env_margin=%d env_penetration=%d min_sep=%.2fm breach_pairs=%d "
+                "missed_wp=%d/%d worst_visit=%.2fm",
+                row["env_collision_samples"], row["env_actual_penetration_samples"],
+                min_sep, breach_pairs, missed_wp, total_wp, worst_visit)
     return row
 
 
@@ -169,7 +172,10 @@ def _print_summary(results):
     logger.info("\n%s\nE13 SUMMARY - post-smoothing audit (mean over runs)\n%s",
                 "=" * 72, "=" * 72)
     logger.info("  runs audited                : %d", len(ok))
-    logger.info("  env-collision samples (sum) : %.2f", np.mean([r["env_collision_samples"] for r in ok]))
+    logger.info("  env margin-incursions /run   : %.2f (within 2*r clearance)",
+                np.mean([r["env_collision_samples"] for r in ok]))
+    logger.info("  env ACTUAL penetrations /run : %.2f (robot body hits surface)",
+                np.mean([r.get("env_actual_penetration_samples", float("nan")) for r in ok]))
     logger.info("  min inter-robot separation  : %.2f m (d_safe=%.2f m)",
                 np.nanmin([r["min_separation_m"] for r in ok]), D_SAFE)
     logger.info("  d_safe breach pairs / run   : %.2f", np.mean([r["d_safe_breach_pairs"] for r in ok]))
