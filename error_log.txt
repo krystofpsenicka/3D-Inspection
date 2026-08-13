@@ -1,1 +1,1 @@
-name 'alphas' is not defined
+std::bad_alloc: out_of_memory: CUDA error (failed to allocate 1005596016 bytes) at: /tmp/pip-build-env-gr25wotf/normal/lib/python3.11/site-packages/librmm/include/rmm/mr/cuda_memory_resource.hpp:51: cudaErrorMemoryAllocation out of memory

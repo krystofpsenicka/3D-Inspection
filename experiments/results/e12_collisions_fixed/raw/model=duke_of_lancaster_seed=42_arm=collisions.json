@@ -10,10 +10,10 @@
       "fleet_size": 2,
       "num_viewpoints": 202,
       "vrp_status": "success",
-      "coord_collision_events": 0,
       "coord_collision_pairs": 0,
-      "indep_collision_events": 0,
+      "coord_min_separation_m": 1.3410282135009766,
       "indep_collision_pairs": 0,
+      "indep_collision_events": 0,
       "coord_astar_fail": 0
     },
     {
@@ -21,12 +21,12 @@
       "seed": 42,
       "arm": "collisions",
       "fleet_size": 3,
-      "num_viewpoints": 218,
+      "num_viewpoints": 200,
       "vrp_status": "success",
-      "coord_collision_events": 0,
       "coord_collision_pairs": 0,
-      "indep_collision_events": 0,
-      "indep_collision_pairs": 0,
+      "coord_min_separation_m": 0.8304548859596252,
+      "indep_collision_pairs": 1,
+      "indep_collision_events": 16,
       "coord_astar_fail": 0
     },
     {
@@ -34,12 +34,12 @@
       "seed": 42,
       "arm": "collisions",
       "fleet_size": 4,
-      "num_viewpoints": 208,
+      "num_viewpoints": 205,
       "vrp_status": "success",
-      "coord_collision_events": 0,
       "coord_collision_pairs": 0,
-      "indep_collision_events": 0,
-      "indep_collision_pairs": 0,
+      "coord_min_separation_m": 0.7999999523162842,
+      "indep_collision_pairs": 2,
+      "indep_collision_events": 71,
       "coord_astar_fail": 0
     },
     {
@@ -47,12 +47,12 @@
       "seed": 42,
       "arm": "collisions",
       "fleet_size": 5,
-      "num_viewpoints": 209,
+      "num_viewpoints": 212,
       "vrp_status": "success",
-      "coord_collision_events": 0,
       "coord_collision_pairs": 0,
-      "indep_collision_events": 209,
-      "indep_collision_pairs": 4,
+      "coord_min_separation_m": 0.704698383808136,
+      "indep_collision_pairs": 2,
+      "indep_collision_events": 178,
       "coord_astar_fail": 0
     },
     {
@@ -60,12 +60,12 @@
       "seed": 42,
       "arm": "collisions",
       "fleet_size": 6,
-      "num_viewpoints": 210,
+      "num_viewpoints": 211,
       "vrp_status": "success",
-      "coord_collision_events": 0,
       "coord_collision_pairs": 0,
-      "indep_collision_events": 14,
-      "indep_collision_pairs": 1,
+      "coord_min_separation_m": 0.864098846912384,
+      "indep_collision_pairs": 3,
+      "indep_collision_events": 109,
       "coord_astar_fail": 0
     }
   ]
