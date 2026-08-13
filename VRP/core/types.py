@@ -67,6 +67,11 @@ class ExecutionResult:
     actual_makespan: float = 0.0
     actual_per_vehicle_times: list[float] = None
     actual_per_leg_times: list[list[float]] = None
+    # Exact continuous-time inter-robot collision status of the committed
+    # trajectories (the authoritative metric; find_trajectory_collisions on the
+    # dense replay is index-aligned and gives false positives).
+    true_collision_pairs: int = 0
+    true_min_separation: float = float("inf")
 
     def __post_init__(self):
         if self.actual_per_vehicle_times is None:

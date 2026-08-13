@@ -624,4 +624,6 @@ class MultiAgentPathPlanner:
             actual_makespan=actual_makespan,
             actual_per_vehicle_times=actual_per_vehicle_times,
             actual_per_leg_times=actual_per_leg_times,
+            true_collision_pairs=int(_true_pairs),
+            true_min_separation=float(_true_min_sep),
         )

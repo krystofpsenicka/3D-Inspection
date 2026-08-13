@@ -147,7 +147,12 @@ def _run_single(ctx, cfg, seed):
         "env_collision_samples": int(sum(env_counts)),          # within 2*r clearance (margin)
         "env_collision_per_robot": [int(c) for c in env_counts],
         "env_actual_penetration_samples": int(sum(env_actual)),  # within r (robot body hits surface)
-        "inter_robot_events_padded": len(inter),   # padding-inclusive (reference)
+        # Authoritative continuous-time inter-robot result:
+        "true_collision_pairs": int(exec_result.true_collision_pairs),
+        "true_min_separation_m": float(exec_result.true_min_separation),
+        # Dense/truncated references (find_trajectory_collisions is index-aligned
+        # and over-counts; kept only for comparison):
+        "inter_robot_events_padded": len(inter),
         "min_separation_m": min_sep,
         "d_safe_m": D_SAFE,
         "d_safe_breach_pairs": breach_pairs,
@@ -157,10 +162,11 @@ def _run_single(ctx, cfg, seed):
         "waypoints_total": total_wp,
         "makespan_s": exec_result.actual_makespan,
     })
-    logger.info("  env_margin=%d env_penetration=%d min_sep=%.2fm breach_pairs=%d "
+    logger.info("  TRUE_pairs=%d TRUE_min_sep=%.2fm | env_margin=%d env_penetration=%d "
                 "missed_wp=%d/%d worst_visit=%.2fm",
+                row["true_collision_pairs"], row["true_min_separation_m"],
                 row["env_collision_samples"], row["env_actual_penetration_samples"],
-                min_sep, breach_pairs, missed_wp, total_wp, worst_visit)
+                missed_wp, total_wp, worst_visit)
     return row
 
 
@@ -176,9 +182,12 @@ def _print_summary(results):
                 np.mean([r["env_collision_samples"] for r in ok]))
     logger.info("  env ACTUAL penetrations /run : %.2f (robot body hits surface)",
                 np.mean([r.get("env_actual_penetration_samples", float("nan")) for r in ok]))
-    logger.info("  min inter-robot separation  : %.2f m (d_safe=%.2f m)",
-                np.nanmin([r["min_separation_m"] for r in ok]), D_SAFE)
-    logger.info("  d_safe breach pairs / run   : %.2f", np.mean([r["d_safe_breach_pairs"] for r in ok]))
+    _tp = [r.get("true_collision_pairs", 0) for r in ok]
+    _tm = [r.get("true_min_separation_m", float("nan")) for r in ok]
+    logger.info("  TRUE collision pairs / run  : %.2f (continuous-time, authoritative)",
+                np.mean(_tp))
+    logger.info("  TRUE min inter-robot sep    : %.3f m (d_safe=%.2f m)",
+                np.nanmin(_tm) if _tm else float("nan"), D_SAFE)
     logger.info("  waypoints missed / run      : %.2f", np.mean([r["waypoints_missed"] for r in ok]))
     logger.info("  worst waypoint approach     : %.2f m (tol=%.2f m)",
                 np.max([r["worst_waypoint_approach_m"] for r in ok]), VISIT_TOL)

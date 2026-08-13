@@ -145,18 +145,20 @@ def _run_collisions(ctx, cfg, seed, fleet_sizes, coord_trials=5):
             rows.append(row)
             continue
         coord = _coordinated_mapf(art, coord_trials)
-        coord_col = find_trajectory_collisions(coord.all_traj_positions, radius=ROBOT_RADIUS)
         indep_trajs = _independent_trajs(art)
         indep_col = find_trajectory_collisions(indep_trajs, radius=ROBOT_RADIUS)
-        # Count distinct colliding robot-pairs, not per-timestep events, so a
-        # sustained overlap isn't inflated by the replay rate.
-        row["coord_collision_events"] = len(coord_col)
-        row["coord_collision_pairs"] = len({(a, b) for _, a, b, _ in coord_col})
-        row["indep_collision_events"] = len(indep_col)
+        # Coordinated: exact continuous-time collision count (authoritative).
+        # Independent baseline: the per-robot plans share no committed motion, so
+        # we use the dense metric (it over-counts, which only strengthens the
+        # coordinated-vs-independent contrast).
+        row["coord_collision_pairs"] = int(coord.true_collision_pairs)
+        row["coord_min_separation_m"] = float(coord.true_min_separation)
         row["indep_collision_pairs"] = len({(a, b) for _, a, b, _ in indep_col})
+        row["indep_collision_events"] = len(indep_col)
         row["coord_astar_fail"] = sum(coord.fail_counts)
-        logger.info("  [collisions] K=%d coord_pairs=%d indep_pairs=%d",
-                    K, row["coord_collision_pairs"], row["indep_collision_pairs"])
+        logger.info("  [collisions] K=%d coord_pairs=%d (min_sep=%.2fm) indep_pairs=%d",
+                    K, row["coord_collision_pairs"], row["coord_min_separation_m"],
+                    row["indep_collision_pairs"])
         rows.append(row)
     return rows
 
