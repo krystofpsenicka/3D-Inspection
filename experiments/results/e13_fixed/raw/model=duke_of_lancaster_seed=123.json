@@ -1,0 +1,27 @@
+{
+  "model": "duke_of_lancaster",
+  "seed": 123,
+  "num_viewpoints": 206,
+  "setcover_coverage": 0.95031,
+  "vrp_status": "success",
+  "env_collision_samples": 38,
+  "env_collision_per_robot": [
+    3,
+    8,
+    6,
+    15,
+    6
+  ],
+  "env_actual_penetration_samples": 0,
+  "true_collision_pairs": 0,
+  "true_min_separation_m": 0.7037026286125183,
+  "inter_robot_events_padded": 0,
+  "min_separation_m": 0.8001656532287598,
+  "d_safe_m": 0.7,
+  "d_safe_breach_pairs": 0,
+  "astar_fail": 0,
+  "worst_waypoint_approach_m": 0.30382779240608215,
+  "waypoints_missed": 0,
+  "waypoints_total": 206,
+  "makespan_s": 195.76
+}
