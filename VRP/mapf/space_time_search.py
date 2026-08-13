@@ -22,7 +22,37 @@ from ..core.constants import (
 
 logger = logging.getLogger(__name__)
 
-from .reservation_table import ReservationTable  # noqa: E402
+from .committed_motion import CommittedMotion  # noqa: E402
+
+
+def _earliest_holdable_goal(
+    goal_costs: cp.ndarray,
+    goal_world: cp.ndarray,
+    committed: CommittedMotion,
+    t_offset: int,
+    hold_steps: int,
+    hold_pad: float = 0.0,
+) -> int | None:
+    """Lowest-cost reached goal *local* time at which the robot can then wait at
+    the goal for ``hold_steps`` steps with every wait-move collision-free against
+    committed robots (so the inspection dwell that follows is safe). Returns the
+    local time index, or None if no reached time is holdable yet."""
+    reached = cp.where(cp.isfinite(goal_costs))[0]
+    if len(reached) == 0:
+        return None
+    if hold_steps <= 0 or committed.num_committed == 0:
+        return int(reached[int(cp.argmin(goal_costs[reached]))])
+
+    R = len(reached)
+    abs_r = reached.astype(cp.intp) + t_offset               # (R,)
+    tmat = abs_r[:, None] + cp.arange(hold_steps, dtype=cp.intp)[None, :]  # (R, H)
+    tflat = tmat.reshape(-1)
+    gflat = cp.broadcast_to(goal_world[None, :], (R * hold_steps, 3))
+    ok = committed.moves_valid(gflat, gflat, tflat, pad=hold_pad).reshape(R, hold_steps).all(axis=1)
+    if not bool(ok.any()):
+        return None
+    holdable = reached[ok]
+    return int(holdable[int(cp.argmin(goal_costs[holdable]))])
 
 
 def space_time_astar_gpu(
@@ -30,11 +60,12 @@ def space_time_astar_gpu(
     start_ijk: cp.ndarray,
     goal_ijk: cp.ndarray,
     t_offset: int,
-    reservation: ReservationTable,
+    committed: CommittedMotion,
     time_step_cost: float = 0.01,
     max_time_steps: int = 0,
     max_iterations: int = GPU_SEARCH_MAX_ITERATIONS,
     f_threshold_delta: float = 2.0,
+    hold_steps: int = 0,
 ) -> tuple[cp.ndarray, cp.ndarray] | None:
     """GPU parallel A* on a 4D space-time grid with local time allocation.
 
@@ -70,7 +101,7 @@ def space_time_astar_gpu(
     resolution = coarse_og.resolution
     Nx, Ny, Nz = coarse_og.shape
 
-    T_local = max_time_steps if max_time_steps > 0 else max(1, reservation.T - t_offset)
+    T_local = max_time_steps if max_time_steps > 0 else max(1, committed.T - t_offset)
 
     sx, sy, sz = int(start_ijk[0]), int(start_ijk[1]), int(start_ijk[2])
     gx, gy, gz = int(goal_ijk[0]), int(goal_ijk[1]), int(goal_ijk[2])
@@ -107,24 +138,22 @@ def space_time_astar_gpu(
     # Index-based frontier: (F, 4) array of [t_local, x, y, z]
     frontier = cp.array([[0, sx, sy, sz]], dtype=cp.int32)
 
+    goal_world = coarse_og.voxel_to_world(cp.asarray([[gx, gy, gz]], dtype=cp.intp))[0]
+    # The holdability check uses the goal cell CENTRE, but the robot's true dwell
+    # point (and same-voxel successors / smoothed endpoint) can be up to a cell
+    # half-diagonal off-centre. Pad the hold clearance by that half-diagonal so the
+    # actual dwell positions anywhere in the cell stay >= 2r from committed robots.
+    hold_pad = resolution * (3.0 ** 0.5) / 2.0 + 0.02
+
     for iteration in range(max_iterations):
-        # Check if goal reached
-        goal_costs = g_cost[:, gx, gy, gz]
-        best_t = int(cp.argmin(goal_costs))
-        if goal_costs[best_t] < cp.inf:
+        # Goal reached AND holdable for the dwell (so the subsequent inspection
+        # dwell stays collision-free against committed robots).
+        gt = _earliest_holdable_goal(
+            g_cost[:, gx, gy, gz], goal_world, committed, t_offset, hold_steps, hold_pad
+        )
+        if gt is not None:
             return _reconstruct_path(
-                pred,
-                t_offset,
-                best_t,
-                gx,
-                gy,
-                gz,
-                sx,
-                sy,
-                sz,
-                Nx,
-                Ny,
-                Nz,
+                pred, t_offset, gt, gx, gy, gz, sx, sy, sz, Nx, Ny, Nz
             )
 
         if len(frontier) == 0:
@@ -197,14 +226,22 @@ def space_time_astar_gpu(
         fi2 = cp.where(free)[0]
         nx, ny, nz, vt, vw, vp = nx[fi2], ny[fi2], nz[fi2], vt[fi2], vw[fi2], vp[fi2]
 
-        # Reservation check (absolute time)
-        abs_t = vt + t_offset
-        pos_check = cp.stack([nx, ny, nz], axis=1)
-        not_reserved = ~reservation.is_reserved_batch(pos_check, abs_t)
-        if not not_reserved.any():
+        # Inter-robot check: continuous-time moving-segment test against every
+        # committed robot's actual motion (CCBS-style). Each candidate move goes
+        # from its parent cell (ex/ey/ez[vp]) at absolute time et[vp]+t_offset to
+        # the neighbour (nx,ny,nz) at the next coarse step. Exact for the linearly
+        # interpolated replay; catches swaps and diagonal crossings that a
+        # discrete vertex/edge reservation misses.
+        abs_parent_t = et[vp] + t_offset
+        from_ijk = cp.stack([ex[vp], ey[vp], ez[vp]], axis=1)
+        to_ijk = cp.stack([nx, ny, nz], axis=1)
+        from_world = coarse_og.voxel_to_world(from_ijk)
+        to_world = coarse_og.voxel_to_world(to_ijk)
+        move_ok = committed.moves_valid(from_world, to_world, abs_parent_t)
+        if not move_ok.any():
             frontier = remaining
             continue
-        fi3 = cp.where(not_reserved)[0]
+        fi3 = cp.where(move_ok)[0]
         nx, ny, nz, vt, vw, vp = nx[fi3], ny[fi3], nz[fi3], vt[fi3], vw[fi3], vp[fi3]
 
         # Compute tentative g
@@ -258,23 +295,13 @@ def space_time_astar_gpu(
             cp.concatenate([remaining, new_cells], axis=0) if len(remaining) > 0 else new_cells
         )
 
-    # Final goal check
-    goal_costs = g_cost[:, gx, gy, gz]
-    best_t = int(cp.argmin(goal_costs))
-    if goal_costs[best_t] < cp.inf:
+    # Final goal check (holdable)
+    gt = _earliest_holdable_goal(
+        g_cost[:, gx, gy, gz], goal_world, committed, t_offset, hold_steps, hold_pad
+    )
+    if gt is not None:
         return _reconstruct_path(
-            pred,
-            t_offset,
-            best_t,
-            gx,
-            gy,
-            gz,
-            sx,
-            sy,
-            sz,
-            Nx,
-            Ny,
-            Nz,
+            pred, t_offset, gt, gx, gy, gz, sx, sy, sz, Nx, Ny, Nz
         )
 
     logger.warning(

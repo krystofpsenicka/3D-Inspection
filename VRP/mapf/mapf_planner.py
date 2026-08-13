@@ -47,7 +47,7 @@ from ..core.constants import (
 from ..core.types import ExecutionResult
 from ..vrp._helpers import per_vehicle_costs as _per_vehicle_costs
 from .orientation import apply_heading_orientation
-from .reservation_table import ReservationTable
+from .committed_motion import CommittedMotion
 from .route_planner import plan_robot_route_st
 
 logger = logging.getLogger(__name__)
@@ -135,11 +135,10 @@ class MultiAgentPathPlanner:
         from ..core.types import PlanningStats
 
         num_robots = self.num_robots
-        reservation = ReservationTable(
-            coarse_og.shape,
-            max_time_steps,
-            collision_radius_vox,
-        )
+        # Continuous-time inter-robot avoidance (CCBS-style). Static obstacles
+        # stay on coarse_og; collision_radius_vox is no longer used for
+        # inter-robot separation (the geometric test uses the true 2*radius).
+        committed = CommittedMotion(max_time_steps, ROBOT_RADIUS)
 
         robot_world_paths: list[cp.ndarray | None] = [None] * num_robots
         robot_coarse_times: list[cp.ndarray | None] = [None] * num_robots
@@ -150,7 +149,7 @@ class MultiAgentPathPlanner:
             route = routes[robot_idx]
             world_positions, coarse_time_steps, waypoint_schedule, stats = plan_robot_route_st(
                 coarse_og,
-                reservation,
+                committed,
                 route,
                 waypoint_positions,
                 dwell_s=dwell_seconds,
@@ -265,6 +264,14 @@ class MultiAgentPathPlanner:
             return alpha * makespan + (1 - alpha) * total_time
 
         # ── 3. Try priority orderings, keep best ─────────────────────
+        # Each ordering is planned collision-free by construction via the A*'s
+        # continuous-time move filter; on the rare geometry where a residual
+        # slips through we still *measure* it exactly and prefer an ordering with
+        # none. COLLISION_PENALTY dominates any objective difference so a
+        # verified-collision-free ordering always wins when one exists.
+        from .committed_motion import continuous_collision_report
+        COLLISION_PENALTY = 1.0e6
+
         def _run_trial(order: list[int]) -> tuple:
             result = self._plan_sequential(
                 routes,
@@ -277,7 +284,10 @@ class MultiAgentPathPlanner:
             )
             makespan = result[3]
             total_time = result[4]
-            objective = _combined_objective(makespan, total_time)
+            n_coll, _ = continuous_collision_report(
+                result[0], result[1], max_time_steps, ROBOT_RADIUS
+            )
+            objective = n_coll * COLLISION_PENALTY + _combined_objective(makespan, total_time)
             return result, objective
 
         def _update_best(order, trial_result, trial_objective):
@@ -421,6 +431,24 @@ class MultiAgentPathPlanner:
             _,
             _per_robot_stats,
         ) = best_result
+
+        # Exact continuous-time inter-robot collision status of the committed
+        # coarse polylines (ground truth: the dense replay is their linear
+        # interpolation). Distinct from the index-aligned dense metric.
+        _true_pairs, _true_min_sep = continuous_collision_report(
+            robot_world_paths, robot_coarse_times, max_time_steps, ROBOT_RADIUS
+        )
+        if _true_pairs > 0:
+            logger.warning(
+                "[MAPF] selected plan still has %d colliding pair(s) (min_sep=%.3f m) - "
+                "no collision-free ordering found among %d trials",
+                _true_pairs, _true_min_sep, n_priority_trials,
+            )
+        else:
+            logger.info(
+                "[MAPF] TRUE continuous inter-robot collisions: pairs=0  min_sep=%.3f m",
+                _true_min_sep,
+            )
 
         for robot_idx in best_order:
             world_positions = robot_world_paths[robot_idx]

@@ -26,7 +26,7 @@ from ..core.constants import (
 )
 from ..core.types import PlanningStats
 from .path_smoother import arc_length_resample, simplify_path_ompl
-from .reservation_table import ReservationTable
+from .committed_motion import CommittedMotion
 from .space_time_search import space_time_astar_gpu
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 def plan_robot_route_st(
     coarse_og: OccupancyGrid,
-    reservation: ReservationTable,
+    committed: CommittedMotion,
     route: list[int],
     waypoint_positions: cp.ndarray,
     dwell_s: float = SPACE_TIME_DWELL_S,
@@ -66,6 +66,28 @@ def plan_robot_route_st(
 
     hold_steps = max(1, int(round(dwell_s / dt)))
     grid_shape = coarse_og.shape
+
+    # Precompute each route node's coarse cell, then the "extended hold" for each
+    # leg destination: the total number of coarse steps the robot will occupy
+    # that cell = its own inspection dwell + every immediately-following waypoint
+    # that lies in the SAME coarse cell (those same-voxel micro-legs are handled
+    # outside the A*). Making the A* leg holdable for this whole duration keeps an
+    # earlier robot from passing through the cell while the robot inspects there.
+    _route_cells = []
+    for node in route:
+        c = coarse_og.world_to_voxel(xyz_all[node].reshape(1, 3))[0]
+        for d in range(3):
+            c[d] = cp.clip(c[d], 0, grid_shape[d] - 1)
+        _route_cells.append(c)
+
+    def _extended_hold(leg_idx: int) -> int:
+        total = hold_steps
+        k = leg_idx + 1
+        while k < len(route) and bool(cp.array_equal(_route_cells[k], _route_cells[leg_idx])):
+            sub = float(cp.linalg.norm(xyz_all[route[k]] - xyz_all[route[k - 1]]))
+            total += max(1, int(math.ceil(sub / (cruise_speed * dt)))) + hold_steps
+            k += 1
+        return total
 
     for leg in range(1, len(route)):
         prev_node = route[leg - 1]
@@ -138,13 +160,15 @@ def plan_robot_route_st(
             int(math.ceil(dist / cruise_speed / dt)) * SPACE_TIME_SAFETY_FACTOR,
         )
 
+        ext_hold = _extended_hold(leg)
         result = space_time_astar_gpu(
             coarse_og,
             s_ijk,
             g_ijk,
             t_cursor,
-            reservation,
-            max_time_steps=t_leg,
+            committed,
+            max_time_steps=t_leg + ext_hold,
+            hold_steps=ext_hold,
         )
 
         if result is None:
@@ -154,9 +178,10 @@ def plan_robot_route_st(
                 s_ijk,
                 g_ijk,
                 t_cursor,
-                reservation,
-                max_time_steps=t_leg * 2,
+                committed,
+                max_time_steps=t_leg * 2 + ext_hold,
                 max_iterations=2 * GPU_SEARCH_MAX_ITERATIONS,
+                hold_steps=ext_hold,
             )
 
         if result is None:
@@ -203,8 +228,8 @@ def plan_robot_route_st(
                 fine_occupancy_grid,
                 robot_radius,
                 max_time=OMPL_SIMPLIFY_MAX_TIME,
-                reservation=reservation,
-                time_steps=planned_t,
+                reservation=None,  # smooth against the environment only; inter-robot
+                time_steps=planned_t,  # safety is re-checked geometrically below
                 coarse_og=coarse_og,
             )
 
@@ -214,7 +239,12 @@ def plan_robot_route_st(
                 for d in range(3):
                     resampled_ijk[:, d] = cp.clip(resampled_ijk[:, d], 0, grid_shape[d] - 1)
 
-                conflict = reservation.is_reserved_batch(resampled_ijk, planned_t).any()
+                # Geometric inter-robot check on the smoothed leg's segments; if
+                # any conflicts, keep the A* path (collision-free by construction).
+                seg_ok = committed.moves_valid(
+                    resampled_world[:-1], resampled_world[1:], planned_t[:-1]
+                )
+                conflict = not bool(seg_ok.all())
 
                 if not bool(conflict):
                     final_ijk = resampled_ijk
@@ -252,19 +282,13 @@ def plan_robot_route_st(
     if not coarse_positions:
         return (cp.empty((0, 3), dtype=cp.float64), cp.empty((0,), dtype=cp.intp), [], stats)
 
-    all_ijk = cp.concatenate(coarse_positions, axis=0)
     all_t = cp.concatenate(coarse_times, axis=0)
-
-    reservation.commit_trajectory(all_ijk, all_t)
-
-    # Reserve final position for all remaining time steps
-    last_t = int(all_t[-1])
-    if last_t + 1 < reservation.T:
-        tail_steps = cp.arange(last_t + 1, reservation.T, dtype=cp.intp)
-        tail_ijk = cp.tile(all_ijk[-1:], (len(tail_steps), 1))
-        reservation.commit_trajectory(tail_ijk, tail_steps)
-
     world_xyz = cp.concatenate(world_positions, axis=0)
+
+    # Commit this robot's actual (world) motion so later robots' A* avoids it.
+    # CommittedMotion holds the final position for all remaining steps, so a
+    # parked robot is still avoided.
+    committed.commit(world_xyz, all_t)
 
     if len(world_xyz) >= 2:
         actual_dist = float(cp.sum(cp.linalg.norm(cp.diff(world_xyz, axis=0), axis=1)))
