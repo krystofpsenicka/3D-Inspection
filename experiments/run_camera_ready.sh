@@ -65,6 +65,9 @@ STAGES[e15]="e15_vrp_cuts_highbudget --time_limit 1800 --waypoints 50 --seeds 42
 # Stage F (plan item F): additional real high-complexity meshes, run VERY LAST.
 # Separate output_dir so it stays isolated from the main Duke+TOSCA E10 analysis.
 STAGES[eF]="e10_cross_model --models armadillo dragon happy_buddha --seeds 42 123 7 --output_dir experiments/results/e10_extra_real"
+# Stage F hi-poly: much denser real laser scans (xyz_dragon 7.2M, statuette 10M,
+# lucy 28M faces). Lucy last so its cost/OOM risk doesn't block the others.
+STAGES[eFhi]="e10_cross_model --models xyz_dragon statuette lucy --seeds 42 123 7 --output_dir experiments/results/e10_extra_real_hipoly"
 
 # Post-fix collision re-audit (SPLINE_SAFETY_VOXELS 1->3). Fresh output dirs so
 # --resume does not skip the old pre-fix rows; E12 collisions at the full 20-trial
@@ -72,7 +75,7 @@ STAGES[eF]="e10_cross_model --models armadillo dragon happy_buddha --seeds 42 12
 STAGES[e12c]="e12_mapf_ablation --mode collisions --coord_trials 20 --seeds 42 123 7 --output_dir experiments/results/e12_collisions_fixed"
 STAGES[e13f]="e13_collision_coverage_audit --seeds 42 123 7 2024 314 --output_dir experiments/results/e13_fixed"
 
-ORDER=(e14 e05 e01 e02 e06 e11 e13 e08 e10 e12 e12c e13f e15 eF)
+ORDER=(e14 e05 e01 e02 e06 e11 e13 e08 e10 e12 e12c e13f e15 eF eFhi)
 
 # If args given, run only those stages (in the given order); else full ORDER.
 if [ "$#" -gt 0 ]; then

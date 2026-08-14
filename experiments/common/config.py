@@ -122,6 +122,11 @@ _EXTRA_REAL_MESHES = {
     "armadillo": ("Armadillo.ply", 20.0),
     "dragon": ("dragon_vrip.ply", 20.0),
     "happy_buddha": ("happy_vrip.ply", 20.0),
+    # High-complexity laser scans (Stanford XYZ RGB + Lucy), much denser than
+    # Duke (0.58M faces): xyz_dragon 7.2M, statuette ~5M, lucy ~28M.
+    "xyz_dragon": ("xyzrgb_dragon.ply", 20.0),
+    "statuette": ("xyzrgb_statuette.ply", 20.0),
+    "lucy": ("lucy.ply", 20.0),
 }
 EXTRA_REAL_MODELS = list(_EXTRA_REAL_MESHES)
 
