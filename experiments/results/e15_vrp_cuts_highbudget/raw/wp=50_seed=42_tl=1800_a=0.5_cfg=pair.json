@@ -1,0 +1,21 @@
+{
+  "config": "pair",
+  "solve_time": 1802.247721443011,
+  "time_limit": 1800,
+  "objective": 315.6958923339844,
+  "makespan": 106.62190246582031,
+  "total_cost": 524.7698822021484,
+  "best_bound": 0.9062414214119762,
+  "gap": 0.9971293848180539,
+  "gap_reached": false,
+  "warm_objective": 360.61326599121094,
+  "warm_makespan": 141.0975341796875,
+  "warm_total": 580.1289978027344,
+  "improvement_abs": 44.91737365722656,
+  "improvement_pct": 12.4558295252292,
+  "improved": true,
+  "status": "success",
+  "n_waypoints": 50,
+  "seed": 42,
+  "alpha": 0.5
+}
