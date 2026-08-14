@@ -1,0 +1,12 @@
+{
+  "model": "david0",
+  "optimizer": "ExpansionIterative_weighted_curvature",
+  "input_strategy": "weighted_curvature",
+  "target_coverage": 0.925,
+  "seed": 1337,
+  "num_candidates": 500,
+  "num_viewpoints": 16,
+  "coverage": 0.93314,
+  "optimization_time": 0.15870699397055432,
+  "redundancy": 1.4639174938201904
+}

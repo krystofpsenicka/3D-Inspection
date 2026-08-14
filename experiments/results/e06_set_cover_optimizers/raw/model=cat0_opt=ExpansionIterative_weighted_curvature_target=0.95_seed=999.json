@@ -1,0 +1,12 @@
+{
+  "model": "cat0",
+  "optimizer": "ExpansionIterative_weighted_curvature",
+  "input_strategy": "weighted_curvature",
+  "target_coverage": 0.95,
+  "seed": 999,
+  "num_candidates": 500,
+  "num_viewpoints": 15,
+  "coverage": 0.95864,
+  "optimization_time": 0.1452158009633422,
+  "redundancy": 1.4046357870101929
+}
