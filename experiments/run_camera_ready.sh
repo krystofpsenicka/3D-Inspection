@@ -67,7 +67,10 @@ STAGES[e15]="e15_vrp_cuts_highbudget --time_limit 1800 --waypoints 50 --seeds 42
 STAGES[eF]="e10_cross_model --models armadillo dragon happy_buddha --seeds 42 123 7 --output_dir experiments/results/e10_extra_real"
 # Stage F hi-poly: much denser real laser scans (xyz_dragon 7.2M, statuette 10M,
 # lucy 28M faces). Lucy last so its cost/OOM risk doesn't block the others.
-STAGES[eFhi]="e10_cross_model --models xyz_dragon statuette lucy --seeds 42 123 7 --output_dir experiments/results/e10_extra_real_hipoly"
+# xyz_dragon (7.2M) runs the full pipeline fine. statuette (10M) and lucy (28M)
+# hit CPU-stage scaling walls (PuLP VRP build; curvature/SDF sampler) and are
+# omitted from the automated run.
+STAGES[eFhi]="e10_cross_model --models xyz_dragon --seeds 42 123 7 --output_dir experiments/results/e10_extra_real_hipoly"
 
 # Post-fix collision re-audit (SPLINE_SAFETY_VOXELS 1->3). Fresh output dirs so
 # --resume does not skip the old pre-fix rows; E12 collisions at the full 20-trial
