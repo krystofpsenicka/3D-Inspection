@@ -127,10 +127,14 @@ def _run_orderings(ctx, cfg, seed, trials):
             "makespan_s": exec_result.actual_makespan,
             "total_time_s": sum(exec_result.actual_per_vehicle_times),
             "astar_fail": sum(exec_result.fail_counts),
+            # Value of more orderings is collision-freedom (exact metric): too few
+            # trials can leave a residual colliding pair.
+            "true_collision_pairs": int(exec_result.true_collision_pairs),
+            "true_min_separation_m": float(exec_result.true_min_separation),
         }
-        logger.info("  [orderings] trials=%2d obj=%.1f mks=%.1f",
+        logger.info("  [orderings] trials=%2d obj=%.1f mks=%.1f true_pairs=%d",
                     nt, row["per_trials"][str(nt)]["objective"],
-                    exec_result.actual_makespan)
+                    exec_result.actual_makespan, exec_result.true_collision_pairs)
     return row
 
 
@@ -183,9 +187,11 @@ def _print_summary(results):
         logger.info("\n%s\nE12 orderings (mean β-objective vs ordering budget)\n%s",
                     "=" * 60, "=" * 60)
         for nt in trials:
-            objs = [r["per_trials"][str(nt)]["objective"] for r in ords
-                    if str(nt) in r["per_trials"]]
-            logger.info("  trials=%2d  obj=%.1f ± %.1f", nt, np.mean(objs), np.std(objs))
+            pt = [r["per_trials"][str(nt)] for r in ords if str(nt) in r["per_trials"]]
+            objs = [x["objective"] for x in pt]
+            colls = [x.get("true_collision_pairs", 0) for x in pt]
+            logger.info("  trials=%2d  obj=%.1f ± %.1f  true_collision_pairs(mean)=%.2f",
+                        nt, np.mean(objs), np.std(objs), np.mean(colls))
     cols = [r for r in results if r.get("arm") == "collisions" and "coord_collision_pairs" in r]
     if cols:
         Ks = sorted({r["fleet_size"] for r in cols})

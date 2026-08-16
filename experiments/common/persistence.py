@@ -10,7 +10,11 @@ import numpy as np
 
 
 def _to_serializable(v: Any) -> Any:
-    if hasattr(v, "get"):  # CuPy array
+    if isinstance(v, dict):
+        return {k: _to_serializable(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_to_serializable(x) for x in v]
+    if hasattr(v, "get") and hasattr(v, "shape"):  # CuPy array (dicts also have .get)
         return v.get().tolist()
     if isinstance(v, np.ndarray):
         return v.tolist()
@@ -28,7 +32,7 @@ def save_run_result(result: dict, path: str) -> None:
     arrays = {}
     scalars = {}
     for k, v in result.items():
-        if hasattr(v, "get"):  # CuPy
+        if hasattr(v, "get") and hasattr(v, "shape"):  # CuPy array (dicts have .get too)
             arrays[k] = v.get()
         elif isinstance(v, np.ndarray):
             arrays[k] = v
