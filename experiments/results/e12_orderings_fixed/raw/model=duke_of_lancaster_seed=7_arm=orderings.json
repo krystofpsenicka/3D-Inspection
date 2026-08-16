@@ -1,0 +1,41 @@
+{
+  "model": "duke_of_lancaster",
+  "seed": 7,
+  "arm": "orderings",
+  "num_viewpoints": 214,
+  "vrp_status": "success",
+  "per_trials": {
+    "1": {
+      "objective": 567.26,
+      "makespan_s": 208.5,
+      "total_time_s": 926.02,
+      "astar_fail": 0,
+      "true_collision_pairs": 2,
+      "true_min_separation_m": 0.20341897010803223
+    },
+    "5": {
+      "objective": 565.88,
+      "makespan_s": 208.5,
+      "total_time_s": 923.26,
+      "astar_fail": 0,
+      "true_collision_pairs": 0,
+      "true_min_separation_m": 0.7362955212593079
+    },
+    "10": {
+      "objective": 565.88,
+      "makespan_s": 208.5,
+      "total_time_s": 923.26,
+      "astar_fail": 0,
+      "true_collision_pairs": 0,
+      "true_min_separation_m": 0.7296819090843201
+    },
+    "20": {
+      "objective": 565.63,
+      "makespan_s": 208.5,
+      "total_time_s": 922.76,
+      "astar_fail": 0,
+      "true_collision_pairs": 0,
+      "true_min_separation_m": 0.7207931280136108
+    }
+  }
+}
