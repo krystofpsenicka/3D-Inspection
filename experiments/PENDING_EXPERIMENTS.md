@@ -24,13 +24,12 @@ conda activate inspection && cd /path/to/3D-Inspection
 | 1 | soften the §5 relaxation claim | minutes | unsupported claim stands |
 | 2 | E16 smoke test | ~10 min | untested code fails 40 min in |
 | 3 | E16 `--arm root` | ~1 h | claim stays merely softened |
-| 4 | E12 `--mode orderings` | ~3 h | visible "not ablated" admission stays |
+| ~~4~~ | ~~E12 `--mode orderings`~~ | **DONE** (`b8659bd`) | — |
 | 5 | paste results, page count, rebuild | ~1 h | — |
 | — | E16 `--arm close` / `--arm budget` | 2–16 h | **does not fit. Skip.** |
 
-Runs 3 and 4 both contend for the GPU. **Run them sequentially** — E12 measures
-MAPF wall-clock, and contention corrupts exactly the numbers it reports.
-Total compute ≈ 4 h, leaving ~7 h of slack for writing and the unexpected.
+E12 is done, so **E16 `--arm root` (~1 h) is the only run left**, leaving ~10 h
+of slack. Do not add `--arm close`/`--arm budget` with that slack; see §2–3.
 
 ---
 
@@ -93,31 +92,28 @@ relaxation" is *defined* — no branch-and-bound, no gap closure needed.
 Do **not** start `--arm close` (2–6 h) or `--arm budget` (up to 16 h). They do
 not fit, and Step 3 alone is a publishable answer.
 
-## 4. E12 orderings arm *(~3 h, unattended)*
+## 4. E12 orderings arm — DONE *(`b8659bd`, results in `results/e12_orderings_fixed/`)*
 
-`--mode orderings` was never run; only the collisions arm exists under
-`results/e12_mapf_ablation/`. R4.4 wanted the priority-ordering budget ablated,
-so §5 currently carries an explicit admission:
+Written into the paper (thesis commit `8c4fa97`); the `%%% TODO camera-ready`
+placeholder is gone. The result, 3 seeds on Duke, `n ∈ {1,5,10,20}`:
 
-> The default budget of 20 priority orderings is a design choice we have not yet
-> ablated; we report it here as a parameter, not as a validated optimum.
+| n | objective (s) | makespan (s) | collision pairs | min sep (m) | seeds w/ collisions |
+|---|---|---|---|---|---|
+| 1 | 537.6 ± 26.7 | 190.3 ± 16.9 | 1.00 ± 1.00 | 0.52 ± 0.28 | 2/3 |
+| 5 | 536.7 ± 26.3 | 190.0 ± 16.9 | 0.00 ± 0.00 | 0.74 ± 0.01 | 0/3 |
+| 10 | 536.7 ± 26.3 | 190.0 ± 16.9 | 0.00 ± 0.00 | 0.76 ± 0.04 | 0/3 |
+| 20 | 536.6 ± 26.2 | 190.0 ± 16.9 | 0.00 ± 0.00 | 0.74 ± 0.01 | 0/3 |
 
-with a `%%% TODO camera-ready` block above it sketching the replacement. Search
-`paper.tex` for `TODO camera-ready`.
+The orderings are a **feasibility** lever, not a cost lever: the objective is
+flat (0.2% across the whole sweep) but a single ordering leaves residual
+collisions in 2 of 3 seeds, below `d_safe = 0.70 m`. Everything saturates at
+n = 5 — the n = 5/10/20 plans agree to three significant figures — so the
+default of 20 costs 4x the MAPF wall-clock for nothing. `astar_fail = 0`
+throughout.
 
-```bash
-until python -m experiments.e12_mapf_ablation --resume --mode orderings \
-    --seeds 42 123 7; do echo restart; sleep 3; done
-python -m experiments.e12_mapf_ablation --plots_only
-```
-
-1 trial ≈ 55 s, 20 ≈ 21 min per run. Replace the placeholder with the β-blended
-objective and MAPF wall-clock per budget (`n_priority_trials ∈ {1,5,10,20}`) and
-say where the gain saturates — that is what justifies the default of 20.
-~4 lines.
-
-If the clock gets tight, the placeholder sentence is honest and shippable as-is.
-Dropping this run costs less than shipping a broken claim.
+Worth knowing for any future MAPF work: this is also independent evidence that
+the coordination layer alone is not sufficient; it needs more than one ordering
+to *find* the conflict-free assignment that E13 then audits.
 
 ## 5. Final pass
 
