@@ -171,20 +171,94 @@ before the next campaign so the raw JSONs are trustworthy on their own:
 
 ---
 
-## 6. What each outcome means for the paper
+## 6. Drop-in paragraph variants for the paper
 
-The camera-ready currently says the cuts "neither tighten the relaxation nor
-improve incumbents measurably" (§5, *Ablation of the routing cuts*) — a claim
-made from B&B incumbents alone, which is weaker evidence than it sounds.
+The camera-ready currently claims, in §5 *Ablation of the routing cuts*, that
+the cuts "neither **tighten the relaxation** nor improve incumbents measurably".
+The second half is what E11/E15 measured. The first half is not measured by
+anything we have run.
 
-- **Step 1 shows no LP-bound difference** → the claim is now properly
-  supported. Add the root-LP numbers; they are the right evidence.
-- **Step 1 shows an LP-bound difference** → the claim is wrong and must change
-  to something like "the cuts tighten the root relaxation by X% but this does
-  not translate into better incumbents within the budgets we can afford".
-- **Step 2 shows faster time-to-proof** → the contribution is real and should be
-  stated as a solve-time benefit rather than a solution-quality one.
+Below are two ready-to-paste replacements. Both are the **same length or shorter
+than the current paragraph** — the paper is at 13 pages against a +2-page
+allowance, so do not let this section grow. Fill the `\PLACEHOLDER` marks from
+`--arm root --plots_only`; the summary prints exactly the numbers needed
+(`LP bound (m)` per config and `% vs none`).
 
-Whichever way it goes, also replace the E08/E11 gap discussion: report solve
-time hitting the limit (sound) and the recomputed `true_gap` (now meaningful),
-never the old `gap` field.
+Locate the paragraph with:
+
+```bash
+grep -n "Ablation of the routing cuts" ~/thesis/itat/paper.tex
+```
+
+---
+
+### Variant A — root LP bounds agree (the null result holds)
+
+Swap only the two marked spans; the rest of the paragraph is unchanged. This
+replaces weak evidence (B&B dual bounds at timeout) with the right evidence (the
+root relaxation), and the existing conclusion sentence stands as written.
+
+Replace `with every mean inside one standard deviation of every other, dual
+bounds agreeing to two decimals, and all 40 runs exhausting the budget.` with:
+
+```latex
+with every mean inside one standard deviation of every other and all 40 runs
+exhausting the budget. The relaxation itself is unchanged: solving the root LP
+of each variant (E16) gives bounds of \PLACEHOLDER, \PLACEHOLDER, \PLACEHOLDER
+and \PLACEHOLDER\,m for \code{none}, \code{reach}, \code{pair} and \code{both},
+i.e.\ within \PLACEHOLDER\% of each other --- neither cut removes fractional
+mass the lifted MTZ formulation had not already excluded.
+```
+
+Everything after that, including "The cuts are valid and free to add, but at
+affordable budgets they neither tighten the relaxation nor improve incumbents
+measurably", stays. **No change to the conclusion.**
+
+---
+
+### Variant B — a cut's root LP bound is strictly higher
+
+The current claim is then wrong. Replace the paragraph's last three sentences
+(from "The cuts are valid and free to add" to "the natural one to make") with:
+
+```latex
+The relaxation, however, does tighten. Solving the root LP of each variant
+(E16) raises the bound from \PLACEHOLDER\,m for \code{none} to \PLACEHOLDER\,m
+for \code{\PLACEHOLDER} (${+}\PLACEHOLDER\%$), so the cut does remove fractional
+mass that lifted MTZ admits. That strengthening simply does not reach the
+incumbent within the budgets we can afford: branch-and-bound is still far from
+closing after 1800\,s, and the $19$--$24\%$ the MIP gains over its warm start
+comes from the search. The cuts are therefore a formulation improvement whose
+practical value we cannot yet demonstrate --- on this model, at these sizes, the
+binding constraint is the solver budget, not the relaxation.
+```
+
+**Also fix the conclusion** (§6). Replace:
+
+```latex
+The two routing cuts, however, do not measurably improve the solve at the
+budgets we ran.
+```
+
+with:
+
+```latex
+The two routing cuts tighten the root relaxation but do not measurably improve
+incumbents at the budgets we ran.
+```
+
+---
+
+### If the result is mixed (one cut helps, the other does not)
+
+Use Variant B but name only the cut that helps, and say plainly that the other
+leaves the bound unchanged. Do not average them into a single claim — they are
+independent additions and the paper presents them as such.
+
+---
+
+### Either way
+
+Do not reintroduce the old `gap` / `gap_reached` numbers anywhere. Report solve
+time hitting the limit (sound, already in the paper) and, if a gap is wanted,
+the recomputed `true_gap` from E16. See §0.
