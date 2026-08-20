@@ -23,17 +23,15 @@ conda activate inspection && cd /path/to/3D-Inspection
 | 0 | make the repo public | minutes | **paper states a false claim** |
 | 1 | soften the §5 relaxation claim | minutes | unsupported claim stands |
 | ~~2~~ | ~~E16 smoke test~~ | **DONE** | — |
-| 3 | E16 `--arm root` **re-run after the fix** | ~15 min | relaxation question stays open (acceptable) |
+| ~~3~~ | ~~E16 `--arm root`~~ | **DONE** (`a0fb09f`) | — |
 | ~~4~~ | ~~E12 `--mode orderings`~~ | **DONE** (`b8659bd`) | — |
 | 5 | paste results, page count, rebuild | ~1 h | — |
 | — | E16 `--arm close` / `--arm budget` | 2–16 h | **does not fit. Skip.** |
 
-**The paper is submittable as it stands** (thesis `125bb7d`) — §5 now claims
-only what is measured. The one remaining run is optional and cheap: re-running
-`--arm root` after the fix in `158afe3` upgrades "we leave it open" to a
-measured answer. ~15 min, because a true LP relaxation solves in seconds where
-the buggy version was running 356 s MIP solves. Do not add
-`--arm close`/`--arm budget`; they do not fit.
+**All experiments are done.** The paper is complete (thesis `9c134a4`): no
+placeholders, no unsupported claims, 13 pages, 0 undefined references. Nothing
+below needs running. `--arm close` / `--arm budget` are unnecessary — the root
+LP arm answered the question outright.
 
 ---
 
@@ -58,54 +56,30 @@ a misreported field (`E16_RUNBOOK.md` §0). If E16 does not get run, cut the
 relaxation half and claim only the incumbent half. That is the zero-risk move
 and it costs one sentence.
 
-## 2–3. E16 root LP — ran, but the first attempt measured the wrong thing
+## 2–3. E16 root LP — DONE *(`a0fb09f`; first attempt `442f346` was buggy, see `158afe3`)*
 
-**What happened.** `--arm root` completed at `wp=10` for 4 seeds (`442f346`),
-but every row recorded `n_binaries = 0`. PuLP's `LpVariable` constructor
-normalises `cat=LpBinary` to `cat=LpInteger` with bounds `[0,1]`, so the test
-`v.cat == pulp.LpBinary` never matched, **nothing was relaxed**, and
-`prob.solve()` ran branch-and-bound. The `lp_bound_*` columns in
-`results/e16_vrp_cut_strength/` are MIP optima, not relaxation bounds. Fixed in
-`158afe3`, which now also fails the row loudly instead of silently mislabelling.
+100 LP solves (5 sizes x 5 seeds x 4 configs), all successful, `n_binaries > 0`
+throughout. **The cuts are inert, and E16 says why.**
 
-**What the existing rows are still good for.** Within every seed the four
-configs return a *bit-identical* optimum:
+| wp | rows added by `pair` | arcs dropped by `reach` | LP bound spread across configs |
+|---|---|---|---|
+| 10 | 19 | 0 | < 1e-8 relative |
+| 15 | 120 | 0 | < 1e-8 |
+| 20 | 88 | 0 | < 1e-8 |
+| 25 | 2 | 0 | < 1e-8 |
+| **50** | **0** | **0** | **< 1e-8** |
 
-| seed | none | reach | pair | both |
-|---|---|---|---|---|
-| 7 | 53.086876 | 53.086876 | 53.086876 | 53.086876 |
-| 42 | 53.963955 | 53.963955 | 53.963955 | 53.963955 |
-| 123 | 54.092899 | 54.092899 | 54.092899 | 54.092899 |
-| 2024 | 58.271470 | 58.271470 | 58.271470 | *(not run)* |
+- The β-aware filter drops **zero arcs at every size**: `T_tour_ub` is never
+  tight enough for `c[d_v,i] + c[i,j] + c[j,d_v]` to exceed it.
+- The forbidden-pair cuts fire only on small instances, and the count collapses
+  with size.
+- At 50 waypoints all four configs build the **bit-identical model** (12801
+  vars, 12615 rows) — so E11/E15 were comparing one formulation four times, and
+  their spread is solver nondeterminism.
 
-A valid cut cannot change the integer optimum, so this is a clean **validity
-check** and both cuts pass it. That is now in the paper (thesis `125bb7d`),
-replacing an assertion with evidence. It is *not* the tightness measurement.
-
-**Re-run (optional, ~15 min).**
-
-```bash
-git pull   # need 158afe3
-python -m experiments.e16_vrp_cut_strength --arm root \
-    --waypoints 10 --seeds 42 -v          # smoke test: expect n_binaries > 0
-```
-
-If `n_binaries` is still 0 the row now reports `relaxation_failed` — stop, and
-keep the paper as it is. Otherwise:
-
-```bash
-until python -m experiments.e16_vrp_cut_strength --arm root --resume \
-    --waypoints 10 15 20 25 50 --seeds 42 123 7 2024 314; do echo restart; sleep 3; done
-python -m experiments.e16_vrp_cut_strength --arm root --plots_only
-```
-
-**Note:** `--resume` will skip the existing (bad) `wp=10` rows. Delete them
-first: `rm results/e16_vrp_cut_strength/raw/arm=root_wp=10_*.json`.
-
-Then apply Variant A or B from [`E16_RUNBOOK.md`](E16_RUNBOOK.md) §6 — but note
-both were written against the paper's *previous* wording. §5 now says "Whether
-they tighten the LP relaxation is a separate question our experiments do not
-settle, and we leave it open"; replace that sentence with the measured result.
+Written into the paper (thesis `9c134a4`), which now answers the relaxation
+question outright instead of leaving it open, and gives the mechanism. The
+Variant A/B drafts in [`E16_RUNBOOK.md`](E16_RUNBOOK.md) §6 are superseded.
 
 ## 4. E12 orderings arm — DONE *(`b8659bd`, results in `results/e12_orderings_fixed/`)*
 
