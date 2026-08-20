@@ -22,14 +22,18 @@ conda activate inspection && cd /path/to/3D-Inspection
 |---|---|---|---|
 | 0 | make the repo public | minutes | **paper states a false claim** |
 | 1 | soften the §5 relaxation claim | minutes | unsupported claim stands |
-| 2 | E16 smoke test | ~10 min | untested code fails 40 min in |
-| 3 | E16 `--arm root` | ~1 h | claim stays merely softened |
+| ~~2~~ | ~~E16 smoke test~~ | **DONE** | — |
+| 3 | E16 `--arm root` **re-run after the fix** | ~15 min | relaxation question stays open (acceptable) |
 | ~~4~~ | ~~E12 `--mode orderings`~~ | **DONE** (`b8659bd`) | — |
 | 5 | paste results, page count, rebuild | ~1 h | — |
 | — | E16 `--arm close` / `--arm budget` | 2–16 h | **does not fit. Skip.** |
 
-E12 is done, so **E16 `--arm root` (~1 h) is the only run left**, leaving ~10 h
-of slack. Do not add `--arm close`/`--arm budget` with that slack; see §2–3.
+**The paper is submittable as it stands** (thesis `125bb7d`) — §5 now claims
+only what is measured. The one remaining run is optional and cheap: re-running
+`--arm root` after the fix in `158afe3` upgrades "we leave it open" to a
+measured answer. ~15 min, because a true LP relaxation solves in seconds where
+the buggy version was running 356 s MIP solves. Do not add
+`--arm close`/`--arm budget`; they do not fit.
 
 ---
 
@@ -54,43 +58,54 @@ a misreported field (`E16_RUNBOOK.md` §0). If E16 does not get run, cut the
 relaxation half and claim only the incumbent half. That is the zero-risk move
 and it costs one sentence.
 
-## 2–3. E16 root LP *(smoke test, then ~1 h)*
+## 2–3. E16 root LP — ran, but the first attempt measured the wrong thing
 
-E16 has never been executed. Smoke-test before committing an hour:
+**What happened.** `--arm root` completed at `wp=10` for 4 seeds (`442f346`),
+but every row recorded `n_binaries = 0`. PuLP's `LpVariable` constructor
+normalises `cat=LpBinary` to `cat=LpInteger` with bounds `[0,1]`, so the test
+`v.cat == pulp.LpBinary` never matched, **nothing was relaxed**, and
+`prob.solve()` ran branch-and-bound. The `lp_bound_*` columns in
+`results/e16_vrp_cut_strength/` are MIP optima, not relaxation bounds. Fixed in
+`158afe3`, which now also fails the row loudly instead of silently mislabelling.
+
+**What the existing rows are still good for.** Within every seed the four
+configs return a *bit-identical* optimum:
+
+| seed | none | reach | pair | both |
+|---|---|---|---|---|
+| 7 | 53.086876 | 53.086876 | 53.086876 | 53.086876 |
+| 42 | 53.963955 | 53.963955 | 53.963955 | 53.963955 |
+| 123 | 54.092899 | 54.092899 | 54.092899 | 54.092899 |
+| 2024 | 58.271470 | 58.271470 | 58.271470 | *(not run)* |
+
+A valid cut cannot change the integer optimum, so this is a clean **validity
+check** and both cuts pass it. That is now in the paper (thesis `125bb7d`),
+replacing an assertion with evidence. It is *not* the tightness measurement.
+
+**Re-run (optional, ~15 min).**
 
 ```bash
+git pull   # need 158afe3
 python -m experiments.e16_vrp_cut_strength --arm root \
-    --waypoints 10 --seeds 42 -v
+    --waypoints 10 --seeds 42 -v          # smoke test: expect n_binaries > 0
 ```
 
-Expect 4 rows (`none`/`reach`/`pair`/`both`), each printing
-`LP bound = ... (norm) = ... m`. If it crashes, **stop and fall back to task 1**
-— do not debug new code on a deadline.
-
-If it works:
+If `n_binaries` is still 0 the row now reports `relaxation_failed` — stop, and
+keep the paper as it is. Otherwise:
 
 ```bash
 until python -m experiments.e16_vrp_cut_strength --arm root --resume \
-    --waypoints 10 15 20 25 50 --seeds 42 123 7 2024 314; do
-  echo restart; sleep 3
-done
+    --waypoints 10 15 20 25 50 --seeds 42 123 7 2024 314; do echo restart; sleep 3; done
 python -m experiments.e16_vrp_cut_strength --arm root --plots_only
 ```
 
-**Reading the result.** The root LP bound is where "does this cut tighten the
-relaxation" is *defined* — no branch-and-bound, no gap closure needed.
+**Note:** `--resume` will skip the existing (bad) `wp=10` rows. Delete them
+first: `rm results/e16_vrp_cut_strength/raw/arm=root_wp=10_*.json`.
 
-- *All four agree within seed noise* → restore the full §5 sentence and cite the
-  root-LP numbers instead of the dual bounds. Best case: the existing claim,
-  properly evidenced.
-- *A cut's bound is strictly higher* → the §5 sentence and the conclusion line
-  ("The two routing cuts, however, do not measurably improve the solve at the
-  budgets we ran") are both **wrong** and need rewriting to "the cuts tighten
-  the root relaxation by X% but this does not translate into better incumbents
-  within the budgets we can afford". Small, positive rewrite — but budget 30 min.
-
-Do **not** start `--arm close` (2–6 h) or `--arm budget` (up to 16 h). They do
-not fit, and Step 3 alone is a publishable answer.
+Then apply Variant A or B from [`E16_RUNBOOK.md`](E16_RUNBOOK.md) §6 — but note
+both were written against the paper's *previous* wording. §5 now says "Whether
+they tighten the LP relaxation is a separate question our experiments do not
+settle, and we leave it open"; replace that sentence with the measured result.
 
 ## 4. E12 orderings arm — DONE *(`b8659bd`, results in `results/e12_orderings_fixed/`)*
 
