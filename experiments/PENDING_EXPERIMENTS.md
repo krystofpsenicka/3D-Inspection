@@ -1,0 +1,147 @@
+# Pending experiments — ITAT 2026 camera-ready
+
+**Written 2026-08-20 with ~12 h to the resubmission deadline.** Ordered by
+value-per-hour, not by completeness. Deep detail for E16 is in
+[`E16_RUNBOOK.md`](E16_RUNBOOK.md); read this file first.
+
+**Paper:** `~/thesis/itat/paper.tex`, branch `itat-camera-ready` in the thesis
+repo (`f623aa5` = as-submitted, `ffd9288` = camera-ready).
+`git diff HEAD~1 -- itat/paper.tex` shows the revision.
+
+**Machine:** GPU box, `inspection` env.
+
+```bash
+conda activate inspection && cd /path/to/3D-Inspection
+```
+
+---
+
+## Time budget
+
+| # | task | cost | risk if skipped |
+|---|---|---|---|
+| 0 | make the repo public | minutes | **paper states a false claim** |
+| 1 | soften the §5 relaxation claim | minutes | unsupported claim stands |
+| 2 | E16 smoke test | ~10 min | untested code fails 40 min in |
+| 3 | E16 `--arm root` | ~1 h | claim stays merely softened |
+| 4 | E12 `--mode orderings` | ~3 h | visible "not ablated" admission stays |
+| 5 | paste results, page count, rebuild | ~1 h | — |
+| — | E16 `--arm close` / `--arm budget` | 2–16 h | **does not fit. Skip.** |
+
+Runs 3 and 4 both contend for the GPU. **Run them sequentially** — E12 measures
+MAPF wall-clock, and contention corrupts exactly the numbers it reports.
+Total compute ≈ 4 h, leaving ~7 h of slack for writing and the unexpected.
+
+---
+
+## 0. Make the repo public *(do this first — minutes)*
+
+§5 *Setup* claims code, scripts and raw JSON "are at
+`https://github.com/krystofpsenicka/3D-Inspection`". Anonymous fetch of that URL
+returns **404** — the repo is private. R4.17 asked specifically about code
+release, so this is the claim most likely to be checked. This branch is already
+pushed; flipping visibility is the only step. Otherwise soften the sentence to
+"available on request".
+
+## 1. Soften the §5 relaxation claim *(minutes, zero compute)*
+
+§5 *Ablation of the routing cuts* currently says the cuts
+
+> neither **tighten the relaxation** nor improve incumbents measurably.
+
+The second half is what E11/E15 measured. **The first half is not measured by
+anything we have run** — it rests on B&B dual bounds at timeout, which came from
+a misreported field (`E16_RUNBOOK.md` §0). If E16 does not get run, cut the
+relaxation half and claim only the incumbent half. That is the zero-risk move
+and it costs one sentence.
+
+## 2–3. E16 root LP *(smoke test, then ~1 h)*
+
+E16 has never been executed. Smoke-test before committing an hour:
+
+```bash
+python -m experiments.e16_vrp_cut_strength --arm root \
+    --waypoints 10 --seeds 42 -v
+```
+
+Expect 4 rows (`none`/`reach`/`pair`/`both`), each printing
+`LP bound = ... (norm) = ... m`. If it crashes, **stop and fall back to task 1**
+— do not debug new code on a deadline.
+
+If it works:
+
+```bash
+until python -m experiments.e16_vrp_cut_strength --arm root --resume \
+    --waypoints 10 15 20 25 50 --seeds 42 123 7 2024 314; do
+  echo restart; sleep 3
+done
+python -m experiments.e16_vrp_cut_strength --arm root --plots_only
+```
+
+**Reading the result.** The root LP bound is where "does this cut tighten the
+relaxation" is *defined* — no branch-and-bound, no gap closure needed.
+
+- *All four agree within seed noise* → restore the full §5 sentence and cite the
+  root-LP numbers instead of the dual bounds. Best case: the existing claim,
+  properly evidenced.
+- *A cut's bound is strictly higher* → the §5 sentence and the conclusion line
+  ("The two routing cuts, however, do not measurably improve the solve at the
+  budgets we ran") are both **wrong** and need rewriting to "the cuts tighten
+  the root relaxation by X% but this does not translate into better incumbents
+  within the budgets we can afford". Small, positive rewrite — but budget 30 min.
+
+Do **not** start `--arm close` (2–6 h) or `--arm budget` (up to 16 h). They do
+not fit, and Step 3 alone is a publishable answer.
+
+## 4. E12 orderings arm *(~3 h, unattended)*
+
+`--mode orderings` was never run; only the collisions arm exists under
+`results/e12_mapf_ablation/`. R4.4 wanted the priority-ordering budget ablated,
+so §5 currently carries an explicit admission:
+
+> The default budget of 20 priority orderings is a design choice we have not yet
+> ablated; we report it here as a parameter, not as a validated optimum.
+
+with a `%%% TODO camera-ready` block above it sketching the replacement. Search
+`paper.tex` for `TODO camera-ready`.
+
+```bash
+until python -m experiments.e12_mapf_ablation --resume --mode orderings \
+    --seeds 42 123 7; do echo restart; sleep 3; done
+python -m experiments.e12_mapf_ablation --plots_only
+```
+
+1 trial ≈ 55 s, 20 ≈ 21 min per run. Replace the placeholder with the β-blended
+objective and MAPF wall-clock per budget (`n_priority_trials ∈ {1,5,10,20}`) and
+say where the gain saturates — that is what justifies the default of 20.
+~4 lines.
+
+If the clock gets tight, the placeholder sentence is honest and shippable as-is.
+Dropping this run costs less than shipping a broken claim.
+
+## 5. Final pass
+
+- Paper is **13 pages**; the allowance was +2 excluding citations and the body
+  grew +2.5. Tasks 3 and 4 add ~0.3 page. Cheapest cuts, in order: the Isaac Sim
+  figure (§5), the E09 paragraph, the E10 lower-bound derivation prose.
+- Check the IWCIDM camera-ready mechanics — copyright form, and whether PDF/A is
+  required. `paper.xmpdata` and `pdfa.xmpi` exist in `itat/` but the current
+  build does not use them.
+- Rebuild and confirm: `latexmk -pdf paper.tex`, then
+  `grep -c undefined paper.log` must be 0.
+
+---
+
+## Already done — no action needed
+
+All four reviews were addressed in `ffd9288`. Every
+[`CAMERA_READY_PLAN.md`](CAMERA_READY_PLAN.md) item A–F has been run and written
+up: E11/E15 (cut ablation), E12 collisions arm, E13 (post-smoothing audit), E14
+(|C|/|P| scaling), E05/E06/E01 at 10 seeds, E10 at 5 seeds over 14 meshes, E08
+gap-vs-timeout.
+
+One standing caveat for any future analysis: the `gap` / `gap_reached` fields in
+E08/E11/E15 raw JSON divide a **metres** incumbent by a **normalised** dual
+bound and are not optimality gaps. `E16_RUNBOOK.md` §0 has the worked example —
+the recomputed gap on E15/`both` is ~13%, not the ~99.7% logged. Never quote
+them.
