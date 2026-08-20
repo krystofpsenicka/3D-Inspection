@@ -57,3 +57,6 @@ models/extra_real/
 
 # Verbose orchestration logs (debug, not results)
 experiments/results/_camera_ready_logs/
+
+# TOSCA dataset — third-party, no licence; fetched separately (see README)
+models/TOSCA-dataset/

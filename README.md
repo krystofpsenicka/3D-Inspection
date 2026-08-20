@@ -49,8 +49,62 @@ pip install -e .          # add [test] for pytest
 
 ## External assets
 
-- **Mesh:** default `models/duke_of_lancaster_uk_clipped.glb` (loaded by `VRP/core/constants.py:MESH_PATH`, rescaled to 50 m via `--mesh_target_length`). Drop other `.glb`/`.obj`/`.stl` into `models/` to swap. TOSCA dataset: `models/TOSCA-dataset/` — Bronstein, Bronstein & Kimmel, *Numerical Geometry of Non-Rigid Shapes*, Springer, 2009 (<https://doi.org/10.1007/978-0-387-73301-2>).
+- **Mesh:** default `models/duke_of_lancaster_uk_clipped.glb` (loaded by `VRP/core/constants.py:MESH_PATH`, rescaled to 50 m via `--mesh_target_length`). Drop other `.glb`/`.obj`/`.stl` into `models/` to swap.
+- **TOSCA / Stanford meshes:** not redistributed here — see [Third-party datasets](#third-party-datasets).
 - **BROV USD** (optional, replay only, ~345 MB): `assets/robot/brov/BROV_high.usd`. Without it, `--use-brov-usd` falls back to cuboids. Source: NVIDIA's OceanSim README (<https://github.com/umfieldrobotics/OceanSim>).
+
+## Third-party datasets
+
+Neither dataset below is redistributed in this repository. Both are third-party
+material used here for research only; fetch them yourself and respect their
+terms. **The committed results under `experiments/results/` do not depend on
+having them** — only re-running the experiments does.
+
+### TOSCA (nine non-rigid meshes: `cat`, `centaur`, `david`, `dog`, `gorilla`, `horse`, `michael`, `victoria`, `wolf`)
+
+Bronstein, Bronstein & Kimmel, *Numerical Geometry of Non-Rigid Shapes*,
+Springer, 2009 (<https://doi.org/10.1007/978-0-387-73301-2>). TOSCA carries **no
+explicit licence**; it has historically been distributed by permission of the
+authors. Cite the book if you use it.
+
+Expected layout — `experiments/common/config.py:TOSCA_DIR` reads
+`models/TOSCA-dataset/<name>.off`:
+
+```
+models/TOSCA-dataset/
+├── cat0.off  cat1.off  …          # 80 .off meshes
+└── camera_cat.txt …               # 9 camera files (unused by this project)
+```
+
+Canonical source, as cited by the original authors and by PyTorch Geometric's
+`torch_geometric.datasets.TOSCA`:
+
+```
+http://tosca.cs.technion.ac.il/data/toscahires-asci.zip
+```
+
+⚠️ **This URL is unreachable as of 2026-08-20.** It 301-redirects to a malformed
+address (`https://cis.cs.technion.ac.ilbook/...`, missing a `/`), and
+`cis.cs.technion.ac.il` does not respond. PyTorch Geometric points at the same
+dead URL, so its loader fails too. If you need the data, contact the authors, or
+obtain it from a lab that already holds a copy. If the host comes back:
+
+```bash
+mkdir -p models/TOSCA-dataset && cd models/TOSCA-dataset
+curl -LO http://tosca.cs.technion.ac.il/data/toscahires-asci.zip
+unzip -j toscahires-asci.zip && rm toscahires-asci.zip
+```
+
+### Stanford scans (`armadillo`, `dragon`, `happy_buddha`, `xyz_dragon`)
+
+The Stanford 3D Scanning Repository
+(<http://graphics.stanford.edu/data/3Dscanrep/>). **Not open-source**: research
+use and publication of images in a scholarly article are permitted *provided
+credit is given to the Stanford Computer Graphics Laboratory*; commercial use is
+not. The Buddha and Dragon additionally carry a request to keep renderings in
+good taste. Download the `.ply` files from the repository into the directory
+named by `EXTRA_MESHES_DIR` (already gitignored as `models/extra_real/`).
+
 
 ## Quickstart
 
