@@ -190,16 +190,32 @@ def _root_lp(dist_matrix, K, home_indices, label, beta_flag, pair_flag, t_lb):
 
     variables = prob.variables()
     n_vars = len(variables)
-    n_binaries = sum(1 for v in variables if v.cat == pulp.LpBinary)
     n_constraints = len(prob.constraints)
 
-    # Relax: LpBinary already carries bounds [0, 1]; set them explicitly so the
-    # relaxation is well defined regardless of PuLP version.
+    # Relax every integer-restricted variable.
+    #
+    # NB: PuLP's LpVariable constructor normalises cat=LpBinary to cat=LpInteger
+    # with bounds [0, 1], so testing `v.cat == pulp.LpBinary` never matches and
+    # silently leaves the model integral -- prob.solve() would then run
+    # branch-and-bound and return the MIP optimum, not the root LP bound. Test
+    # against LpContinuous instead.
+    n_binaries = sum(1 for v in variables if v.cat != pulp.LpContinuous)
     for v in variables:
-        if v.cat == pulp.LpBinary:
+        if v.cat != pulp.LpContinuous:
             v.cat = pulp.LpContinuous
             v.lowBound = 0.0 if v.lowBound is None else v.lowBound
             v.upBound = 1.0 if v.upBound is None else v.upBound
+
+    if n_binaries == 0:
+        # Nothing was relaxed => this is not an LP bound. Fail loudly rather
+        # than reporting a MIP optimum mislabelled as a relaxation.
+        return {
+            "arm": "root", "config": label, "t_lb": t_lb,
+            "lp_bound_norm": float("nan"), "lp_bound_m": float("nan"),
+            "n_vars": n_vars, "n_binaries": 0, "n_constraints": n_constraints,
+            "build_s": build_s, "lp_solve_s": 0.0, "lp_status": "not_relaxed",
+            "status": "relaxation_failed: no integer variables found",
+        }
 
     t0 = time.perf_counter()
     prob.solve(pulp.HiGHS(timeLimit=LP_TIME_LIMIT, msg=0))
