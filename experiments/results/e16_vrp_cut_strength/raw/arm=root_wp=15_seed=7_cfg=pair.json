@@ -1,0 +1,18 @@
+{
+  "arm": "root",
+  "config": "pair",
+  "t_lb": 63.63605499267578,
+  "lp_bound_norm": 0.6815260881380347,
+  "lp_bound_m": 43.36963162369518,
+  "n_vars": 1216,
+  "n_binaries": 1200,
+  "n_constraints": 1170,
+  "build_s": 0.03237988401087932,
+  "lp_solve_s": 0.01538937000441365,
+  "lp_status": "Optimal",
+  "status": "success",
+  "n_waypoints": 15,
+  "seed": 7,
+  "K": 5,
+  "beta": 0.5
+}

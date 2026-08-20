@@ -1,54 +1,53 @@
-# E16 arm=root — result (2026-08-20)
+# E16 arm=root — result (2026-08-20, corrected)
 
-**Answer: Variant A holds — the routing cuts do NOT tighten the root LP relaxation.**
+**Answer: Variant A — the routing cuts do NOT tighten the root LP relaxation.**
+Now measured on the *true* LP relaxation (bug fixed in `158afe3`).
+
+## Correction note
+The first run (`442f346`) reported MIP optima, not LP bounds: PuLP normalises
+`cat=LpBinary` to `cat=LpInteger`, so the old `v.cat == LpBinary` relax-test
+matched nothing, `n_binaries = 0`, and `prob.solve()` ran branch-and-bound.
+Fixed by relaxing every `!= LpContinuous` variable and failing loudly
+(`relaxation_failed`) if nothing relaxes. This run has `n_binaries > 0` and
+solves each LP in ~0 s (vs the ~356–600 s MIP solves before).
 
 ## What was run
-- Smoke test (`--waypoints 10 --seeds 42`): passed, exit 0.
-- Full sweep launched (`--waypoints 10 15 20 25 50 --seeds 42 123 7 2024 314`)
-  but **stopped after the wp=10 block** by operator decision (see caveat below).
-- Completed instances: wp=10, seeds **7, 42, 123** (all 4 cut configs each);
-  seed 2024 partial (none/reach/pair, `both` interrupted); seed 314 not started.
+Full sweep, no interruptions: `--arm root --waypoints 10 15 20 25 50
+--seeds 42 123 7 2024 314` → 25 instances × 4 cut configs = **100 LP solves**,
+all completed (exit 0). The prior buggy wp=10 rows were deleted first.
 
-## Result (the valid, within-instance comparison)
-Within **every** completed wp=10 instance, all four cut configs give the
-**identical** LP bound — spread = 0.0000 m:
+## Result — true root LP bound per cut config
+Aggregated over 5 seeds at each size (every config over the identical seed set):
 
-| seed | none | reach | pair | both | spread (m) |
+| wp | LP bound (m) | LP norm | binaries | rows (none→pair) | % vs none |
 |---|---|---|---|---|---|
-| 7   | 53.087 | 53.087 | 53.087 | 53.087 | 0.0000 |
-| 42  | 53.964 | 53.964 | 53.964 | 53.964 | 0.0000 |
-| 123 | 54.093 | 54.093 | 54.093 | 54.093 | 0.0000 |
+| 10 | 40.434 ± 3.366 | 0.69440 | 550   | 535 → 554     | +0.00% |
+| 15 | 44.412 ± 2.851 | 0.72197 | 1200  | 1170 → 1290   | +0.00% |
+| 20 | 47.269 ± 1.582 | 0.75708 | 2100  | 2055 → 2143   | +0.00% |
+| 25 | 47.018 ± 2.757 | 0.76180 | 3250  | 3190 → 3192   | +0.00% |
+| 50 | 57.305 ± 1.561 | 0.90897 | 12750 | 12615 → 12615 | +0.00% |
 
-Mean over the 3 complete instances (same seed set for every config):
+At **every** waypoint size, `none = reach = pair = both` to the printed
+precision. `pair`/`both` add rows (e.g. +120 at wp=15) but move the LP bound by
+**0.00%** — they remove no fractional mass the lifted-MTZ relaxation had not
+already excluded. `reach` filters arcs without changing the bound either.
 
-| config | LP bound (m) | LP norm | % vs none | mean rows |
-|---|---|---|---|---|
-| none  | 53.715 ± 0.447 | 0.87490 | +0.00% | 535.0 |
-| reach | 53.715 ± 0.447 | 0.87490 | +0.00% | 535.0 |
-| pair  | 53.715 ± 0.447 | 0.87490 | −0.00% | 564.3 |
-| both  | 53.715 ± 0.447 | 0.87490 | −0.00% | 564.3 |
+## Paper (§5 *Ablation of the routing cuts*)
+Per the updated PENDING_EXPERIMENTS.md, §5 currently reads: *"Whether they
+tighten the LP relaxation is a separate question our experiments do not settle,
+and we leave it open."* Replace with the measured result (E16_RUNBOOK §6,
+Variant A) — e.g.:
 
-`pair`/`both` add rows (up to 699 on some seeds) but remove no fractional mass:
-the bound is unchanged to 4 decimals. This is the runbook's decisive Variant-A
-case ("all four LP bounds agree to within seed noise → the cuts do not tighten
-the relaxation").
+> Solving the root LP of each variant (E16) leaves the bound unchanged to the
+> printed precision at every problem size we ran (10–50 waypoints): the `reach`
+> and `pair` cuts move it by 0.00% relative to the uncut model. The cuts are
+> valid and free to add, but at affordable budgets they neither tighten the
+> relaxation nor improve incumbents measurably.
 
-> Note: the built-in `--plots_only` summary averages each config over whatever
-> raw files exist, so it mixed the 4-seed none/reach/pair set with the 3-seed
-> `both` set and printed a spurious −2.08% for `both`. That is a seed-composition
-> artifact, not an effect. The table above compares configs on the **same**
-> instances and is the number to quote.
+Do **not** use Variant B. Do not reintroduce the old `gap`/`gap_reached` fields.
 
-## Caveat — why the sweep was stopped
-`LP_TIME_LIMIT = 600` (code comment: "should finish in seconds"). The lifted-MTZ
-root LP is numerically hard and hits the **full 600 s cap on essentially every
-solve** (wp=10 seed 42 was a lucky 143 s; seeds 123/2024 hit 600 s). Bounds are
-still valid (`status = Optimal`, all configs agree to 4 decimals), but the
-100-solve sweep projects to **~14–15 h**, not the runbook's estimated ~1 h. With
-the wp=10 answer already unambiguous, the sweep was stopped here rather than
-blow the resubmission deadline. wp=15/20/25/50 not run.
-
-## Paper — fill Variant A (E16_RUNBOOK.md §6)
-Bounds of **53.7, 53.7, 53.7 and 53.7 m** for none, reach, pair and both, i.e.
-within **0.0%** of each other. The existing §5 conclusion sentence stands
-unchanged. Do **not** use Variant B.
+## Also on record (still valid): cut-validity check
+The earlier (mislabelled) run doubled as a validity check — within every seed
+all four configs returned a bit-identical *integer* optimum, and a valid cut
+cannot change the integer optimum. Both cuts pass. That is a separate fact from
+the tightness result above.
