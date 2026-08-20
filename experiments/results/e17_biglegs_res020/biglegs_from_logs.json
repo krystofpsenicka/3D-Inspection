@@ -1,0 +1,639 @@
+{
+  "summary": {
+    "config": "SPACE_TIME_RESOLUTION=0.20 (factor-1 fine MAPF grid 317x113x106); model=duke_of_lancaster; K=5; max_legs=20; seeds=[42,123,7]",
+    "n_legs": 60,
+    "seeds_legcount": {
+      "7": 20,
+      "42": 20,
+      "123": 20
+    },
+    "gpu_pf_s": {
+      "mean": 0.1076,
+      "median": 0.09,
+      "max": 0.416
+    },
+    "gpu_seq_s": {
+      "mean": 14.611716666666666,
+      "median": 3.349,
+      "max": 276.432
+    },
+    "cpu_seq_s": {
+      "mean": 0.1698,
+      "median": 0.042499999999999996,
+      "max": 3.217
+    },
+    "parallel_frontier_gpu_seq_over_gpu_pf": {
+      "mean": 78.09432577840565,
+      "median": 37.97868569786378,
+      "max": 664.5000000000001
+    },
+    "gpu_vs_cpu_cpu_seq_over_gpu_pf": {
+      "mean": 0.9206314417656175,
+      "median": 0.46491628614916286
+    },
+    "legs_gpu_pf_beats_cpu": 20,
+    "cost_ratio_pf_over_seq": 1.0
+  },
+  "legs": [
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 0,
+      "committed": 0,
+      "gpu_pf_s": 0.12,
+      "gpu_seq_s": 8.269,
+      "cpu_seq_s": 0.09,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 1,
+      "committed": 0,
+      "gpu_pf_s": 0.29,
+      "gpu_seq_s": 16.535,
+      "cpu_seq_s": 0.29,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 2,
+      "committed": 0,
+      "gpu_pf_s": 0.033,
+      "gpu_seq_s": 0.045,
+      "cpu_seq_s": 0.001,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 3,
+      "committed": 0,
+      "gpu_pf_s": 0.144,
+      "gpu_seq_s": 5.029,
+      "cpu_seq_s": 0.054,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 4,
+      "committed": 0,
+      "gpu_pf_s": 0.11,
+      "gpu_seq_s": 3.749,
+      "cpu_seq_s": 0.053,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 5,
+      "committed": 0,
+      "gpu_pf_s": 0.027,
+      "gpu_seq_s": 0.12,
+      "cpu_seq_s": 0.002,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 6,
+      "committed": 0,
+      "gpu_pf_s": 0.068,
+      "gpu_seq_s": 0.215,
+      "cpu_seq_s": 0.004,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 7,
+      "committed": 0,
+      "gpu_pf_s": 0.098,
+      "gpu_seq_s": 4.871,
+      "cpu_seq_s": 0.055,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 8,
+      "committed": 0,
+      "gpu_pf_s": 0.078,
+      "gpu_seq_s": 0.978,
+      "cpu_seq_s": 0.012,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 9,
+      "committed": 0,
+      "gpu_pf_s": 0.083,
+      "gpu_seq_s": 1.37,
+      "cpu_seq_s": 0.017,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 10,
+      "committed": 0,
+      "gpu_pf_s": 0.063,
+      "gpu_seq_s": 2.907,
+      "cpu_seq_s": 0.033,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 11,
+      "committed": 0,
+      "gpu_pf_s": 0.041,
+      "gpu_seq_s": 0.55,
+      "cpu_seq_s": 0.007,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 12,
+      "committed": 0,
+      "gpu_pf_s": 0.066,
+      "gpu_seq_s": 2.375,
+      "cpu_seq_s": 0.027,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 13,
+      "committed": 0,
+      "gpu_pf_s": 0.073,
+      "gpu_seq_s": 1.263,
+      "cpu_seq_s": 0.016,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 14,
+      "committed": 0,
+      "gpu_pf_s": 0.073,
+      "gpu_seq_s": 2.998,
+      "cpu_seq_s": 0.033,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 15,
+      "committed": 0,
+      "gpu_pf_s": 0.111,
+      "gpu_seq_s": 19.828,
+      "cpu_seq_s": 0.217,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 16,
+      "committed": 0,
+      "gpu_pf_s": 0.387,
+      "gpu_seq_s": 136.373,
+      "cpu_seq_s": 1.475,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 17,
+      "committed": 0,
+      "gpu_pf_s": 0.416,
+      "gpu_seq_s": 276.432,
+      "cpu_seq_s": 3.217,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 18,
+      "committed": 0,
+      "gpu_pf_s": 0.097,
+      "gpu_seq_s": 7.471,
+      "cpu_seq_s": 0.138,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 42,
+      "leg": 19,
+      "committed": 0,
+      "gpu_pf_s": 0.165,
+      "gpu_seq_s": 2.292,
+      "cpu_seq_s": 0.031,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 0,
+      "committed": 0,
+      "gpu_pf_s": 0.142,
+      "gpu_seq_s": 14.703,
+      "cpu_seq_s": 0.157,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 1,
+      "committed": 0,
+      "gpu_pf_s": 0.027,
+      "gpu_seq_s": 0.117,
+      "cpu_seq_s": 0.002,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 2,
+      "committed": 0,
+      "gpu_pf_s": 0.143,
+      "gpu_seq_s": 5.328,
+      "cpu_seq_s": 0.076,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 3,
+      "committed": 0,
+      "gpu_pf_s": 0.103,
+      "gpu_seq_s": 13.721,
+      "cpu_seq_s": 0.149,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 4,
+      "committed": 0,
+      "gpu_pf_s": 0.073,
+      "gpu_seq_s": 5.047,
+      "cpu_seq_s": 0.056,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 5,
+      "committed": 0,
+      "gpu_pf_s": 0.055,
+      "gpu_seq_s": 1.045,
+      "cpu_seq_s": 0.012,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 6,
+      "committed": 0,
+      "gpu_pf_s": 0.031,
+      "gpu_seq_s": 0.259,
+      "cpu_seq_s": 0.004,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 7,
+      "committed": 0,
+      "gpu_pf_s": 0.121,
+      "gpu_seq_s": 16.209,
+      "cpu_seq_s": 0.177,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 8,
+      "committed": 0,
+      "gpu_pf_s": 0.111,
+      "gpu_seq_s": 13.301,
+      "cpu_seq_s": 0.145,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 9,
+      "committed": 0,
+      "gpu_pf_s": 0.09,
+      "gpu_seq_s": 3.7,
+      "cpu_seq_s": 0.043,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 10,
+      "committed": 0,
+      "gpu_pf_s": 0.075,
+      "gpu_seq_s": 2.001,
+      "cpu_seq_s": 0.024,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 11,
+      "committed": 0,
+      "gpu_pf_s": 0.127,
+      "gpu_seq_s": 13.188,
+      "cpu_seq_s": 0.147,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 12,
+      "committed": 0,
+      "gpu_pf_s": 0.1,
+      "gpu_seq_s": 10.903,
+      "cpu_seq_s": 0.122,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 13,
+      "committed": 0,
+      "gpu_pf_s": 0.09,
+      "gpu_seq_s": 4.421,
+      "cpu_seq_s": 0.05,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 14,
+      "committed": 0,
+      "gpu_pf_s": 0.125,
+      "gpu_seq_s": 21.048,
+      "cpu_seq_s": 0.231,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 15,
+      "committed": 0,
+      "gpu_pf_s": 0.21,
+      "gpu_seq_s": 70.114,
+      "cpu_seq_s": 0.78,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 16,
+      "committed": 0,
+      "gpu_pf_s": 0.153,
+      "gpu_seq_s": 10.706,
+      "cpu_seq_s": 0.157,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 17,
+      "committed": 0,
+      "gpu_pf_s": 0.23,
+      "gpu_seq_s": 44.458,
+      "cpu_seq_s": 0.471,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 18,
+      "committed": 0,
+      "gpu_pf_s": 0.144,
+      "gpu_seq_s": 0.667,
+      "cpu_seq_s": 0.009,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 123,
+      "leg": 19,
+      "committed": 0,
+      "gpu_pf_s": 0.106,
+      "gpu_seq_s": 2.968,
+      "cpu_seq_s": 0.042,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 0,
+      "committed": 0,
+      "gpu_pf_s": 0.068,
+      "gpu_seq_s": 0.195,
+      "cpu_seq_s": 0.003,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 1,
+      "committed": 0,
+      "gpu_pf_s": 0.071,
+      "gpu_seq_s": 0.914,
+      "cpu_seq_s": 0.012,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 2,
+      "committed": 0,
+      "gpu_pf_s": 0.073,
+      "gpu_seq_s": 2.825,
+      "cpu_seq_s": 0.033,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 3,
+      "committed": 0,
+      "gpu_pf_s": 0.065,
+      "gpu_seq_s": 1.368,
+      "cpu_seq_s": 0.022,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 4,
+      "committed": 0,
+      "gpu_pf_s": 0.048,
+      "gpu_seq_s": 0.73,
+      "cpu_seq_s": 0.009,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 5,
+      "committed": 0,
+      "gpu_pf_s": 0.088,
+      "gpu_seq_s": 0.396,
+      "cpu_seq_s": 0.005,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 6,
+      "committed": 0,
+      "gpu_pf_s": 0.063,
+      "gpu_seq_s": 0.531,
+      "cpu_seq_s": 0.007,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 7,
+      "committed": 0,
+      "gpu_pf_s": 0.082,
+      "gpu_seq_s": 8.041,
+      "cpu_seq_s": 0.087,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 8,
+      "committed": 0,
+      "gpu_pf_s": 0.055,
+      "gpu_seq_s": 1.214,
+      "cpu_seq_s": 0.014,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 9,
+      "committed": 0,
+      "gpu_pf_s": 0.134,
+      "gpu_seq_s": 29.256,
+      "cpu_seq_s": 0.32,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 10,
+      "committed": 0,
+      "gpu_pf_s": 0.089,
+      "gpu_seq_s": 6.812,
+      "cpu_seq_s": 0.117,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 11,
+      "committed": 0,
+      "gpu_pf_s": 0.079,
+      "gpu_seq_s": 1.07,
+      "cpu_seq_s": 0.013,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 12,
+      "committed": 0,
+      "gpu_pf_s": 0.053,
+      "gpu_seq_s": 1.926,
+      "cpu_seq_s": 0.022,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 13,
+      "committed": 0,
+      "gpu_pf_s": 0.063,
+      "gpu_seq_s": 0.195,
+      "cpu_seq_s": 0.003,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 14,
+      "committed": 0,
+      "gpu_pf_s": 0.127,
+      "gpu_seq_s": 15.242,
+      "cpu_seq_s": 0.166,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 15,
+      "committed": 0,
+      "gpu_pf_s": 0.072,
+      "gpu_seq_s": 2.431,
+      "cpu_seq_s": 0.028,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 16,
+      "committed": 0,
+      "gpu_pf_s": 0.092,
+      "gpu_seq_s": 1.607,
+      "cpu_seq_s": 0.022,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 17,
+      "committed": 0,
+      "gpu_pf_s": 0.107,
+      "gpu_seq_s": 12.661,
+      "cpu_seq_s": 0.22,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 18,
+      "committed": 0,
+      "gpu_pf_s": 0.1,
+      "gpu_seq_s": 8.695,
+      "cpu_seq_s": 0.098,
+      "outcome": "success"
+    },
+    {
+      "model": "duke_of_lancaster",
+      "seed": 7,
+      "leg": 19,
+      "committed": 0,
+      "gpu_pf_s": 0.128,
+      "gpu_seq_s": 33.02,
+      "cpu_seq_s": 0.361,
+      "outcome": "success"
+    }
+  ]
+}
